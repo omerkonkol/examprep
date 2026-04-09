@@ -462,7 +462,7 @@ async function renderDashboard() {
       <div class="meta">
         <span><strong>${totalQuestions}</strong> שאלות</span>
         <span><strong>${totalExams}</strong> מבחנים</span>
-        <span>📚 מוכן לתרגול</span>
+        <span class="ready-pill">● מוכן לתרגול</span>
       </div>
     </div>
     <div class="course-card add" id="btn-add-course-card">

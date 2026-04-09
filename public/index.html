@@ -117,7 +117,7 @@
             <h2>כל החומר שלך<br/>במקום אחד דיגיטלי</h2>
             <p>העלה PDFs, סרוק חוברות תרגול, צרף דפי נוסחאות — והפלטפורמה הופכת אותם למרכז ידע מאורגן עם תיוג חכם, חיפוש מהיר וקישורים בין נושאים. כל חומרי הלימוד שלך הופכים לכלי תרגול חי.</p>
             <ul class="showcase-points">
-              <li>📚 ארכיון פרטי לכל חומרי הלימוד</li>
+              <li>📁 ארכיון פרטי לכל חומרי הלימוד</li>
               <li>🔎 חיפוש בכל המבחנים בשנייה</li>
               <li>🗂️ ארגון אוטומטי לפי קורסים ונושאים</li>
               <li>☁️ סנכרון בין מכשירים</li>
@@ -661,6 +661,9 @@
   <template id="tmpl-summary">
     <div class="summary-screen">
       <div class="summary-card">
+        <a href="#/dashboard" class="summary-logo" data-route="/dashboard">
+          <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img" />
+        </a>
         <div class="summary-emoji" id="summary-emoji">🎉</div>
         <h1 class="summary-title" id="summary-title">סיימת את המקבץ!</h1>
         <p class="summary-sub" id="summary-sub">בוא נראה איך הלך לך</p>
@@ -689,9 +692,14 @@
     <div class="review-screen">
       <header class="review-header">
         <div class="review-header-inner">
-          <div>
-            <h1>סקירת טעויות</h1>
-            <p>בוא נעבור על השאלות שטעית בהן ונוודא שאתה מבין למה</p>
+          <div class="review-header-brand">
+            <a href="#/dashboard" class="review-logo" data-route="/dashboard">
+              <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img logo-img-sm" />
+            </a>
+            <div>
+              <h1>סקירת טעויות</h1>
+              <p>בוא נעבור על השאלות שטעית בהן ונוודא שאתה מבין למה</p>
+            </div>
           </div>
           <button class="review-back" id="review-back">→ חזרה לדשבורד</button>
         </div>
@@ -716,7 +724,10 @@
   <!--             LOADER          -->
   <!-- ============================ -->
   <template id="tmpl-loader">
-    <div class="loader-screen"><div class="spinner"></div></div>
+    <div class="loader-screen">
+      <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img loader-logo" />
+      <div class="spinner"></div>
+    </div>
   </template>
 
   <script src="/public/app.js?v=20260410-1" type="module"></script>
