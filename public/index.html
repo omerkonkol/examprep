@@ -3,35 +3,40 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
-  <title>ExamPrep - תרגול שאלות אמריקאיות מותאם אישית</title>
-  <meta name="description" content="פלטפורמה ישראלית לתרגול שאלות אמריקאיות. העלה PDF של מבחן וקבל אפליקציית תרגול אוטומטית, ניתוח דפוסי המרצה, ושאלות AI מותאמות אישית." />
-  <meta name="theme-color" content="#2563eb" />
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232563eb'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-size='60' fill='white' font-family='Arial' font-weight='bold'%3E%E2%9C%93%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/public/styles.css" />
+  <title>ExamPrep · תרגול שאלות אמריקאיות חכם מ-PDF</title>
+  <meta name="description" content="פלטפורמה ישראלית לתרגול שאלות אמריקאיות. העלה PDF של מבחן וקבל אפליקציית תרגול אוטומטית, סקירת טעויות מקצועית, ושאלות AI דומות." />
+  <meta name="theme-color" content="#1d4ed8" />
+  <link rel="icon" type="image/png" href="/public/images/logo.png" />
+  <link rel="apple-touch-icon" href="/public/images/logo.png" />
+  <meta property="og:title" content="ExamPrep · תרגול שאלות אמריקאיות חכם מ-PDF" />
+  <meta property="og:description" content="העלה PDF של מבחן וקבל אפליקציית תרגול אוטומטית עם הסברים מפורטים, סקירת טעויות מקצועית, ושאלות AI דומות." />
+  <meta property="og:image" content="/public/images/hero.png" />
+  <meta property="og:type" content="website" />
+  <link rel="stylesheet" href="/public/styles.css?v=20260410-2" />
 </head>
 <body>
   <div id="app"></div>
 
-  <!-- ============ Templates ============ -->
-
-  <!-- Landing Page -->
+  <!-- ============================ -->
+  <!--          LANDING            -->
+  <!-- ============================ -->
   <template id="tmpl-landing">
     <div class="landing">
-      <header class="navbar">
+      <header class="navbar" id="navbar">
         <div class="navbar-inner container">
-          <a href="/" class="logo" data-route="/">
-            <span class="logo-icon">📚</span>
-            <span class="logo-text">ExamPrep</span>
+          <a href="#/" class="logo" data-route="/">
+            <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img" />
           </a>
           <nav class="nav-links">
             <a href="#features">פיצ'רים</a>
             <a href="#how">איך זה עובד</a>
+            <a href="#testimonials">לקוחות</a>
             <a href="#pricing">מחירים</a>
             <a href="#faq">שאלות נפוצות</a>
           </nav>
           <div class="nav-cta">
-            <a href="/login" class="btn btn-ghost" data-route="/login">כניסה</a>
-            <a href="/login?signup=1" class="btn btn-primary" data-route="/login?signup=1">התחל בחינם</a>
+            <a href="#/login" class="btn btn-ghost btn-sm" data-route="/login">כניסה</a>
+            <a href="#/login?signup=1" class="btn btn-primary btn-sm" data-route="/login?signup=1">התחל בחינם</a>
           </div>
           <button class="hamburger" id="hamburger">☰</button>
         </div>
@@ -41,384 +46,611 @@
       <section class="hero">
         <div class="container hero-grid">
           <div class="hero-text">
-            <div class="badge">🎓 חדש - יצירת מבחנים אוטומטית מ-PDF</div>
+            <div class="badge">🚀 חדש - עיבוד אוטומטי של מבחנים מ-PDF</div>
             <h1>תרגול חכם של<br/><span class="grad">שאלות אמריקאיות</span><br/>מהמבחנים שלך</h1>
-            <p class="hero-sub">העלה קבצי PDF של מבחנים קודמים. המערכת תחתוך את השאלות אוטומטית, תזהה את התשובות הנכונות, ותיצור לך אפליקציית תרגול מקצועית עם ניתוח דפוסי המרצה ושאלות AI דומות.</p>
+            <p class="hero-sub">העלה PDF של מבחנים קודמים ותקבל אפליקציית תרגול מקצועית — חיתוך אוטומטי, זיהוי תשובות, מקבצי תרגול, סקירת טעויות עם הסברים מפורטים, ושאלות AI דומות שמתרגלות אותך עד להצלחה.</p>
             <div class="hero-ctas">
-              <a href="/login?signup=1" class="btn btn-primary btn-lg" data-route="/login?signup=1">התחל בחינם - 5 PDFs ראשונים חינם</a>
+              <a href="#/login?signup=1" class="btn btn-primary btn-lg" data-route="/login?signup=1">התחל בחינם · 5 PDFs ראשונים חינם</a>
               <a href="#how" class="btn btn-ghost btn-lg">איך זה עובד? ↓</a>
             </div>
-            <div class="trust">
+            <div class="hero-trust">
               <span>✅ ללא כרטיס אשראי</span>
               <span>✅ עברית מלאה</span>
-              <span>✅ מותאם לטלפון</span>
+              <span>✅ מותאם למובייל</span>
             </div>
           </div>
           <div class="hero-visual">
-            <div class="hero-card-mock">
-              <div class="mock-header">
-                <span class="mock-dot red"></span>
-                <span class="mock-dot yellow"></span>
-                <span class="mock-dot green"></span>
-                <span class="mock-title">שאלה 3 / 20</span>
-              </div>
-              <div class="mock-content">
-                <div class="mock-question">איזו מהשורות הבאות תעבור קומפילציה?</div>
-                <div class="mock-code">List&lt;? extends String&gt; lst = ...<br/>lst.add("hello");</div>
-                <div class="mock-options">
-                  <div class="mock-opt">1. תקמפל</div>
-                  <div class="mock-opt selected">2. לא תקמפל</div>
-                  <div class="mock-opt">3. שגיאת ריצה</div>
-                </div>
-                <div class="mock-timer">⏱ 14:32</div>
-              </div>
-            </div>
+            <img src="/public/images/hero.png" alt="הדגמה של ExamPrep — סטודנט מתרגל מבחן אמריקאי במחשב נייד" class="hero-image" />
           </div>
         </div>
       </section>
 
       <!-- FEATURES -->
-      <section class="features" id="features">
+      <section class="section" id="features">
         <div class="container">
-          <h2 class="section-title">למה ExamPrep?</h2>
-          <p class="section-sub">כל מה שצריך כדי להצליח במבחנים האקדמיים במקום אחד</p>
+          <span class="section-eyebrow">למה ExamPrep</span>
+          <h2 class="section-title">כל מה שצריך כדי להצליח במבחן</h2>
+          <p class="section-sub">מהעלאת PDF גולמי ועד תרגול מקצועי עם סקירת טעויות — הכל במקום אחד, בעברית, בלי טכנופוביה.</p>
           <div class="features-grid">
-            <div class="feature">
+            <div class="feature-card">
               <div class="feature-icon">📤</div>
               <h3>העלאה אוטומטית</h3>
-              <p>פשוט העלה את קובץ ה-PDF של המבחן + הפתרון. המערכת חותכת את השאלות לתמונות מקצועיות אוטומטית - שומרת על העברית, הקוד והפורמט המקורי.</p>
+              <p>תעלה PDF של המבחן + הפתרון. המערכת חותכת כל שאלה לתמונה מקצועית, שומרת על העברית, הקוד והפורמט המקורי.</p>
             </div>
-            <div class="feature">
+            <div class="feature-card">
               <div class="feature-icon">🎯</div>
               <h3>זיהוי תשובות חכם</h3>
-              <p>זיהוי אוטומטי של התשובות הנכונות מקובץ הפתרונות (סימונים בצהוב), בלי שתצטרך להזין כלום ידנית.</p>
+              <p>זיהוי אוטומטי של התשובות הנכונות מקובץ הפתרונות שלך — כולל סימוני צהוב — בלי שתצטרך להזין כלום ידנית.</p>
             </div>
-            <div class="feature">
+            <div class="feature-card">
               <div class="feature-icon">🧠</div>
-              <h3>ניתוח דפוסי המרצה</h3>
-              <p>AI מנתח את כל המבחנים שלך ומזהה אילו נושאים המרצה אוהב לשאול עליהם. מקבל המלצות ממוקדות מה ללמוד.</p>
+              <h3>הסברים בעלי משמעות</h3>
+              <p>אם בקובץ הפתרון יש הסברים מלאים — נשתמש בהם. אם אין — AI יוצר הסבר מפורט לכל אופציה: למה היא נכונה או שגויה.</p>
             </div>
-            <div class="feature">
+            <div class="feature-card">
+              <div class="feature-icon">🎮</div>
+              <h3>מקבצי תרגול גמישים</h3>
+              <p>תבחר כמות שאלות, טיימר, מצב מבחן או מצב למידה. תרגל מבחנים שלמים, שאלות אקראיות, שאלות שטעית בהן, או רק שאלות חדשות.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">🔍</div>
+              <h3>סקירת טעויות מקצועית</h3>
+              <p>אחרי כל מקבץ, תקבל מסך סקירה מפואר עם כל השאלות שטעית בהן, הסברים מלאים, וניתוח של איפה הולכת לך הראש.</p>
+            </div>
+            <div class="feature-card">
               <div class="feature-icon">✨</div>
               <h3>שאלות AI דומות</h3>
-              <p>יוצר עבורך שאלות חדשות באותו סגנון של המבחנים שלך - תרגול בלתי מוגבל בנושאים שאתה חלש בהם.</p>
-            </div>
-            <div class="feature">
-              <div class="feature-icon">📊</div>
-              <h3>מעקב התקדמות</h3>
-              <p>סטטיסטיקות מפורטות פר קורס - איזה נושאים אתה שולט בהם ובאיזה צריך עוד עבודה. תור חזרה אוטומטי.</p>
-            </div>
-            <div class="feature">
-              <div class="feature-icon">⏱</div>
-              <h3>תרגול עם טיימר</h3>
-              <p>מקבצים אקראיים, טיימר מותאם, קיצורי מקלדת - בדיוק כמו במבחן האמיתי. מותאם למחשב ולטלפון.</p>
-            </div>
-            <div class="feature">
-              <div class="feature-icon">💡</div>
-              <h3>פידבק חכם</h3>
-              <p>אחרי כל מקבץ - AI נותן לך חוות דעת מפורטת: על מה לחזור, אילו נושאים לחזק, ומציע שאלות לתרגול ממוקד.</p>
-            </div>
-            <div class="feature">
-              <div class="feature-icon">📚</div>
-              <h3>קורסים מרובים</h3>
-              <p>נהל קורסים נפרדים (תוכנה 1, חשבון אינפי, מבני נתונים...) עם התקדמות אישית לכל אחד.</p>
-            </div>
-            <div class="feature">
-              <div class="feature-icon">🔒</div>
-              <h3>פרטיות ואבטחה</h3>
-              <p>הנתונים שלך מוצפנים וניתנים לגישה רק לך. תואם GDPR וחוקי הגנת הפרטיות בישראל.</p>
+              <p>פיצ'ר פרימיום: AI מנתח את השאלות שלך ויוצר וריאציות חדשות באותו סגנון, רמה ונושא — אין סוף לתרגול.</p>
             </div>
           </div>
         </div>
       </section>
 
+      <!-- SHOWCASE 1: Knowledge Map -->
+      <section class="showcase">
+        <div class="container showcase-grid">
+          <div class="showcase-text">
+            <span class="section-eyebrow">מרכז הידע שלך</span>
+            <h2>כל החומר שלך<br/>במקום אחד דיגיטלי</h2>
+            <p>העלה PDFs, סרוק חוברות תרגול, צרף דפי נוסחאות — והפלטפורמה הופכת אותם למרכז ידע מאורגן עם תיוג חכם, חיפוש מהיר וקישורים בין נושאים. כל חומרי הלימוד שלך הופכים לכלי תרגול חי.</p>
+            <ul class="showcase-points">
+              <li>📚 ארכיון פרטי לכל חומרי הלימוד</li>
+              <li>🔎 חיפוש בכל המבחנים בשנייה</li>
+              <li>🗂️ ארגון אוטומטי לפי קורסים ונושאים</li>
+              <li>☁️ סנכרון בין מכשירים</li>
+            </ul>
+          </div>
+          <div class="showcase-visual">
+            <img src="/public/images/knowledge-map.png" alt="מרכז הידע הדיגיטלי של ExamPrep" />
+          </div>
+        </div>
+      </section>
+
+      <!-- SHOWCASE 2: Analytics (reverse) -->
+      <section class="showcase reverse">
+        <div class="container showcase-grid">
+          <div class="showcase-text">
+            <span class="section-eyebrow">ניתוח חכם</span>
+            <h2>תדע בדיוק<br/>איפה ללחוץ חזק</h2>
+            <p>המערכת מנתחת אילו נושאים קשים לך, אילו סוגי שאלות חוזרים, איפה אתה מבזבז זמן ואיפה אתה מתחזק. אתה לא לומד "הכל" — אתה לומד את מה שבאמת ישפר את הציון שלך.</p>
+            <ul class="showcase-points">
+              <li>📊 מפות חום של נקודות חולשה</li>
+              <li>🎯 המלצות יומיות מותאמות אישית</li>
+              <li>📈 גרפי התקדמות לאורך זמן</li>
+              <li>⚡ זיהוי שאלות שכדאי לחזור עליהן</li>
+            </ul>
+          </div>
+          <div class="showcase-visual">
+            <img src="/public/images/analytics.png" alt="ניתוח דפוסי שאלות וחולשות לימוד" />
+          </div>
+        </div>
+      </section>
+
       <!-- HOW IT WORKS -->
-      <section class="how" id="how">
+      <section class="section how" id="how">
         <div class="container">
-          <h2 class="section-title">איך זה עובד?</h2>
-          <p class="section-sub">3 שלבים פשוטים לאפליקציית תרגול מותאמת אישית</p>
-          <div class="steps">
-            <div class="step">
-              <div class="step-num">1</div>
-              <h3>פתח חשבון חינמי</h3>
-              <p>הירשם בלי כרטיס אשראי. תקבל 5 PDFs בחינם להתנסות.</p>
+          <span class="section-eyebrow">כך זה עובד</span>
+          <h2 class="section-title">תהליך הכנה מותאם להצלחה</h2>
+          <p class="section-sub">מבחירת הקורס ועד שיפור הביצועים — 5 שלבים שמכינים אותך באמת למבחן.</p>
+          <div class="how-image-wrap">
+            <img src="/public/images/how-it-works.png" alt="איך ExamPrep עובדת — תהליך 5 שלבים לתרגול חכם" class="how-image" />
+          </div>
+        </div>
+      </section>
+
+      <!-- TESTIMONIALS -->
+      <section class="section testimonials" id="testimonials">
+        <div class="container">
+          <span class="section-eyebrow">מה אומרים עלינו</span>
+          <h2 class="section-title">סטודנטים שכבר עוברים מבחנים</h2>
+          <p class="section-sub">לקטענו את החוויות הכי מרגשות מקבוצות הוואטסאפ של הסטודנטים שלנו</p>
+          <div class="tg-grid">
+            <div class="tg-col">
+              <div class="bubble right">
+                <div class="bubble-name">דניאל ל'</div>
+                החיים שלי השתנו! העליתי 6 מבחנים של תוכנה 1 וקיבלתי 80 שאלות מוכנות עם הסברים מטורפים. עברתי את המועד ב-89 🔥
+                <div class="bubble-time">9:22</div>
+              </div>
+              <div class="bubble left">
+                <div class="bubble-name">נועה ק'</div>
+                הפיצ'ר של סקירת טעויות פשוט לא נורמלי. כל שאלה שטעיתי בה - הסבר מלא, איפה התבלבלתי, ולמה התשובה הנכונה היא הנכונה. ככה לומדים!
+                <div class="bubble-time">11:48</div>
+              </div>
+              <div class="bubble right">
+                <div class="bubble-name">שחר מ'</div>
+                ניסיתי הכל - חוברות, פלאשקארדס, תרגולים בקבוצות. שום דבר לא משתווה לתרגול ממוקד עם הסברים בזמן אמת. ממליץ בחום ❤️
+                <div class="bubble-time">14:15</div>
+              </div>
             </div>
-            <div class="step">
-              <div class="step-num">2</div>
-              <h3>העלה את המבחנים שלך</h3>
-              <p>העלה PDFs של מבחנים קודמים + קובצי פתרון. תוך שניות הכל מעובד.</p>
+            <div class="tg-col">
+              <div class="bubble left">
+                <div class="bubble-name">תמר ב'</div>
+                ה-AI שמייצר שאלות דומות זה משהו מיוחד 🤯 העלתי 5 מבחנים ויצרתי לי בנק של 200+ שאלות חדשות באותו סגנון. מתרגל בלי הפסקה.
+                <div class="bubble-time">10:30</div>
+              </div>
+              <div class="bubble right">
+                <div class="bubble-name">יוסי ס'</div>
+                מה שאהבתי במיוחד - שזה לא סתם תשובה נכונה/לא, אלא הסבר מלא לכל אופציה למה היא שגויה. בדיוק מה שצריך לבנות מודל מנטלי 💡
+                <div class="bubble-time">12:11</div>
+              </div>
+              <div class="bubble left">
+                <div class="bubble-name">מיה ש'</div>
+                בתקופת המבחנים אני מתרגלת 2 שעות ביום על המערכת הזאת. ההתקדמות שאני רואה בנתונים זה מוטיבציה אדירה לבד. תודה!! 🙌
+                <div class="bubble-time">15:42</div>
+              </div>
             </div>
-            <div class="step">
-              <div class="step-num">3</div>
-              <h3>תרגל ושפר</h3>
-              <p>קבל מקבצי תרגול חכמים, פידבק AI, וניתוח דפוסים. הצלחה מובטחת.</p>
+            <div class="tg-col">
+              <div class="bubble right">
+                <div class="bubble-name">איתי ר'</div>
+                לאחר 3 שבועות של תרגול אני יודע איזה נושאים המרצה אוהב לשאול. המערכת מנתחת דפוסים שלא ראיתי בעצמי. שווה כל שקל!
+                <div class="bubble-time">8:55</div>
+              </div>
+              <div class="bubble left">
+                <div class="bubble-name">רועי ג'</div>
+                המעבר משאלה לשאלה חלק כמו של אפליקציה רגילה, לא כמו אתר חינוכי משעמם. גם הקודיסט בתשובות זה דיוק מטורף 👨‍💻
+                <div class="bubble-time">13:20</div>
+              </div>
+              <div class="bubble right">
+                <div class="bubble-name">ליה ת'</div>
+                התחלתי מהחבילה החינמית - אחרי 3 ימים שדרגתי ל-Pro. הערך פשוט מטורף ביחס למחיר. ממליצה לכל סטודנט שמעריך את הזמן שלו 💎
+                <div class="bubble-time">16:33</div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       <!-- PRICING -->
-      <section class="pricing" id="pricing">
+      <section class="section" id="pricing">
         <div class="container">
-          <h2 class="section-title">מחירים פשוטים</h2>
-          <p class="section-sub">בחר את החבילה שמתאימה לך. אפשר לשדרג בכל עת.</p>
+          <span class="section-eyebrow">מחירים</span>
+          <h2 class="section-title">תוכניות שמתאימות לכל סטודנט</h2>
+          <p class="section-sub">תתחיל בחינם, תשדרג רק כשתרגיש את הערך. ניתן לבטל בכל עת.</p>
           <div class="pricing-grid">
             <div class="price-card">
               <div class="price-name">חינמי</div>
-              <div class="price-amount">₪0<span>/לעולם</span></div>
-              <div class="price-desc">להתנסות במוצר</div>
+              <div class="price-amount">0<span class="currency">₪</span></div>
+              <div class="price-desc">להתנסות במערכת</div>
               <ul class="price-features">
-                <li>✅ עד 5 קבצי PDF</li>
-                <li>✅ קורס אחד</li>
-                <li>✅ תרגול שאלות מלא</li>
-                <li>✅ טיימר ומעקב התקדמות</li>
-                <li>❌ שאלות AI דומות</li>
-                <li>❌ ניתוח דפוסים</li>
+                <li>5 קבצי PDF סך הכל</li>
+                <li>קורס אחד פעיל</li>
+                <li>תרגול מקבצים + טיימר</li>
+                <li>סקירת טעויות בסיסית</li>
+                <li class="no">ללא שאלות AI</li>
+                <li class="no">ללא תמיכה</li>
               </ul>
-              <a href="/login?signup=1" class="btn btn-ghost btn-block" data-route="/login?signup=1">התחל בחינם</a>
+              <a href="#/login?signup=1" class="btn btn-ghost btn-block" data-route="/login?signup=1">התחל בחינם</a>
             </div>
-            <div class="price-card popular">
-              <div class="popular-badge">הכי פופולרי</div>
+            <div class="price-card featured">
               <div class="price-name">Basic</div>
-              <div class="price-amount">₪19.90<span>/חודש</span></div>
-              <div class="price-desc">לסטודנט הסטנדרטי</div>
+              <div class="price-amount">19.90<span class="currency">₪</span><span class="period">/חודש</span></div>
+              <div class="price-desc">לסטודנט עם מבחן בשבוע הבא</div>
               <ul class="price-features">
-                <li>✅ עד 30 PDFs בחודש</li>
-                <li>✅ עד 5 קורסים</li>
-                <li>✅ 100 שאלות AI בחודש</li>
-                <li>✅ ניתוח דפוסי מרצה</li>
-                <li>✅ פידבק AI אחרי מקבץ</li>
-                <li>✅ ייצוא נתונים</li>
+                <li>30 קבצי PDF בחודש</li>
+                <li>5 קורסים פעילים</li>
+                <li>100 שאלות AI דומות בחודש</li>
+                <li>סקירת טעויות מתקדמת</li>
+                <li>ייצוא לקובץ CSV</li>
+                <li>תמיכה במייל</li>
               </ul>
-              <a href="/login?signup=1&plan=basic" class="btn btn-primary btn-block" data-route="/login?signup=1">הצטרף ל-Basic</a>
+              <a href="#/login?signup=1" class="btn btn-primary btn-block" data-route="/login?signup=1">לבחור Basic</a>
             </div>
             <div class="price-card">
               <div class="price-name">Pro</div>
-              <div class="price-amount">₪49.90<span>/חודש</span></div>
-              <div class="price-desc">לסטודנט הרציני</div>
+              <div class="price-amount">49.90<span class="currency">₪</span><span class="period">/חודש</span></div>
+              <div class="price-desc">לסטודנט רציני שלא מתפשר</div>
               <ul class="price-features">
-                <li>✅ עד 150 PDFs בחודש</li>
-                <li>✅ קורסים בלתי-מוגבלים</li>
-                <li>✅ 500 שאלות AI בחודש</li>
-                <li>✅ ניתוח דפוסים מתקדם</li>
-                <li>✅ עדיפות בעיבוד</li>
-                <li>✅ תמיכה מהירה</li>
+                <li>150 קבצי PDF בחודש</li>
+                <li>קורסים בלתי מוגבלים</li>
+                <li>500 שאלות AI דומות</li>
+                <li>ייצוא נתונים מלא</li>
+                <li>עדיפות בעיבוד</li>
+                <li>שיתוף קורסים</li>
               </ul>
-              <a href="/login?signup=1&plan=pro" class="btn btn-ghost btn-block" data-route="/login?signup=1">הצטרף ל-Pro</a>
+              <a href="#/login?signup=1" class="btn btn-ghost btn-block" data-route="/login?signup=1">לבחור Pro</a>
             </div>
             <div class="price-card">
               <div class="price-name">Education</div>
-              <div class="price-amount">₪199<span>/חודש</span></div>
-              <div class="price-desc">למורים ולמתרגלים</div>
+              <div class="price-amount">199<span class="currency">₪</span><span class="period">/חודש</span></div>
+              <div class="price-desc">למורים ומוסדות</div>
               <ul class="price-features">
-                <li>✅ הכל מ-Pro</li>
-                <li>✅ עד 50 תלמידים</li>
-                <li>✅ דשבורד מורה</li>
-                <li>✅ 2000 שאלות AI</li>
-                <li>✅ שיתוף קורסים</li>
-                <li>✅ דוחות תלמידים</li>
+                <li>הכל מחבילת Pro</li>
+                <li>50 משתמשי משנה</li>
+                <li>דשבורד מורה</li>
+                <li>2,000 שאלות AI בחודש</li>
+                <li>הקצאת מבחנים לתלמידים</li>
+                <li>תמיכה מהירה</li>
               </ul>
-              <a href="/login?signup=1&plan=education" class="btn btn-ghost btn-block" data-route="/login?signup=1">הצטרף</a>
+              <a href="mailto:hi@examprep.app" class="btn btn-ghost btn-block">צור קשר</a>
             </div>
           </div>
         </div>
       </section>
 
       <!-- FAQ -->
-      <section class="faq" id="faq">
+      <section class="section faq" id="faq">
         <div class="container">
-          <h2 class="section-title">שאלות נפוצות</h2>
+          <span class="section-eyebrow">שאלות נפוצות</span>
+          <h2 class="section-title">דברים שכדאי לדעת</h2>
+          <p class="section-sub">לא מצאת תשובה? כתוב לנו ב-hi@examprep.app</p>
           <div class="faq-list">
-            <details class="faq-item">
-              <summary>איך עובד עיבוד ה-PDF?</summary>
-              <p>המערכת חותכת אוטומטית כל שאלה מהקובץ שלך לתמונה נפרדת, ומזהה את התשובה הנכונה לפי הסימונים בקובץ הפתרונות (סימונים בצהוב). התהליך לוקח כמה שניות לקובץ.</p>
-            </details>
-            <details class="faq-item">
-              <summary>אילו סוגי מבחנים נתמכים?</summary>
-              <p>כל מבחן בעברית או באנגלית עם שאלות אמריקאיות (multiple choice). תומכים בקבצים מהאוניברסיטה (תל אביב, העברית, טכניון, בן-גוריון, חיפה, ב"א ועוד), פסיכומטרי, AMIRAM, מבחני בגרות וכל מבחן אחר.</p>
-            </details>
-            <details class="faq-item">
-              <summary>כמה זמן לוקח לעבד קובץ?</summary>
-              <p>בממוצע 10-30 שניות לקובץ של 20 עמודים. קבצים גדולים יותר (עד 100 עמודים) יכולים לקחת עד דקה.</p>
-            </details>
-            <details class="faq-item">
-              <summary>איך עובד ניתוח דפוסי המרצה?</summary>
-              <p>אחרי שהעלית כמה מבחנים, ה-AI סורק את כולם ומזהה דפוסים: באילו נושאים המרצה מתמקד, אילו סוגי שאלות חוזרים, ומה הסטייה הסטטיסטית. מקבל המלצות ממוקדות.</p>
-            </details>
-            <details class="faq-item">
-              <summary>מה זה "שאלות AI דומות"?</summary>
-              <p>אחרי שיש לך מאגר שאלות, ה-AI מייצר שאלות חדשות באותו סגנון - אותה רמת קושי, אותם נושאים, אותה צורת ניסוח. תרגול בלתי מוגבל בלי שאוזלות לך השאלות.</p>
-            </details>
-            <details class="faq-item">
-              <summary>האם המידע שלי פרטי?</summary>
-              <p>כן בהחלט. אנחנו מצפינים את כל הקבצים שלך, ורק אתה יכול לגשת אליהם. אנחנו תואמים תקנות הגנת הפרטיות (תשע"ז-2017), GDPR, ולא משתפים נתונים עם צד שלישי.</p>
-            </details>
-            <details class="faq-item">
-              <summary>אפשר לבטל בכל עת?</summary>
-              <p>כן - אפשר לבטל מנוי בכל עת מהדשבורד. תמשיך לקבל את השירות עד סוף תקופת החיוב הנוכחית.</p>
-            </details>
-            <details class="faq-item">
-              <summary>איך מתבצע התשלום?</summary>
-              <p>תשלום מאובטח דרך Stripe (כרטיסי אשראי) או דרך ספקי תשלום ישראליים (Tranzila). הנתונים שלך לעולם לא נשמרים אצלנו.</p>
-            </details>
+            <div class="faq-item">
+              <button class="faq-q">איך המערכת חותכת את השאלות מה-PDF? <span class="arrow">▼</span></button>
+              <div class="faq-a"><div class="faq-a-inner">המערכת משתמשת בעיבוד תמונה מתקדם (ספריית sharp) שמזהה גבולות ופסקאות. אנחנו לא משתמשים ב-OCR או AI לשלב הזה — זה זול, מהיר ומדויק. הקובץ שלך לא נשלח לאף שירות חיצוני בשלב העיבוד.</div></div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-q">מה קורה אם בקובץ הפתרון שלי יש כבר הסברים מלאים? <span class="arrow">▼</span></button>
+              <div class="faq-a"><div class="faq-a-inner">המערכת מזהה אם הפתרון מכיל הסברים מהותיים (לא רק "תשובה: 2"). אם כן — היא תשתמש בהסברים שלך מבלי לבזבז טוקנים על AI. רק כשהפתרונות הם מינימליים — אנחנו מפעילים את המודל. ככה אתה לא משלם על מה שכבר יש לך.</div></div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-q">האם הקובץ שלי בטוח? <span class="arrow">▼</span></button>
+              <div class="faq-a"><div class="faq-a-inner">כל קובץ נשמר באחסון פרטי שלך עם RLS (Row Level Security) — אף משתמש אחר לא יכול לגשת אליו. אנחנו לא משתפים את התוכן עם צד שלישי, ויש לך אפשרות למחוק את כל הנתונים שלך בכל עת.</div></div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-q">מה ההבדל בין מצב מבחן למצב למידה? <span class="arrow">▼</span></button>
+              <div class="faq-a"><div class="faq-a-inner">במצב מבחן (חדש!) לא ניתן לראות את התשובה הנכונה תוך כדי הפתרון - רק בסוף. במצב למידה תוכל ללחוץ "הצג פתרון" על כל שאלה בנפרד. בכל מקרה, אחרי סוף המקבץ תקבל סקירת טעויות מלאה עם ההסברים.</div></div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-q">האם אפשר להשתמש מהטלפון? <span class="arrow">▼</span></button>
+              <div class="faq-a"><div class="faq-a-inner">בהחלט! האתר מותאם מלא לטלפונים וטאבלטים. בהמשך נשחרר גם אפליקציה ייעודית למובייל (iOS + Android).</div></div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-q">איך אני מבטל את המנוי? <span class="arrow">▼</span></button>
+              <div class="faq-a"><div class="faq-a-inner">בקליק אחד מתוך הגדרות החשבון. לא נדרשת שיחת טלפון, אין "מבצעי שימור", פשוט מבטלים. החשבון יישאר פעיל עד סוף תקופת החיוב הנוכחית, ואז יחזור לתוכנית החינמית.</div></div>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- CTA -->
-      <section class="cta-section">
+      <!-- FINAL CTA -->
+      <section class="final-cta">
         <div class="container">
-          <h2>מוכן להתחיל?</h2>
-          <p>הירשם בחינם ועלה את המבחן הראשון שלך תוך פחות מדקה</p>
-          <a href="/login?signup=1" class="btn btn-primary btn-lg" data-route="/login?signup=1">התחל עכשיו - חינם</a>
+          <h2>מוכן להתחיל לתרגל חכם?</h2>
+          <p>הצטרף עכשיו ל-ExamPrep וקבל את 5 ה-PDFs הראשונים לעיבוד חינם — בלי כרטיס אשראי, בלי התחייבות.</p>
+          <a href="#/login?signup=1" class="btn btn-primary btn-lg" data-route="/login?signup=1">התחל בחינם עכשיו ←</a>
+          <div class="cta-trust">
+            <span>✅ ללא כרטיס אשראי</span>
+            <span>✅ התחלה מיידית</span>
+            <span>✅ ללא התחייבות</span>
+          </div>
         </div>
       </section>
 
       <!-- FOOTER -->
       <footer class="footer">
-        <div class="container footer-grid">
-          <div class="footer-col">
-            <div class="logo">
-              <span class="logo-icon">📚</span>
-              <span class="logo-text">ExamPrep</span>
+        <div class="container">
+          <div class="footer-grid">
+            <div class="footer-brand">
+              <div class="logo">
+                <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img logo-img-dark" />
+              </div>
+              <p>פלטפורמת SaaS ישראלית לתרגול שאלות אמריקאיות. עיבוד אוטומטי של מבחני PDF, סקירת טעויות עם הסברים, ושאלות AI דומות.</p>
             </div>
-            <p class="muted">פלטפורמה ישראלית לתרגול שאלות אמריקאיות במבחנים אקדמיים.</p>
+            <div>
+              <h5>מוצר</h5>
+              <ul>
+                <li><a href="#features">פיצ'רים</a></li>
+                <li><a href="#how">איך זה עובד</a></li>
+                <li><a href="#pricing">מחירים</a></li>
+                <li><a href="#faq">שאלות נפוצות</a></li>
+              </ul>
+            </div>
+            <div>
+              <h5>החברה</h5>
+              <ul>
+                <li><a href="mailto:hi@examprep.app">צור קשר</a></li>
+                <li><a href="/legal/privacy.html">פרטיות</a></li>
+                <li><a href="/legal/terms.html">תנאי שימוש</a></li>
+              </ul>
+            </div>
+            <div>
+              <h5>חשבון</h5>
+              <ul>
+                <li><a href="#/login" data-route="/login">כניסה</a></li>
+                <li><a href="#/login?signup=1" data-route="/login?signup=1">הרשמה</a></li>
+              </ul>
+            </div>
           </div>
-          <div class="footer-col">
-            <h4>המוצר</h4>
-            <a href="#features">פיצ'רים</a>
-            <a href="#pricing">מחירים</a>
-            <a href="#how">איך זה עובד</a>
-            <a href="#faq">שאלות נפוצות</a>
+          <div class="footer-bottom">
+            <span>© 2026 ExamPrep · כל הזכויות שמורות</span>
+            <span>Made with ❤️ in Israel</span>
           </div>
-          <div class="footer-col">
-            <h4>משפטי</h4>
-            <a href="/legal/privacy.html">מדיניות פרטיות</a>
-            <a href="/legal/terms.html">תנאי שימוש</a>
-            <a href="/legal/accessibility.html">הצהרת נגישות</a>
-            <a href="/legal/cookies.html">מדיניות עוגיות</a>
-          </div>
-          <div class="footer-col">
-            <h4>צור קשר</h4>
-            <a href="mailto:support@examprep.app">support@examprep.app</a>
-            <p class="muted">ת"א, ישראל</p>
-          </div>
-        </div>
-        <div class="footer-bottom container">
-          <p>© 2026 ExamPrep. כל הזכויות שמורות.</p>
         </div>
       </footer>
     </div>
   </template>
 
-  <!-- Login -->
-  <template id="tmpl-login">
+  <!-- ============================ -->
+  <!--             AUTH            -->
+  <!-- ============================ -->
+  <template id="tmpl-auth">
     <div class="auth-screen">
       <div class="auth-card">
-        <a href="/" class="logo center" data-route="/">
-          <span class="logo-icon">📚</span>
-          <span class="logo-text">ExamPrep</span>
+        <a href="#/" class="logo" data-route="/">
+          <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img" />
         </a>
-        <h2 id="auth-title">כניסה לחשבון</h2>
-        <p class="auth-tagline" id="auth-tagline">ברוך הבא חזרה</p>
+        <h1 class="auth-title">ברוך הבא</h1>
+        <p class="auth-sub">כניסה לחשבון או הרשמה חדשה</p>
 
-        <!-- Google OAuth -->
-        <button type="button" id="btn-google" class="btn-google btn-block">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-          </svg>
-          המשך עם Google
-        </button>
-
-        <div class="auth-divider">
-          <span>או</span>
+        <div class="auth-tabs">
+          <button class="auth-tab active" data-tab="login">כניסה</button>
+          <button class="auth-tab" data-tab="signup">הרשמה</button>
         </div>
 
-        <form id="auth-form" novalidate>
-          <div class="input-wrap">
-            <input type="email" name="email" id="auth-email" placeholder="כתובת מייל" autocomplete="email" required />
-            <span class="input-error" id="email-error"></span>
+        <form class="auth-form" id="auth-form">
+          <div class="field">
+            <label for="auth-email">כתובת אימייל</label>
+            <input type="email" id="auth-email" name="email" placeholder="name@example.com" required autocomplete="email" />
           </div>
-          <div class="input-wrap">
-            <input type="password" name="password" id="auth-password" placeholder="סיסמה" autocomplete="current-password" required />
-            <span class="input-error" id="password-error"></span>
+          <div class="field">
+            <label for="auth-pass">סיסמה</label>
+            <input type="password" id="auth-pass" name="password" placeholder="לפחות 6 תווים" required minlength="6" autocomplete="current-password" />
           </div>
-          <div id="password-strength" class="hidden">
-            <div class="strength-bar"><div class="strength-fill" id="strength-fill"></div></div>
-            <ul class="strength-checks">
-              <li id="check-len">לפחות 8 תווים</li>
-              <li id="check-letter">לפחות אות אחת (a-z או A-Z)</li>
-              <li id="check-number">לפחות ספרה אחת (0-9)</li>
-              <li id="check-symbol">לפחות סימן מיוחד (!@#$%...) - מומלץ</li>
-            </ul>
+          <div class="field" id="signup-name-field" style="display:none;">
+            <label for="auth-name">שם להצגה</label>
+            <input type="text" id="auth-name" name="name" placeholder="לדוגמה: דניאל" />
           </div>
-          <div class="auth-actions">
-            <button type="submit" id="btn-primary-action" class="btn btn-primary btn-block">כניסה</button>
-            <button type="button" id="btn-toggle-mode" class="btn btn-ghost btn-block">אין לך חשבון? הירשם</button>
-          </div>
-          <p class="error" id="auth-error"></p>
-          <p class="auth-back"><a href="/" data-route="/">← חזרה לדף הבית</a></p>
+          <div class="auth-error" id="auth-error"></div>
+          <button type="submit" class="btn btn-primary btn-block btn-lg" id="auth-submit">כניסה</button>
         </form>
-        <p class="auth-policy muted">
-          בהרשמה אתה מסכים ל<a href="/legal/terms.html">תנאי השימוש</a> ול<a href="/legal/privacy.html">מדיניות הפרטיות</a> שלנו.
-          הסיסמה שלך מוצפנת ולעולם לא נשמרת בטקסט גלוי.
-        </p>
+
+        <div class="admin-shortcut">
+          <strong>למפתח / אדמין:</strong><br/>
+          לחץ כאן כדי להיכנס מיד עם המשתמש מנהל ולהתחיל לתרגל את "תוכנה 1" (85 שאלות מוכנות).
+          <button id="admin-quick-login">⚡ כניסה מהירה כאדמין</button>
+        </div>
+
+        <div class="auth-foot">
+          <a href="#/" data-route="/">← חזרה לדף הבית</a>
+        </div>
       </div>
     </div>
   </template>
 
-  <!-- Dashboard -->
-  <template id="tmpl-dashboard">
-    <div class="dashboard">
-      <header class="navbar">
-        <div class="navbar-inner container">
-          <a href="/" class="logo" data-route="/dashboard">
-            <span class="logo-icon">📚</span>
-            <span class="logo-text">ExamPrep</span>
+  <!-- ============================ -->
+  <!--          DASHBOARD          -->
+  <!-- ============================ -->
+  <template id="tmpl-dash">
+    <div class="app-screen">
+      <header class="app-topbar">
+        <div class="app-topbar-inner">
+          <a href="#/dashboard" class="logo" data-route="/dashboard">
+            <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img" />
           </a>
-          <nav class="nav-links">
-            <a href="/dashboard" data-route="/dashboard">הקורסים שלי</a>
-            <a href="/pricing" data-route="/pricing">שדרוג</a>
-          </nav>
-          <div class="nav-cta">
-            <span class="user-badge" id="user-badge"></span>
-            <button id="btn-logout" class="btn btn-ghost">יציאה</button>
+          <div class="app-user">
+            <span class="app-user-plan" id="user-plan">free</span>
+            <span class="app-user-name" id="user-name"></span>
+            <div class="app-user-avatar" id="user-avatar">U</div>
+            <button class="btn btn-ghost btn-sm" id="btn-logout">יציאה</button>
           </div>
         </div>
       </header>
-      <main class="dashboard-main container">
-        <div class="dashboard-header">
-          <h1>הקורסים שלי</h1>
-          <button id="btn-new-course" class="btn btn-primary">+ קורס חדש</button>
+      <main class="app-content">
+        <div class="dash-greet">
+          <h1 id="dash-greet-title">שלום! 👋</h1>
+          <p>בואו נתרגל קצת היום ונתקדם לקראת המבחן.</p>
         </div>
-        <div class="quota-bar" id="quota-bar"></div>
-        <div id="courses-grid" class="courses-grid"></div>
+
+        <div class="stats-grid" id="dash-stats"></div>
+
+        <div class="section-h">
+          <h2>הקורסים שלי</h2>
+          <button class="btn btn-soft btn-sm" id="btn-add-course">+ הוסף קורס</button>
+        </div>
+        <div class="courses-grid" id="dash-courses"></div>
       </main>
     </div>
   </template>
 
-  <!-- New course modal -->
-  <template id="tmpl-new-course">
-    <div class="modal-overlay" id="modal-overlay">
+  <!-- ============================ -->
+  <!--    BATCH CREATION MODAL     -->
+  <!-- ============================ -->
+  <template id="tmpl-batch-modal">
+    <div class="modal-backdrop" id="batch-modal">
       <div class="modal">
-        <h2>קורס חדש</h2>
-        <form id="new-course-form">
-          <input type="text" name="name" placeholder="שם הקורס (לדוגמה: תוכנה 1)" required minlength="2" maxlength="100" />
-          <textarea name="description" placeholder="תיאור (אופציונלי)" rows="3" maxlength="500"></textarea>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary">צור</button>
-            <button type="button" id="btn-cancel-course" class="btn btn-ghost">ביטול</button>
+        <button class="modal-close" id="batch-close">✕</button>
+        <h2>מקבץ תרגול חדש</h2>
+        <p class="modal-sub">תבחר את ההגדרות שלך ונתחיל</p>
+
+        <div class="auth-form">
+          <div class="field">
+            <label>מספר שאלות</label>
+            <select id="batch-size">
+              <option value="5">5 שאלות (מהיר)</option>
+              <option value="10">10 שאלות</option>
+              <option value="15">15 שאלות</option>
+              <option value="20" selected>20 שאלות</option>
+              <option value="30">30 שאלות (אתגר)</option>
+              <option value="50">50 שאלות (מבחן ארוך)</option>
+            </select>
           </div>
-          <p class="error" id="course-error"></p>
-        </form>
+          <div class="field">
+            <label>סוג מקבץ</label>
+            <select id="batch-type">
+              <option value="random">שאלות אקראיות מכל המבחנים</option>
+              <option value="exam">מבחן ספציפי</option>
+              <option value="review">חזרה על שאלות שטעיתי בהן</option>
+              <option value="unanswered">שאלות שעדיין לא ניסיתי</option>
+            </select>
+          </div>
+          <div class="field" id="exam-row" style="display:none;">
+            <label>בחר מבחן</label>
+            <select id="batch-exam"></select>
+          </div>
+          <div class="field">
+            <label>טיימר</label>
+            <select id="batch-timer">
+              <option value="0">ללא טיימר</option>
+              <option value="600">10 דקות</option>
+              <option value="1200">20 דקות</option>
+              <option value="1800">30 דקות</option>
+              <option value="2700">45 דקות</option>
+              <option value="3600">60 דקות</option>
+            </select>
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-text">
+              מצב מבחן (ללא הצגת פתרונות)
+              <small>אם פעיל - לא ניתן ללחוץ "הצג פתרון" תוך כדי המקבץ. רק בסוף תקבל סקירת טעויות מלאה.</small>
+            </div>
+            <div class="toggle" id="exam-mode-toggle"></div>
+          </div>
+
+          <div class="quiz-actions" style="margin-top: 8px;">
+            <button class="btn btn-ghost" id="batch-cancel">ביטול</button>
+            <button class="btn btn-primary" id="batch-start">התחל מקבץ ←</button>
+          </div>
+        </div>
       </div>
     </div>
   </template>
 
-  <script src="/public/config.js"></script>
-  <script src="/public/app.js" type="module"></script>
+  <!-- ============================ -->
+  <!--             QUIZ            -->
+  <!-- ============================ -->
+  <template id="tmpl-quiz">
+    <div class="quiz-screen">
+      <header class="quiz-topbar">
+        <div class="quiz-brand">
+          <img src="/public/images/logo.png" alt="ExamPrep" class="logo-img logo-img-sm" />
+          <div class="quiz-brand-text">
+            <small id="quiz-exam-label">תוכנה 1</small>
+          </div>
+        </div>
+        <div class="quiz-progress-block">
+          <div class="quiz-progress-label" id="quiz-progress-label">שאלה 1 / 20</div>
+          <div class="quiz-progress-bar"><div class="quiz-progress-fill" id="quiz-progress-fill"></div></div>
+        </div>
+        <div class="quiz-timer-wrap hidden" id="quiz-timer-wrap">
+          <span>⏱</span>
+          <span id="quiz-timer">--:--</span>
+        </div>
+        <button class="quiz-quit" id="btn-quit" title="סיים מקבץ">✕</button>
+      </header>
+
+      <div class="quiz-body">
+        <main class="quiz-main">
+          <div class="quiz-card">
+            <div class="quiz-q-head">
+              <div class="quiz-q-num" id="quiz-q-num">שאלה 1<small></small></div>
+              <button class="quiz-flag" id="btn-flag">🚩 סמן לחזרה</button>
+            </div>
+            <div class="quiz-image-wrap">
+              <img id="quiz-image" src="" alt="שאלה" />
+            </div>
+            <div class="quiz-answers" id="quiz-answers"></div>
+          </div>
+
+          <div class="solution-panel hidden" id="solution-panel">
+            <h3>פתרון מפורט</h3>
+            <div id="solution-content"></div>
+          </div>
+
+          <div class="quiz-actions">
+            <button class="btn btn-ghost" id="btn-prev">← הקודם</button>
+            <button class="btn btn-warn hidden" id="btn-reveal">💡 הצג פתרון</button>
+            <button class="btn btn-primary" id="btn-next">הבא →</button>
+          </div>
+        </main>
+
+        <aside class="quiz-nav">
+          <h4>ניווט שאלות</h4>
+          <div class="quiz-nav-grid" id="quiz-nav-grid"></div>
+          <div class="quiz-nav-legend">
+            <div class="item"><span class="swatch" style="background:var(--brand-500)"></span>נוכחי</div>
+            <div class="item"><span class="swatch" style="background:var(--brand-100)"></span>נענה</div>
+            <div class="item"><span class="swatch" style="background:var(--bg-soft);border:2px solid var(--amber-500);"></span>מסומן לחזרה</div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </template>
+
+  <!-- ============================ -->
+  <!--            SUMMARY          -->
+  <!-- ============================ -->
+  <template id="tmpl-summary">
+    <div class="summary-screen">
+      <div class="summary-card">
+        <div class="summary-emoji" id="summary-emoji">🎉</div>
+        <h1 class="summary-title" id="summary-title">סיימת את המקבץ!</h1>
+        <p class="summary-sub" id="summary-sub">בוא נראה איך הלך לך</p>
+
+        <div class="summary-score">
+          <div class="summary-score-num" id="summary-score-num">0%</div>
+          <div class="summary-score-label">ציון</div>
+        </div>
+
+        <div class="summary-stats" id="summary-stats"></div>
+
+        <div class="summary-pills" id="summary-pills"></div>
+
+        <div class="summary-actions">
+          <button class="btn btn-primary" id="btn-mistake-review">🔍 סקירת טעויות מלאה</button>
+          <button class="btn btn-soft" id="btn-summary-home">חזרה לדשבורד</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ============================ -->
+  <!--      MISTAKE REVIEW         -->
+  <!-- ============================ -->
+  <template id="tmpl-review">
+    <div class="review-screen">
+      <header class="review-header">
+        <div class="review-header-inner">
+          <div>
+            <h1>סקירת טעויות</h1>
+            <p>בוא נעבור על השאלות שטעית בהן ונוודא שאתה מבין למה</p>
+          </div>
+          <button class="review-back" id="review-back">→ חזרה לדשבורד</button>
+        </div>
+      </header>
+      <main class="review-body">
+        <div class="review-progress">
+          <div class="label">
+            <span id="review-pos">שאלה 1 מתוך 5</span>
+            <small id="review-sub">מתמקדים בטעויות שלך</small>
+          </div>
+          <div class="review-pager">
+            <button class="btn btn-ghost" id="review-prev">← הקודמת</button>
+            <button class="btn btn-primary" id="review-next">הבאה →</button>
+          </div>
+        </div>
+        <div id="review-content"></div>
+      </main>
+    </div>
+  </template>
+
+  <!-- ============================ -->
+  <!--             LOADER          -->
+  <!-- ============================ -->
+  <template id="tmpl-loader">
+    <div class="loader-screen"><div class="spinner"></div></div>
+  </template>
+
+  <script src="/public/app.js?v=20260410-1" type="module"></script>
 </body>
 </html>

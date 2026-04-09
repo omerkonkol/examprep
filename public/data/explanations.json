@@ -1,0 +1,838 @@
+{
+  "_comment": "Detailed Hebrew explanations for each question. Keys are question IDs.",
+
+  "moed_a_sem_a_2024__01": {
+    "general": "המחלקה A מגדירה שתי מתודות עם אותו שם func: אחת מקבלת `List<String>` ושנייה `ArrayList<Object>`. השאלה היא האם זה Overloading תקין. הכלל: בג'אווה שתי מתודות נחשבות duplicate אם יש להן אותה חתימה אחרי Type Erasure (אותו שם + אותם טיפוסים גולמיים של פרמטרים). כאן, אחרי מחיקת טיפוסים: `func(List)` ו-`func(ArrayList)`. זה שני טיפוסים שונים (List אינו ArrayList) ולכן הקוד **כן** מתקמפל בג'אווה רגילה. על פי התשובה המסומנת בבחינה התשובה היא 'לא מתקמפל' - כנראה שהמרצה ראה את שתי החתימות כסותרות, אבל בפועל javac מקבל אותן כ-Overloading תקף.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "מבחינת ג'אווה הסטנדרטית - הקוד אכן מתקמפל. הסיבה: List<String> ו-ArrayList<Object> הם טיפוסים בעלי שמות גולמיים שונים (List vs ArrayList) ולכן אחרי Type Erasure החתימות הן `func(List)` ו-`func(ArrayList)` - שונות. זה Overloading חוקי. עם זאת, המרצה סימן שאופציה זו שגויה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה המסומנת כנכונה.** הרעיון מאחורי הסימון: שתי המתודות זהות מבחינה גנרית עד כדי 'איזה List' מקבלות, מה שגורם לבלבול. בפועל javac דווקא יקמפל זאת, אבל לפי המרצה - הקוד אינו מתקמפל. אם בבחינה מסמנים 'לא מתקמפל' זו התשובה המצופה." }
+    ]
+  },
+  "moed_a_sem_a_2024__02": {
+    "general": "המחלקה B מגדירה שתי מתודות func: אחת מקבלת `List<? extends Object>` ושנייה `List<Object>`. כאן שתי המתודות מקבלות **List** (אותו טיפוס גולמי). אחרי Type Erasure, `List<? extends Object>` הופך ל-`List` ו-`List<Object>` הופך גם הוא ל-`List`. שתי החתימות זהות לחלוטין: `func(List)` ו-`func(List)` - duplicate method. הקומפיילר נכשל עם 'name clash: both methods have same erasure'.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "לא נכון - הקוד אינו מתקמפל. אמנם בקוד המקור שתי החתימות נראות שונות (`? extends Object` לעומת `Object`), אבל ג'אווה לא מאפשרת שתי מתודות עם אותה חתימה אחרי erasure. הקומפיילר ידחה את הקוד עם 'name clash'." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - לא מתקמפל.** אחרי Type Erasure שתי המתודות הופכות ל-`func(List)` בדיוק. הכלל של ג'אווה: שתי מתודות במחלקה אחת לא יכולות להיות בעלות אותה חתימה אחרי מחיקת טיפוסים. הקומפיילר ייתן שגיאה מסוג 'name clash: func(List<? extends Object>) and func(List<Object>) have the same erasure'." }
+    ]
+  },
+  "moed_a_sem_a_2024__03": {
+    "general": "נתונה מחלקה גנרית `class C<T>` עם מחלקה פנימית `public ___ class Cin {}` כאשר חסר במקום הקו modifier. השאלה: מתי הקוד ב-Cin יוכל להשתמש בטיפוס T? **הכלל המרכזי:** הטיפוס T של C<T> שייך **למופע** של C, לא למחלקה עצמה. מחלקה פנימית רגילה (non-static inner class) קשורה למופע של המחלקה החיצונית ולכן יכולה לגשת ל-T. מחלקה static nested אינה קשורה למופע ולכן **אינה** יכולה לגשת ל-T. כדי ש-Cin תוכל להשתמש ב-T, היא חייבת להיות non-static.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "אופציה 1: 'יש להחליף את ___ במילה static'. **שגוי לחלוטין** - זה דווקא מונע גישה ל-T. מחלקה static nested היא מחלקה עצמאית שלא תלויה במופע של C, ולכן ה-T של המופע אינו זמין לה. אם נכתוב `public static class Cin` ננסה להשתמש ב-T בתוכה, נקבל שגיאת קומפילציה: 'C.this cannot be referenced from a static context' או 'cannot make a static reference to the non-static type T'." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - יש למחוק את ___ ולא להוסיף דבר.** כלומר ההכרזה הופכת ל-`public class Cin {}`. זוהי מחלקה פנימית רגילה (inner class) שמקושרת למופע של C ולכן יכולה להשתמש בטיפוס T בחופשיות (כשדה, פרמטר, ערך מוחזר וכו'). זה הפתרון היחיד שמאפשר ל-Cin לראות את T." },
+      { "idx": 3, "isCorrect": false, "explanation": "'בשתי האפשרויות (1,2) הקוד יוכל להשתמש ב-T'. **שגוי** - רק מחיקה (אופציה 2) עובדת. הוספת static (אופציה 1) מבטלת את הגישה ל-T. אם הייתה אופציה 'שתיהן עובדות' היא הייתה שגויה." }
+    ]
+  },
+  "moed_a_sem_a_2024__04": {
+    "general": "המחלקה D מגדירה `func` סטטית שמקבלת רשימה (טיפוס חסר) וכותבת `lst.add(new String())`. ב-main מגדירים `List<String> lst = new ArrayList<>()` ומעבירים אותו ל-func. השאלה: עבור איזה טיפוס פרמטר הקוד **לא** יתקמפל? **כלל PECS** (Producer Extends, Consumer Super): אם רוצים להוסיף איברים לרשימה, היא Consumer ולכן צריך `super`. אם רוצים רק לקרוא ממנה, היא Producer ולכן `extends`. כאן הקוד מוסיף (`add`) לרשימה ולכן **אסור** להשתמש ב-`extends`.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "`List<String>` - **כן מתקמפל**. רשימה רגילה של String, ואין בעיה להוסיף לה String חדש. גם המעבר של `List<String>` ב-main כפרמטר תואם בדיוק לטיפוס הנדרש. אופציה זו לא תייצר שגיאת קומפילציה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - `List<? extends String>` לא מתקמפל.** כש-wildcard עם extends, הרשימה היא Producer בלבד - ניתן רק לקרוא ממנה (כי לא יודעים בדיוק איזה תת-טיפוס של String היא מכילה). הקריאה `lst.add(new String())` תיכשל בקומפילציה עם השגיאה: 'no suitable method found for add(String)' או 'incompatible types: String cannot be converted to capture#1 of ? extends String'. הסיבה: לא ידוע מה הטיפוס המדויק שהרשימה מכילה - ייתכן ויש שם איזה תת-מחלקה של String (אילו הייתה כזו), ולא בטוח להוסיף סתם String." },
+      { "idx": 3, "isCorrect": false, "explanation": "`List<? super String>` - **כן מתקמפל**. עם super, הרשימה היא Consumer - ניתן להוסיף לה String (או כל תת-מחלקה שלו). זה בדיוק התרחיש של PECS לכתיבה. הקריאה `lst.add(new String())` תקפה כי מובטח שכל מה שהרשימה מכילה הוא super של String, ולכן הוספת String חוקית." }
+    ]
+  },
+  "moed_a_sem_a_2024__05": {
+    "general": "הקוד מגדיר `List<Integer> ints = Arrays.asList(5,4,3,2)` ומפעיל סטרים עם `peek` (שמדפיס 'peek X'), `sorted` שממיין, ולבסוף `forEach` שמדפיס 'forEach X'. **המפתח הוא שההבחנה בין שתי קבוצות פעולות בסטרים:** פעולות **stateless** (filter, map, peek) מבוצעות איבר-איבר בזרימה דרך הצינור (pipeline), ופעולות **stateful** (sorted, distinct) חייבות לראות את כל האיברים לפני שיוציאו אפילו איבר אחד. כשיש sorted באמצע הצינור, היא חוסמת - כל איבר חייב לעבור עד sorted, וסורט מחכה לכולם, ורק אז מתחילה הזרימה ל-forEach. לכן 4 ה-peek קורים ראשונים (לכל ארבעת המספרים), ואחריהם 4 ה-forEach (לפי סדר הממוין: 2,3,4,5).",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה.** סדר ההדפסה הוא: 4 הדפסות peek לפי הסדר המקורי (peek 5, peek 4, peek 3, peek 2), ולאחריהן 4 הדפסות forEach לפי הסדר הממוין (forEach 2, forEach 3, forEach 4, forEach 5). הסיבה: sorted היא פעולת stateful שחוסמת את הזרימה - היא חייבת לאסוף את כל האיברים שעברו דרכה לפני שתוציא ולו אחד. לכן ה-peek מתבצע ראשון לכל הארבעה, ורק אז forEach מקבל את האיברים בזה אחר זה." },
+      { "idx": 2, "isCorrect": false, "explanation": "אופציה של הדפסות לסירוגין (peek-forEach-peek-forEach...) **שגוי**. לסירוגין היה קורה רק אם לא היה sorted בצינור - אז כל איבר היה זורם עד הסוף לפני שהאיבר הבא מתחיל. אבל sorted חוסם את הזרימה ושובר את הסירוגין." },
+      { "idx": 3, "isCorrect": false, "explanation": "אופציה לסירוגין הפוך (forEach קודם ל-peek) **שגוי לחלוטין**. peek תמיד קודם ל-forEach בצינור, כי peek מופיע לפני sorted ו-sorted מופיע לפני forEach. גם אם היו לסירוגין, peek היה ראשון. בכל מקרה, ה-peek חייב לרוץ לפני ה-forEach המתאים." }
+    ]
+  },
+  "moed_a_sem_a_2024__06": {
+    "general": "המנשק `F extends Comparable<Integer>` מוסיף את המתודה `public int func(Integer a)`. הגדרה: **Functional Interface** הוא מנשק שיש בו **בדיוק** מתודה אבסטרקטית אחת (Single Abstract Method - SAM). מתודות default ו-static לא נספרות. **חשוב:** מתודות אבסטרקטיות שהמנשק יורש מ-superinterfaces כן נספרות. כאן F יורש מ-Comparable<Integer> שמגדיר `int compareTo(Integer o)` (אבסטרקטית), ובנוסף F מוסיף `int func(Integer a)`. סך הכל **שתי** מתודות אבסטרקטיות → **לא** functional interface.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'F הוא מנשק פונקציונלי' - **שגוי**. המנשק יורש מ-Comparable<Integer> שמכיל את compareTo כמתודה אבסטרקטית. בנוסף F מוסיף את func. שתי מתודות אבסטרקטיות לא יוצרות מנשק פונקציונלי. אם הייתם מנסים להוסיף `@FunctionalInterface` מעל F, הקומפיילר היה זורק שגיאה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - F אינו מנשק פונקציונלי.** Comparable<Integer> מגדיר את `int compareTo(Integer o)` כמתודה אבסטרקטית (זה ה-SAM שלו). F מרחיב אותו ומוסיף את `int func(Integer a)`, גם אבסטרקטית. סך הכל 2 מתודות אבסטרקטיות שצריך לממש - לא 1. לכן F נכשל בקריטריון של functional interface." }
+    ]
+  },
+  "moed_a_sem_a_2024__07": {
+    "general": "G מגדיר בנאי שקורא ל-`func()` (פרטית, מדפיסה 'G'). SubG יורשת מ-G, בנאי SubG קורא ל-`super()` ואז ל-`func()` (פרטית של SubG, מדפיסה 'SubG'). ב-main: `G e = new SubG()`. **המפתח הוא:** מתודות `private` נקשרות **סטטית** (static binding) - הקומפיילר קובע במקום הקריאה לאיזו מתודה הולכים, ולא לפי הטיפוס בזמן ריצה. **שלבי ההרצה של `new SubG()`:** (1) בנאי SubG מתחיל. (2) `super()` מפעיל את בנאי G. (3) בנאי G קורא ל-`func()` - כי func ב-G היא private, הקומפיילר קושר אותה ל-G.func() → מדפיס **'G'**. (4) בנאי G מסתיים. (5) בנאי SubG ממשיך וקורא ל-`func()` - כאן המגבלה הסטטית קושרת ל-SubG.func() (כי אנחנו בתוך SubG) → מדפיס **'SubG'**. סדר סופי: G, SubG.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - תודפס G ואחריה SubG.** ההסבר המלא: בנאי SubG קורא קודם ל-super(), ובנאי G קורא ל-func() שלו (סטטית, פרטית) - מדפיס 'G'. אחרי ש-super() חוזר, בנאי SubG קורא ל-func() שלו (סטטית, פרטית) - מדפיס 'SubG'. הסדר הזה הוא תוצאה ישירה של חוקי הקישור הסטטי של private methods." },
+      { "idx": 2, "isCorrect": false, "explanation": "'תודפס G ואחריה G' - **שגוי**. זה היה קורה אילו בנאי SubG קרא איכשהו לפונקציית G פעמיים, אבל זה לא המקרה. בנאי SubG קורא ל-super() (שמפעיל G's func → 'G') ואז ל-func() שלו עצמו (SubG's func → 'SubG')." },
+      { "idx": 3, "isCorrect": false, "explanation": "'תודפס SubG ואחריה G' - **שגוי**. בנאי האב תמיד רץ לפני בנאי הבן (כלל בסיסי בירושה ב-Java). לכן G חייב להתבצע ראשון, לא SubG. אופציה זו הופכת את הסדר של בנאי האב/הבן." },
+      { "idx": 4, "isCorrect": false, "explanation": "'תודפס SubG ואחריה SubG' - **שגוי**. זה היה קורה אילו ב-G ה-func() הייתה virtual (לא private) ונדרסה ב-SubG. אז הקריאה לפי dynamic dispatch הייתה מגיעה ל-SubG.func() גם מתוך G(). אבל כיוון ש-func ב-G פרטית, הקישור סטטי, ולכן בנאי G מדפיס 'G' ולא 'SubG'." }
+    ]
+  },
+  "moed_a_sem_a_2024__08": {
+    "general": "המחלקה H מגדירה `public void pub() { func(); }` ו-`private void func() { print('H'); }`. SubH יורשת מ-H ומגדירה `public void func() { print('SubH'); }`. ב-main: `SubH e = new SubH(); e.pub();`. **המפתח הוא:** SubH הוסיפה מתודה public ששמה func, אבל המתודה המקורית של H הייתה private. **כלל קריטי:** מתודה private אינה נחשבת מתודה של היורש בכלל - היא לא 'נראית' מ-SubH. לכן `public void func()` של SubH אינה override אלא **מתודה חדשה לחלוטין** (ייתכן שיהיו שתי מתודות func שונות באובייקט אחד - אחת private של H ואחת public של SubH). כש-`pub()` (שיורשה מ-H) קוראת ל-`func()`, הקומפיילר רואה שזה תוך הקשר של H, ושם func היא private → קישור סטטי ל-H.func() → מדפיס **'H'**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל' - **שגוי**. הקוד מתקמפל ללא בעיה. אין התנגשות שמות כי `private void func()` ב-H ו-`public void func()` ב-SubH אינן 'מתנגשות' - private מתודות לא נראות לתת-מחלקה. מדובר במתודות נפרדות. אילו ב-SubH היה `@Override public void func()` - גם אז הקומפיילר היה מדווח שגיאה כי אין מה לדרוס." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד מתקמפל ומדפיס 'H'.** ב-`e.pub()`: pub היא מתודה שירשה SubH מ-H (ציבורית). הביצוע נכנס לקוד של pub שנכתב במחלקה H. בתוך pub יש קריאה ל-`func()`. כיוון ש-pub נכתבה ב-H ו-func המתאימה ב-H היא private, הקומפיילר קושר את הקריאה הזו סטטית ל-H.func(). למרות שב-runtime האובייקט הוא SubH, ל-private אין dynamic dispatch. התוצאה: H.func() מתבצעת → 'H'." },
+      { "idx": 3, "isCorrect": false, "explanation": "'הקוד מתקמפל וההדפסה היא SubH' - **שגוי**. כדי שתודפס 'SubH' היה צריך שהקריאה ל-func() ב-pub תיפתר דינמית ל-SubH.func(). אבל זה לא קורה כי func ב-H היא private (אין override אפשרי, אין dynamic dispatch). הטעות הנפוצה: לחשוב ש-public func ב-SubH 'דורסת' את ה-private של H - זה לא נכון, היא רק מסתירה אותה ויוצרת מתודה חדשה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'הקוד מתקמפל אך תתקבל שגיאת זמן ריצה' - **שגוי**. אין שום סיבה לשגיאת זמן ריצה. כל הקריאות תקפות, הטיפוסים תואמים, אין null pointer, אין class cast. הקוד פשוט מדפיס 'H' בשלום." }
+    ]
+  },
+
+  "moed_a_sem_a_2025__01": {
+    "general": "המחלקה A מגדירה `private String foo() { return \"A\"; }`. המחלקה B יורשת מ-A ומגדירה `public int foo() { return 2; }`. השאלה: האם הקוד מתקמפל, ומה קורה אם נשנה את foo ב-A ל-public? **המפתח הוא:** מתודה private אינה גלויה לתת-מחלקה - היא לא מורשת ולא נחשבת לחלק מהממשק של B. לכן הגדרה של מתודה אחרת בשם foo ב-B אינה override אלא **מתודה חדשה לחלוטין**. כלל override קריטי: כשמדרסים מתודה, טיפוס ההחזרה חייב להיות זהה או covariant (תת-טיפוס) של המקורי. int ו-String הם טיפוסים בלתי-קשורים (אחד פרימיטיבי, אחד הפניה) - אין ביניהם יחס תת-טיפוס. **שלב 1:** A.foo private, B.foo public. אין override (כי private), B.foo היא מתודה חדשה → מתקמפל. **שלב 2:** משנים A.foo ל-public. עכשיו B.foo מנסה לדרוס את A.foo (אותו שם, אותם פרמטרים, גם public). אבל טיפוסי ההחזרה (int לעומת String) אינם תואמים → שגיאת קומפילציה: 'foo() in B cannot override foo() in A; attempting to use incompatible return type'.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד מתקמפל, ואם נשנה את הנראות ל-public הוא לא יתקמפל.** במצב הנוכחי, A.foo היא private ולא נראית מ-B, ולכן B.foo היא מתודה נפרדת (לא override) - מתקמפל. אחרי שינוי A.foo ל-public, B.foo כן הופכת ל-override candidate, אבל כיוון שה-return types שונים (String ב-A, int ב-B) זה override פסול והקומפיילר ידחה את הקוד." },
+      { "idx": 2, "isCorrect": false, "explanation": "'מתקמפל ועדיין יתקמפל אחרי public' - **שגוי**. ההנחה הזו מתעלמת מכלל ה-return type substitutability ב-override. כש-A.foo public וגם B.foo public עם אותו שם וללא פרמטרים, B חייב לעמוד בכללי override, וזה כולל return type תואם. int ו-String לא תואמים → שגיאה. (זו הייתה התשובה המסומנת במקור, ותוקנה.)" },
+      { "idx": 3, "isCorrect": false, "explanation": "'לא מתקמפל ואחרי שינוי כן יתקמפל' - **שגוי**. במצב המקורי הקוד מתקמפל בלי בעיה כי מתודות private אינן יוצרות התנגשות עם מתודות בתת-מחלקות (לא נחשבות מורשות). אופציה זו טועה בשני הכיוונים." },
+      { "idx": 4, "isCorrect": false, "explanation": "'לא מתקמפל ולא יתקמפל' - **שגוי**. במצב המקורי הקוד מתקמפל. אמנם אחרי שינוי הנראות הוא יפסיק להתקמפל, אבל הטענה שגם המקור לא מתקמפל - לא נכונה." }
+    ]
+  },
+  "moed_a_sem_a_2025__02": {
+    "general": "המחלקה `A<T>` מגדירה מתודה `public <T> void foo(List<T> l)`. שימו לב: המתודה foo מצהירה על **טיפוס גנרי משלה** (`<T>`) שנקרא בדיוק אותו שם כמו של המחלקה. **כלל חשוב:** זה חוקי בג'אווה - הטיפוס שמוצהר במתודה הוא scope של המתודה ו**מסתיר** (shadows) את הטיפוס של המחלקה בתוך גוף המתודה. המשמעות: בתוך foo, השימוש ב-T מתייחס לפרמטר הטיפוס של המתודה, לא של המחלקה. הקומפיילר ייתן לעיתים אזהרה (warning) על shadowing, אבל הקוד מתקמפל. אין שגיאת קומפילציה.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד מתקמפל כמו שהוא.** למרות ש-T מוצהר פעמיים (פעם ברמת המחלקה ופעם ברמת המתודה), הג'אווה מאפשר זאת. הטיפוס של המתודה מסתיר את של המחלקה בתוך scope המתודה. ייתכן warning של 'type parameter T hides the type T' אבל אין שגיאה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'יש למחוק את T במחלקה A' - **שגוי**. אין צורך לעשות כלום, הקוד תקין. מחיקת ה-T מ-A תפגע במחלקות אחרות שעלולות להשתמש בה כגנרית, ובכל מקרה אינה נדרשת לקומפילציה של הקוד הקיים." },
+      { "idx": 3, "isCorrect": false, "explanation": "'יש לשנות את שם T ב-A ל-S' - **שגוי**. גם זה לא נחוץ. הקוד מתקמפל גם בלי שינוי. שינוי כזה רק היה מסיר את אזהרת ה-shadowing אבל אינו דרוש לקומפילציה." }
+    ]
+  },
+  "moed_a_sem_a_2025__03": {
+    "general": "המתודה `foo(List<?> l1, List<?> l2)` מבצעת את ההשמה `l1 = l2`. שתי הרשימות הן `List<?>` (unbounded wildcard - 'רשימה של משהו'). ב-main מועברות `List<String>` ו-`List<Integer>`. **שני נושאים מרכזיים:** (1) השמה בין משתנים: `l1 = l2` בתוך foo משנה רק את **המצביע המקומי** של foo, לא את הרשימות שב-main. זוהי השמה של reference ולא השפעה על האובייקטים החיצוניים. (2) `List<?>` תואם לכל `List<X>` - לכן העברת `List<String>` ו-`List<Integer>` ל-foo חוקית. ההשמה `l1 = l2` בין שני `List<?>` חוקית כי שניהם אותו טיפוס פורמלי. אין המרת טיפוסים בזמן ריצה, רק החלפת מצביעים. אין NPE, אין ClassCast - הקוד מתקמפל ורץ בלי בעיות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל' - **שגוי**. הקוד מתקמפל. ההשמה `l1 = l2` בין שני משתנים מטיפוס `List<?>` היא חוקית - אותו טיפוס פורמלי. הקריאה `foo(l1, l2)` מ-main גם חוקית כי `List<String>` ו-`List<Integer>` שתיהן תואמות `List<?>`." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד מתקמפל ורץ ללא שגיאות.** ה-foo מקבלת שתי רשימות, מבצעת השמה מקומית של reference (לא משנה את הרשימות בפועל), ויוצאת. אין שום פעולה שעלולה לגרום לשגיאת זמן ריצה. סוג הרשימות בזמן ריצה (String/Integer) לא משנה כי לא מתבצעות פעולות עליהן (לא קוראים, לא כותבים)." },
+      { "idx": 3, "isCorrect": false, "explanation": "'מתקמפל אך זורק ClassCastException' - **שגוי**. ClassCastException קורה כשמנסים לבצע cast מוצהר או משתמע בין טיפוסים שאינם תואמים בזמן ריצה (למשל קריאה לאיבר מ-List ושיוך שלו לטיפוס לא נכון). כאן אין cast בכלל - יש רק השמה של references בין משתנים מאותו טיפוס פורמלי `List<?>`. אין שגיאה." }
+    ]
+  },
+  "moed_a_sem_a_2025__04": {
+    "general": "המתודה `func(Predicate<Integer> pred)` מחזירה Supplier<Integer> אנונימי שמחזיק שדה `int i = 0`, ומחזיר ב-`get()` את ה-i הבא שעבור pred.test(i)==true (בקוד: `while (!pred.test(i)) i++;`). השורות בקוד מסומנות ב-`*` ו-`**`: שתיהן יוצרות `Stream.generate(func(i -> i % 3 == 0))` (סטרים אינסופי שמייצר 0, 3, 6, 9, ...). השוני: שורה `*` קוראת `forEach(print)` ישירות, ושורה `**` קוראת `sorted().forEach(print)`. **המפתח:** `sorted` היא פעולת stateful שחייבת לראות את כל איברי הסטרים לפני שתוציא איבר ראשון. סטרים אינסופי + sorted = הקוד יושב לעד ממיין/אוסף איברים, מעולם לא מגיע ל-forEach. שורה `*` לעומתה מדפיסה לאינסוף 0, 3, 6, 9, ...",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'אם נוציא אחת מהשורות מההערה הקוד לא יתקמפל' - **שגוי**. שתי השורות מתקמפלות בלי בעיה. Stream.generate, sorted, forEach - כל המתודות תקפות. אין בעיית טיפוסים. הבעיה של שורה `**` היא אך ורק בזמן ריצה (לולאה אינסופית בתוך sorted), לא בקומפילציה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'הפלט של שורה `*` יהיה זהה לפלט של שורה `**`' - **שגוי**. שורה `*` מדפיסה לאינסוף את הסדרה 0, 3, 6, 9, 12, .... שורה `**` לא מדפיסה כלום בכלל - sorted מנסה לאסוף את כל האיברים, אבל הסטרים אינסופי, ולכן הקוד נתקע (או נכשל ב-OutOfMemoryError בסופו של דבר). הפלטים שונים לחלוטין." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - הפלטים שונים.** שורה `*` (בלי sorted): מבצעת lazy iteration - לכל איבר שהסטרים מייצר היא מיד מדפיסה. תדפיס לאינסוף את המספרים 0, 3, 6, 9, .... שורה `**` (עם sorted): sorted היא פעולת stateful שדורשת את כל הקלט לפני שתוכל למיין ולהוציא ולו איבר אחד. כשהסטרים אינסופי, sorted לעולם לא מסיימת את שלב האיסוף, ולא מגיעה ל-forEach. תוצאה: שום הדפסה (התכנית רצה לעד או נתקעת ב-OOM)." }
+    ]
+  },
+  "moed_a_sem_a_2025__05": {
+    "general": "שאלה תיאורטית על המודל של Exception ב-Java. **מבנה היררכיה של חריגים:** Throwable מתפצל ל-Error (חמור, לא מטופל בדרך כלל - StackOverflowError, OutOfMemoryError) ו-Exception. תחת Exception יש RuntimeException ויורשיו (unchecked - לא חובה לטפל) וכל האחרים (checked - חובה לטפל או להצהיר). **כללים:** (1) checked → חייבים try-catch או throws בחתימה, אחרת שגיאת קומפילציה (לא warning); (2) unchecked (RuntimeException ויורשיו) → אפשר אבל לא חובה לתפוס; (3) finally → תמיד רץ, גם אם לא קרה חריג, גם אם הייתה החזרה מהבלוק.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקומפיילר מייצר warning על checked exception לא מטופל' - **שגוי**. הקומפיילר מייצר **שגיאה (compile error)**, לא warning. אם מתודה זורקת checked exception ולא מטפלים בו (לא ב-try-catch ולא בהצהרת throws), הקוד **לא יתקמפל בכלל**. זו חוקת ה-checked exceptions של ג'אווה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - ניתן לטפל ב-RuntimeException באמצעות try-catch.** RuntimeException אמנם unchecked (לא חובה לתפוס), אבל **מותר** לתפוס אותו אם רוצים. אין שום מגבלה על תפיסה של unchecked exceptions. למשל `try { ... } catch (NullPointerException e) { ... }` - זה חוקי ולגיטימי." },
+      { "idx": 3, "isCorrect": false, "explanation": "'finally ירוץ רק אם קרה חריג ב-try' - **שגוי וההפך הוא הנכון**. בלוק finally **תמיד** רץ - גם אם לא קרה חריג, גם אם הקוד ב-try יצא ב-return, גם אם נתפס חריג ב-catch. החריג היחיד: System.exit() שמסיים את ה-JVM. זה כל המהות של finally - לקוד 'נקיון' שחייב לרוץ תמיד." },
+      { "idx": 4, "isCorrect": false, "explanation": "'חייבים להצהיר/לטפל בכל ה-exceptions שאינם error' - **שגוי**. החיוב חל רק על checked exceptions, לא על RuntimeException ויורשיו. אפשר לזרוק NullPointerException, IllegalArgumentException, ArithmeticException וכו' בלי להצהיר עליהם בחתימה ובלי לתפוס - הקוד יתקמפל בלי בעיה (רק יקרוס בזמן ריצה אם החריג נזרק)." }
+    ]
+  },
+  "moed_a_sem_a_2025__06": {
+    "general": "המחלקה A מכילה: שדה `B b;` (לא מאותחל - ברירת מחדל null), בנאי `A() { b = new B(); System.out.println(b.s); }`, ומחלקה פנימית `B` עם שדה `String s = \"B\"` ובנאי `B() { System.out.println(b.s); }`. **המפתח הוא סדר הביצוע ב-`new B()` בתוך A's constructor:** (1) הקצאת זיכרון לאובייקט B חדש. (2) **הרצת בנאי B** על האובייקט החדש - זה קורה **לפני** שההשמה לשדה b של A מתבצעת. (3) רק אחרי שבנאי B מסיים בהצלחה, הערך המוחזר מ-`new B()` נשמר ב-`A.this.b`. בתוך בנאי B יש `System.out.println(b.s)`. כיוון ש-B היא inner class של A, השם `b` ללא קידומת מתייחס לשדה של A החיצונית. בנקודת זמן זו, `A.this.b` עדיין null (הוא יקבל ערך רק אחרי שבנאי B יסיים). אז `b.s` = `null.s` → **NullPointerException**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל כי אין גישה לשדה b של A מהבנאי של B' - **שגוי**. דווקא יש גישה - B היא inner class של A ויש לה גישה מלאה לכל שדות ה-A החיצונית, כולל פרטיים. הקוד מתקמפל בלי שום בעיה. הבעיה היא בזמן ריצה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'מדפיס null ואז B' - **שגוי**. כדי שזה היה קורה, `b.s` היה צריך להיות null (טקסטואלית) ואז B להיות מודפס אחר כך. אבל `b.s` כשל-`b == null` זורק NPE לפני שבכלל מנסים לקרוא את `s`. אין הדפסה של null." },
+      { "idx": 3, "isCorrect": false, "explanation": "'מדפיס B ואז שוב B' - **שגוי**. כדי שתי הדפסות B יקרו, צריך ש-`b.s` תצליח פעמיים - פעם מתוך בנאי B (לפני שב.s יש ערך) ופעם מתוך בנאי A (אחרי שההשמה הסתיימה). הראשונה תיכשל ב-NPE כי ב-A's b עדיין null באותו רגע. (זו הייתה התשובה המסומנת במקור, ותוקנה.)" },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - main נופלת על NullPointerException.** הסיבה: בתוך בנאי B, ההדפסה `System.out.println(b.s)` מתייחסת ל-`b` כשדה של ה-A החיצונית. בזמן שבנאי B רץ, ההשמה `b = new B()` ב-A עדיין לא הושלמה (ה-RHS, יצירת B, עדיין מתבצעת). לכן `b` הוא null, וניסיון לקרוא `b.s` זורק NullPointerException מיד." }
+    ]
+  },
+  "moed_a_sem_a_2025__07": {
+    "general": "המחלקה A מגדירה `void foo(B b) { print('1'); }`. המחלקה B (יורשת מ-A) מגדירה `void foo(A a) { print('2'); }`. אלה שתי מתודות **overloaded** (לא override - פרמטרים שונים). ב-main: `A a = new B(); a.foo(a);` ובהערה: `B a = new B();`. **המפתח הוא בחירת המתודה לפי הטיפוס המוכרז (compile-time):** הקומפיילר מסתכל על הטיפוס המוכרז של `a` (A) ומחפש מתודה תואמת. A מכיר רק את `foo(B)`. הארגומנט הוא `a` שמטיפוס A. A אינו B, אז אין התאמה. **שגיאת קומפילציה!** אם מחליפים את השורה ל-`B a = new B()`: עכשיו a הוא טיפוס B. B מכירה גם את `foo(B)` (מורש מ-A) וגם `foo(A)` (מקומית). הארגומנט `a` הוא טיפוס B. שתי החתימות תואמות, אבל `foo(B)` יותר ספציפי מ-`foo(A)` (B תת-טיפוס של A). הקומפיילר בוחר את הספציפית יותר → `foo(B)` מ-A → מדפיס **'1'**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד מתקמפל ומדפיס 1' - **שגוי**. הקוד **לא** מתקמפל במצבו הנוכחי. הסיבה: `a` מוכרז `A`, ו-A מכיר רק `foo(B)`. הקריאה `a.foo(a)` עם ארגומנט מטיפוס A לא תואמת לחתימה הזו. שגיאת קומפילציה: 'foo(B) in A cannot be applied to (A)'." },
+      { "idx": 2, "isCorrect": false, "explanation": "'הקוד מתקמפל ומדפיס 2' - **שגוי**. גם זה דורש שהקוד יתקמפל, מה שלא קורה. בנוסף, גם אם היה מתקמפל, `foo(A)` הוא של B - לא נגיש דרך מצביע מטיפוס A. כדי להגיע ל-`foo(A)` הייתה צריכה להיות דרך אחרת." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד לא מתקמפל, ותיקון אחד הוא להחליף את השורה במה שמופיע בהערה (`B a = new B()`), ואז ידפיס 1.** הסיבה לאי-קומפילציה: `a` מוכרז A, ו-A מכיר רק את `foo(B)`. הקריאה `a.foo(a)` מעבירה A איפה שצריך B - לא מתאים. אחרי התיקון: a מוכרז B, ב-B יש שתי חתימות (foo(A) מקומית, foo(B) ירושה). שתיהן applicable עם ארגומנט B, אבל הקומפיילר בוחר ב-`foo(B)` כי היא הספציפית יותר → מדפיס '1'." },
+      { "idx": 4, "isCorrect": false, "explanation": "'התיקון מדפיס 2' - **שגוי**. אחרי שמחליפים ל-`B a = new B()`, יש שתי חתימות תואמות בקריאה `a.foo(a)`: `foo(A)` של B ו-`foo(B)` ש-B יורשת מ-A. הכלל של ג'אווה: בוחרים את החתימה **הספציפית ביותר**. `foo(B)` יותר ספציפי כי B תת-טיפוס של A. לכן הקריאה הולכת ל-foo(B) שמדפיס '1', לא ל-foo(A) שמדפיס '2'." }
+    ]
+  },
+
+  "moed_a_sem_a_2026__01": {
+    "general": "מבנה הירושה: `A`, `B extends A`, `C extends A`. כלומר B ו-C הם 'אחים' תחת A (לא קיים יחס תת-טיפוס בין B ל-C). המתודה `foo(List<? super B> list, C c)` מנסה להוסיף ל-list שלושה דברים: c, (A)c, (B)c. **כלל PECS עבור super:** ל-`List<? super B>` ניתן להוסיף **רק** ערכים מטיפוס B או תת-טיפוס שלו (כי לא ידוע איזה super-type של B מאחורי הקלעים, אבל מובטח שהוא יודע לקלוט B ויורשיו). **שורה !!!** (`list.add(c)`): c הוא C. C אינו B ואינו תת-טיפוס של B (אחים). לא חוקי. **שורה @@@** (`list.add((A)c)`): casting ל-A מוצלח (C extends A), אבל A אינו B ואינו תת-טיפוס של B (A הוא super של B). לא ניתן להוסיף A ל-`List<? super B>`. **שורה ###** (`list.add((B)c)`): כאן הבעיה כבר ב-cast עצמו - C ו-B אחים, אינם תואמים במחלקות. הקומפיילר דוחה: 'inconvertible types: C cannot be converted to B'. כל שלוש השורות לא מתקמפלות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק שורה !!! תתקמפל' - **שגוי**. שורה !!! מנסה להוסיף c (טיפוס C) ל-`List<? super B>`. כיוון ש-C ו-B אחים (לא יורש זה מזה), C אינו תת-טיפוס של B, ואי אפשר להוסיף אותו. הקומפיילר ידחה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק שורה @@@ תתקמפל' - **שגוי**. (A)c עובד כ-cast (C extends A, אז זה upcast חוקי), אבל אחר כך מנסים להוסיף A ל-`List<? super B>`. A הוא super של B, לא תת-טיפוס שלו. הוספת A ל-list שלא ידוע אם הוא List<B> או List<A> - הקומפיילר חייב להניח את הגרוע, כלומר list יכול להיות List<B>, ואז A לא מתאים. דחייה." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק שורה ### תתקמפל' - **שגוי**. (B)c מנסה לבצע cast מ-C ל-B. אבל C ו-B הן מחלקות אחיות (שתיהן יורשות מ-A, אך אין ביניהן יחס). ג'אווה לא מאפשרת cast ישיר בין מחלקות שאינן באותה שרשרת ירושה. שגיאת קומפילציה: 'inconvertible types: C cannot be converted to B'." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - אף אחת מהשורות לא תתקמפל.** השורה !!! נכשלת כי C אינו תת-טיפוס של B. השורה @@@ נכשלת כי A אינו תת-טיפוס של B (אלא super), ולכן אי אפשר להוסיף A ל-`List<? super B>`. השורה ### נכשלת כבר ב-cast עצמו - C ו-B מחלקות אחיות שאינן ניתנות להמרה. אף שורה לא תקפה." }
+    ]
+  },
+  "moed_a_sem_a_2026__02": {
+    "general": "מבנה: `A` ו-`B extends A`. המתודה `foo(List<? extends A> l1, List<? extends B> l2)` מנסה: !!! `l1 = l2`, @@@ `l2 = l1`, ### `l1.add(l2.get(0))`. **כללי PECS עבור extends:** `List<? extends X>` היא Producer בלבד - ניתן לקרוא ממנה (תוצאה היא X או תת-טיפוס) אבל **אסור** להוסיף לה (לא ידוע איזה תת-טיפוס בדיוק היא מכילה). **שורה !!!** (`l1 = l2`): l2 הוא `List<? extends B>`, l1 הוא `List<? extends A>`. כיוון ש-B תת-טיפוס של A, כל `List<? extends B>` הוא בהכרח גם `List<? extends A>`. ההצבה חוקית. **שורה @@@** (`l2 = l1`): כיוון הפוך. l1 יכול להיות `List<A>` שאינו `List<? extends B>`. הצבה לא בטוחה. הקומפיילר דוחה. **שורה ###** (`l1.add(l2.get(0))`): l2.get(0) מחזיר B (או תת-טיפוס). אבל l1 הוא Producer (extends) - אסור להוסיף לו. הקומפיילר דוחה.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - רק שורה !!! תתקמפל.** ההצבה `l1 = l2` חוקית כי `List<? extends B>` הוא תת-טיפוס של `List<? extends A>` (כל אחד שמכיל תת-טיפוסים של B מכיל גם תת-טיפוסים של A, כי B תת-טיפוס של A). שורה @@@ נכשלת כי הצבה הפוכה לא בטוחה. שורה ### נכשלת כי לא ניתן להוסיף ל-`List<? extends A>`." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק שורה @@@ תתקמפל' - **שגוי**. ההצבה `l2 = l1` שגויה כי l1 (`List<? extends A>`) יכול להיות למשל `List<A>` שאינו תאים ל-`List<? extends B>`. הקומפיילר חייב לדחות." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק שורה ### תתקמפל' - **שגוי**. אסור להוסיף ל-`List<? extends A>` שום דבר (חוץ מ-null), כי לא יודעים בדיוק איזה תת-טיפוס הרשימה מכילה. גם אם l2.get(0) מחזיר B, עדיין אסור להוסיף את זה ל-l1 כי l1 יכול להיות `List<C>` שבו C שונה מ-B." },
+      { "idx": 4, "isCorrect": false, "explanation": "'אף אחת לא תתקמפל' - **שגוי**. שורה !!! דווקא כן מתקמפלת. אם המבנה הזה לא נראה לכם, חשבו: l2 הוא List של תת-טיפוסים של B. כל תת-טיפוס של B הוא גם תת-טיפוס של A. אז l2 הוא בהחלט גם List של תת-טיפוסים של A - מה שמתאים לטיפוס של l1." }
+    ]
+  },
+  "moed_a_sem_a_2026__03": {
+    "general": "המחלקה `MyList<T extends Comparable<T>>` מממשת Iterable<T> ומכילה `List<T> list`. ה-iterator הוא `MyListIterator` עם `int index = -1`, `Random r`, ו-`hasNext` מחזיר `r.nextBoolean()` (אקראי 50/50!). `next()` מבצעת `index++` ומחזירה `list.get(index)`. ב-main: `MyList<Integer> lst = new MyList<>(Arrays.asList(4,5,6,7,8))` ולולאת `for (Integer n : lst) print(n)`. **השאלה: איזה פלט לא יתכן?** הלולאה foreach מתרגמת ל-`while(it.hasNext()) { Integer n = it.next(); print(n); }`. כיוון ש-hasNext אקראי, הלולאה יכולה לעצור בכל איטרציה. כל קריאה ל-next() קוראת `list.get(index)` עם index מתחיל מ-0 ועולה ב-1. אם הלולאה רצה יותר מ-5 פעמים, next() ינסה לקרוא list.get(5) ויזרוק IndexOutOfBoundsException. **תרחישים אפשריים:** (a) hasNext מחזיר false בקריאה הראשונה → לולאה לא רצה כלל → פלט ריק. (b) 5 פעמים true ואז false → מדפיס 45678 → סיום נקי. (c) 6+ פעמים true → אחרי 5 הדפסות, next() קורא list.get(5) → IndexOutOfBoundsException. אבל **לא יתכן**: (d) פלט ריק + IndexOutOfBoundsException - כדי לקבל את החריג, צריך שלפחות next() אחת תרוץ, וכל קריאה ל-next() מדפיסה לפחות איבר אחד. אז אי אפשר לקבל פלט ריק עם החריג.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'45678' - **אפשרי**, לכן זו לא התשובה. תרחיש: hasNext מחזיר true 5 פעמים רצופות (וכל אחת מדפיסה את האיבר), ואז false בקריאה השישית. הלולאה מסיימת בשלום עם 5 הדפסות. הסתברות: (1/2)^5 * (1/2) = 1/64." },
+      { "idx": 2, "isCorrect": false, "explanation": "'45678 ואז IndexOutOfBoundsException' - **אפשרי**, לכן זו לא התשובה. תרחיש: hasNext מחזיר true 6 פעמים. אחרי 5 הדפסות (4,5,6,7,8 והאינדקס הגיע ל-4), הקריאה השישית ל-next() מבצעת index++ → 5, ואז list.get(5) זורק IndexOutOfBoundsException." },
+      { "idx": 3, "isCorrect": false, "explanation": "'פלט ריק' - **אפשרי**, לכן זו לא התשובה. תרחיש: בקריאה הראשונה hasNext מחזיר false. הלולאה לא נכנסת אפילו פעם אחת. אין הדפסה. הסתברות 1/2." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - 'פלט ריק ואז IndexOutOfBoundsException' הוא הפלט שלא יתכן.** כדי לקבל IndexOutOfBoundsException, חייב שהפעולה next() תקרה לפחות פעם אחת ותגיע למצב שבו list.get נכשל. אבל פעולת next() תמיד **מדפיסה** את הערך לפני שהלולאה מקבלת את הערך הבא (דרך print(n) ב-foreach). יותר מזה: כדי שהחריג יקרה צריך לפחות 6 קריאות מוצלחות ל-next() (5 שהדפיסו 45678 + הקריאה הששית שזרקה החריג). אז 'ריק + חריג' לא יכול לקרות." }
+    ]
+  },
+  "moed_a_sem_a_2026__04": {
+    "general": "המחלקות: A מגדירה `void foo(A a) { print('A'); this.foo((B)a); }`. B (יורשת מ-A) מגדירה `void foo(B b) { print('B'); this.foo((A)b); }`. ב-main: `B b = new B(); b.foo(b);`. **שתי המתודות הן Overloads (לא Override)** - פרמטרים שונים (foo(A) ו-foo(B)). **בחירת overload לפי טיפוס סטטי של הארגומנט והרסיבר:** (1) `b.foo(b)`: רסיבר טיפוס B, ארגומנט טיפוס B. B יודע foo(B) (משלו) ו-foo(A) (ירוש). foo(B) ספציפי יותר → קריאה ל-B.foo(B). מדפיס 'B'. (2) בתוך B.foo(B): `this.foo((A)b)`. ארגומנט טיפוס A. רסיבר this הוא B (compile-time type B כי אנחנו ב-B). B יודע foo(B) ו-foo(A). foo(A) מתאים לארגומנט. → קריאה ל-A.foo(A) (ירושה, B לא דורסת). מדפיס 'A'. (3) בתוך A.foo(A): `this.foo((B)a)`. ארגומנט טיפוס B. רסיבר this בקוד של A - **טיפוס סטטי A**. A יודע רק foo(A) (אין ל-A מתודה foo(B)). הקומפיילר בוחר foo(A) (B אביר ל-A). → קריאה ל-A.foo(A). אבל הרי dynamic dispatch... A.foo לא דרוסה ב-B, אז בכל מקרה זה קוד A. (4) בתוך A.foo(A) שוב: אותו דבר - מדפיס 'A', קורא לעצמו עם (B) cast, וחוזר חלילה. **רקורסיה אינסופית של A.** סדרה: B, A, A, A, ...",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - B פעם אחת ואחריה סדרה אינסופית של A.** הקריאה הראשונה `b.foo(b)` מגיעה ל-B.foo(B) (הספציפי ביותר), מדפיסה 'B', וקוראת לעצמה עם cast ל-A. זה מפעיל את A.foo(A) שמדפיס 'A' וקורא ל-foo(B) - אבל מתוך A, ה-this.foo(...) פותר סטטית ל-A.foo(A) (כי A לא מכיר foo(B)). זה גורם לרקורסיה אינסופית בתוך A.foo(A) שמדפיסה 'A' לעד." },
+      { "idx": 2, "isCorrect": false, "explanation": "'סדרה אינסופית של BABABABA' - **שגוי**. כדי שזה יקרה, היה צריך שכל קריאה תחליף בין B ל-A. אבל ברגע שאנחנו ב-A.foo(A), הקריאה הבאה `this.foo((B)a)` גם מסתיימת ב-A.foo(A) (כי A לא מכיר foo(B)). אנחנו 'נתקעים' ב-A ולא חוזרים ל-B." },
+      { "idx": 3, "isCorrect": false, "explanation": "'סדרה אינסופית של B' - **שגוי**. אחרי הקריאה הראשונה ל-B.foo(B), הוא קורא ל-this.foo((A)b) שעובר ל-A.foo(A) (לא חוזר ל-B). יש B אחד בלבד, לא סדרה של B." },
+      { "idx": 4, "isCorrect": false, "explanation": "'סדרה אינסופית של A' - **שגוי**. מתעלם מה-B הראשוני. הסדרה היא B אחד ואז AAAAA... אינסופי. אופציה זו שוכחת את הקריאה הראשונה שמדפיסה B." }
+    ]
+  },
+  "moed_a_sem_a_2026__05": {
+    "general": "ה-Supplier `MySupp` מחזיק `int a = 0`, ובכל קריאה ל-`get()` שומר את a הנוכחי כ-value, מבצע `a++`, **מדפיס value**, ומחזיר value. כלומר כל קריאה מייצרת 0, 1, 2, 3, ... ומדפיסה אותם. ה-main בונה `Stream.generate(new MySupp())` (סטרים אינסופי) ומריץ אחת מ-4 השורות (השאר בהערה) ולבסוף `forEach(println)` (שמדפיס כל איבר). השאלה: איזו שורה תפיק את **המספר הקטן ביותר** של שורות פלט (הדפסות מ-get + הדפסות מ-forEach)? **חישוב לכל שורה:** !!! `filter(i -> i%2==0)` בלי limit → סטרים אינסופי, רץ לעד. ∞ הדפסות. @@@ `.limit(10).filter(i -> i%2==0)` → limit לוקח 10 איברים מה-supplier (10 הדפסות מ-get), אז filter מסנן את האי-זוגיים (נשארים 5: 0,2,4,6,8), forEach מדפיס 5 → סך הכל 10+5=**15** הדפסות. ### `.filter(i -> i%2==0).limit(10)` → limit רוצה 10 איברים אחרי הסינון, אז ה-supplier נקרא 20 פעמים (כי כל שני - אחד נכון, אחד לא, צריך 10 זוגיים), 20 הדפסות מ-get, ואז 10 מ-forEach → **30**. $$$ `.limit(10)` בלבד → 10 קריאות get, 10 forEach → **20**. הפלט הקטן ביותר: @@@ עם 15.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'שורה !!!' - **שגוי**. שורה זו מסננת בלי limit, מה שמשאיר סטרים אינסופי. הקוד רץ לנצח ומדפיס אינסוף שורות. זה הכי גדול (אינסוף), לא הקטן ביותר." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - שורה @@@.** הסדר `.limit(10).filter(...)` קורא תחילה 10 איברים מהסטרים (10 הדפסות מ-get: 0,1,2,3,4,5,6,7,8,9), ואז מסנן רק את הזוגיים (5 איברים: 0,2,4,6,8). forEach מדפיס את 5 הזוגיים. סך הכל: **15 הדפסות**. זה המספר הנמוך ביותר מבין כל האפשרויות." },
+      { "idx": 3, "isCorrect": false, "explanation": "'שורה ###' - **שגוי**. הסדר `.filter(...).limit(10)` הוא הפוך: limit לוקח 10 איברים אחרי הסינון. כלומר ה-supplier ייקרא עד שיהיו 10 איברים זוגיים - דרושות 20 קריאות (כל שני, אחד זוגי). 20 הדפסות מ-get + 10 מ-forEach = 30 הדפסות. הכי הרבה (חוץ מהאינסופית)." },
+      { "idx": 4, "isCorrect": false, "explanation": "'שורה $$$' - **שגוי**. רק `.limit(10)` בלי filter. 10 קריאות מ-get (10 הדפסות) + 10 הדפסות מ-forEach = 20 הדפסות. יותר מ-15 של @@@. לא המינימום." },
+      { "idx": 5, "isCorrect": false, "explanation": "'הקוד לא מתקמפל בין כה וכה' - **שגוי**. הקוד מתקמפל בכל אחת מהאופציות. כל שורת stream שתוסר מההערה היא חוקית מבחינת טיפוסים. הבעיה היא רק בהבדלי כמות הפלט." }
+    ]
+  },
+  "moed_a_sem_a_2026__06": {
+    "general": "השאלה תיאורית: מערכת ניהול חנויות עם מספר מחלקות (Customer, PublicRelations, Vendor, VIPCustomer) שכל אחת מהן צריכה לקבל עדכונים על שינויי מחירים מ-ItemAvailability. ItemAvailability **לא מכיר** את המחלקות הללו (אין coupling קשיח). יש להוסיף יכולת התראות חדשה. איזה תבנית עיצוב מתאימה? **המאפיינים של הבעיה:** (א) אובייקט מרכזי שצריך להודיע (ItemAvailability). (ב) מספר משתמשים מסוגים שונים שצריכים לקבל הודעות. (ג) המודיע אינו מכיר את המאזינים. (ד) רוצים תוספת ללא שינוי הקוד הקיים. זה התיאור הקלאסי של **Observer Pattern**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "**Singleton** - **שגוי**. Singleton מבטיח שיהיה רק מופע אחד של מחלקה. אין לזה שום קשר להפצת התראות לכמה מאזינים. אולי ItemAvailability תהיה Singleton בנפרד, אבל זה לא פותר את שאלת ההתראות." },
+      { "idx": 2, "isCorrect": false, "explanation": "**Factory** - **שגוי**. Factory עוסקת ביצירת אובייקטים בצורה גמישה (החלפת סוג היצירה ללא שינוי קוד). זה לא קשור להפצת אירועים. Factory יוצרת, Observer מודיעה." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - Observer.** התבנית הזו מגדירה יחס one-to-many: Subject (כאן ItemAvailability) שומר רשימת Observers (Customer, Vendor, וכו'). הם נרשמים בעצמם ל-Subject (subscribe). כאשר משהו משתנה, Subject קורא ל-`update()` של כל Observer. ה-Subject לא צריך להכיר את הסוג הקונקרטי - מספיק שמקיים את הממשק Observer. אפשר להוסיף סוגי Observers חדשים בלי לשנות את ItemAvailability - בדיוק מה שהשאלה דורשת." },
+      { "idx": 4, "isCorrect": false, "explanation": "'התשובה הנכונה לא מתאים לאף אחד מתבניות העיצוב' - **שגוי**. Observer מתאים בדיוק. אין סיבה לבחור 'אף אחת'." }
+    ]
+  },
+  "moed_a_sem_a_2026__07": {
+    "general": "המחלקה A מכילה `public void foo() {}`. במחלקה B (יורשת מ-A) יש 7 הכרזות בהערה - השאלה: כמה מהן יקמפלו אם נסיר אותן מהערה אחת בכל פעם? **בדיקה לכל אחת:** (1) `public void foo() throws Exception` - **לא מתקמפלת**. אותה חתימה כמו A.foo, מה שהופך אותה ל-override, אבל override אינו רשאי להוסיף checked exception שלא הוצהר במקור. (2) `private void foo()` - **לא מתקמפלת**. override חייב להיות באותה רמת גישה או רחבה יותר. private מצמצמת את הגישה - לא חוקי. (3) `public void foo()` - **מתקמפלת**. override זהה ותקין. (4) `public static void foo()` - **לא מתקמפלת**. מתודה סטטית בתת-מחלקה לא יכולה להחביא (hide) מתודה מופע (instance) במחלקת בסיס באותה חתימה. (5) `public void foo(int i) throws Exception` - **מתקמפלת**. פרמטר שונה (int) → overload, לא override. מתודה חדשה שיכולה לזרוק כל חריג. (6) `private void foo(int i)` - **מתקמפלת**. overload חדש (פרמטר שונה), private אישי - חוקי. (7) `public static void foo(int i)` - **מתקמפלת**. overload חדש (פרמטר שונה), static בלי שום קשר ל-A.foo. **סיכום:** 4 מתקמפלות (3, 5, 6, 7), 3 לא (1, 2, 4).",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'אף מימוש לא מתקמפל (0)' - **שגוי**. דווקא יש 4 שמתקמפלות. למשל מימוש 3 (`public void foo()`) הוא override זהה לחלוטין למקור - אין שום סיבה לדחות אותו." },
+      { "idx": 2, "isCorrect": false, "explanation": "'יש בדיוק מימוש אחד שמתקמפל (1)' - **שגוי**. יש יותר מאחד. ארבעה מתקמפלים: ה-override הזהה (3), וה-overloads עם פרמטר int (5, 6, 7)." },
+      { "idx": 3, "isCorrect": false, "explanation": "'יש לפחות שני מימושים אבל לכל היותר שלושה (2-3)' - **שגוי**. יש 4 מתקמפלות, לא 2 או 3. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - יש 4 מימושים שמתקמפלים (בטווח 4-5).** המתקמפלים: (3) `public void foo()` - override זהה, חוקי. (5) `public void foo(int i) throws Exception` - overload עם פרמטר חדש, חופשי לזרוק חריגים. (6) `private void foo(int i)` - overload חדש פרטי. (7) `public static void foo(int i)` - overload סטטי חדש. הלא-מתקמפלים: (1) override שמוסיף Exception לא חוקי. (2) override שמצמצם נראות לא חוקי. (4) static שמסתיר instance method באותה חתימה לא חוקי." },
+      { "idx": 5, "isCorrect": false, "explanation": "'יש בדיוק 6 מתקמפלים' - **שגוי**. רק 4 מתקמפלים. הטעות: לחשוב שחייבים מתקמפלים גם את (1) ו-(2) למשל. אבל override מגביל את החוזה ולא מאפשר הוספת exceptions או צמצום נראות." },
+      { "idx": 6, "isCorrect": false, "explanation": "'כל המימושים מתקמפלים (7)' - **שגוי**. 3 מימושים אינם מתקמפלים: (1) הוספת throws Exception ב-override, (2) צמצום נראות ל-private ב-override, (4) המרת מתודה מ-instance ל-static באותה חתימה. כל אחד מאלה מפר כלל override של ג'אווה." }
+    ]
+  },
+
+  "moed_a_sem_b_2024__01": {
+    "general": "המחלקה A מכילה שדה `private int a` ומתודה `public int a()` (שם המתודה זהה לשם השדה - מותר). ב-Q1a יש main שיוצרת `List<A>` ריקה ומעבירה ל-`func(List<?> lst)`. בתוך func יש `for (A elem : lst) elem.a();`. **המפתח:** הלולאה foreach מנסה להוציא איברים מ-lst שטיפוסה `List<?>` (wildcard לא מוגבל) ולקלוט אותם כ-`A`. הקומפיילר לא יודע מה הטיפוס הקונקרטי של איברי הרשימה - יכול להיות כל דבר. הוא מציע רק קבלה כ-`Object`. ניסיון לקבל ל-`A` הוא incompatible types - הקוד **לא מתקמפל**. השגיאה ב-func, לא ב-main (main עצמה תקינה).",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד יתקמפל וירוץ' - **שגוי**. יש שגיאת קומפילציה ב-func: 'incompatible types: Object cannot be converted to A' (או דומה). ההסבר: `for (A elem : lst)` עם `List<?>` מנסה להוציא איברים מסוג בלתי-ידוע ולהציב ב-A, מה שלא חוקי בלי cast מפורש." },
+      { "idx": 2, "isCorrect": false, "explanation": "'הקוד יתקמפל אך תיכשל בזמן ריצה' - **שגוי**. הקוד אפילו לא מגיע לזמן הריצה - שגיאה כבר בקומפילציה. בנוסף, גם אם היה מתקמפל, הרשימה ריקה, אז foreach לא היה רץ אפילו פעם אחת ולא היה ClassCastException." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד לא יתקמפל בגלל בעיה ב-func.** השורה `for (A elem : lst)` שבה lst הוא `List<?>` נכשלת: כשאיברים נשאבים מ-`List<?>` הם מסוג capture של ?, שאין להם תאימות אוטומטית ל-A. הדרך לתקן הייתה לקבוע פרמטר כ-`List<? extends A>` או `List<A>`, או לרוץ עם משתנה Object." },
+      { "idx": 4, "isCorrect": false, "explanation": "'הקוד לא יתקמפל בגלל בעיה ב-main' - **שגוי**. הקוד של main תקין: יצירת ArrayList<A>, העברה ל-func שמקבלת List<?> - העברה זו חוקית כי כל List<X> תואם List<?>. הבעיה היא בתוך func, לא ב-main." }
+    ]
+  },
+  "moed_a_sem_b_2024__02": {
+    "general": "המתודה `func(List<? extends B> lst, B b)` מנסה לבצע `lst.add(b)`. **כלל קריטי:** רשימה מסוג `List<? extends B>` היא Producer בלבד - אפשר רק לקרוא ממנה (התוצאה תהיה מסוג B או תת-טיפוס). **אסור** להוסיף לה שום ערך (חוץ מ-null). הסיבה: ה-`?` יכול להיות תת-טיפוס ספציפי כלשהו של B, נניח SomeChildOfB. אם נוסיף b (סתם B) ל-`List<SomeChildOfB>`, הפרנו את הטיפוסיות. הקומפיילר חייב לדחות. שגיאה: 'no suitable method found for add(B)' או 'incompatible types: B cannot be converted to capture#1 of ? extends B'.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'מתקמפל' - **שגוי**. הקוד אינו מתקמפל. למרות שהאינטואיציה אומרת 'הרי b הוא בדיוק B, אז למה לא להוסיף ל-List<? extends B>?', ה-wildcard מסמן שאיננו יודעים את הטיפוס המדויק - יכול להיות תת-טיפוס מסוים שאיננו מכירים. הוספת B 'כללי' אליו לא בטוחה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - לא מתקמפל.** ה-`List<? extends B>` הוא Producer (PECS - Producer Extends). ניתן לקרוא ממנו (התוצאה היא B), אך לא להוסיף לו. הוספת ערך תפר את הטיפוסיות אם הרשימה היא דווקא List של תת-טיפוס מסוים של B. ניתן להוסיף **רק null** ל-List<? extends X>." }
+    ]
+  },
+  "moed_a_sem_b_2024__03": {
+    "general": "הקוד: `ints = [1,2,3,4,5,6,7,8,9]`. **res1** = `ints.stream().map(x->2*x).filter(x->x%6==0).count()`. שלבים: map → [2,4,6,8,10,12,14,16,18]; filter (כפולות של 6) → [6,12,18]; count = 3. **res2** = `ints.stream().skip(2).filter(x->x%3==0).map(x->x+x).count()`. שלבים: skip(2) → [3,4,5,6,7,8,9]; filter (כפולות של 3) → [3,6,9]; map x+x → [6,12,18]; count = 3. **`res1 + res2 = 3 + 3 = 6`**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'14' - **שגוי**. אין מצב להגיע ל-14. אם היו משאירים את כל ה-9 איברים ועוד משהו, אבל אחרי הסינונים נשארים הרבה פחות. בנוסף, 14 הוא מספר 'עגול' שלא תואם את האריתמטיקה כאן." },
+      { "idx": 2, "isCorrect": false, "explanation": "'15' - **שגוי**. גם זה לא תואם. אם מישהו ספר את האיברים *לפני* count (התעלם מ-count אחרון), היה יכול להגיע למספר אחר, אבל לא 15." },
+      { "idx": 3, "isCorrect": false, "explanation": "'13' - **שגוי**. ייתכן שהמספר נראה הגיוני אם סופרים שגוי, אבל לפי החישוב המדויק res1=3 ו-res2=3, הסכום הוא 6 ולא 13. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - 6.** res1: ints (9 איברים) → map כפל 2 → 9 איברים → filter כפולות של 6 → רק 6, 12, 18 → 3 איברים. res2: skip(2) → 7 איברים → filter כפולות של 3 → 3, 6, 9 → 3 איברים → map x+x → עדיין 3 איברים → count=3. סכום: 3+3=6." },
+      { "idx": 5, "isCorrect": false, "explanation": "'5' - **שגוי**. אם מישהו טעה בחישוב של אחד ה-counts (סיפר 2 במקום 3 באחד הצדדים), היה מקבל 5. אבל החישוב המדויק נותן 6." }
+    ]
+  },
+  "moed_a_sem_b_2024__04": {
+    "general": "המחלקה D מגדירה `int func(Object x) { return 1; }`. SubD יורשת מ-D ומוסיפה: `int func(Object x) { return 2; }` (override של D.func) ו-`int func(String x) { return 3; }` (overload חדש). ב-main: `SubD o = new SubD(); String s = \"hi\"; int res = ((D)o).func(s);`. **שני שלבים בבחירת מתודה:** (1) **בחירת overload בזמן קומפילציה:** הרסיבר הוא `((D)o)` - טיפוס סטטי D. D מכיר רק את `func(Object)`. הארגומנט s הוא String, שהוא Object. אז המתודה הנבחרת היא `D.func(Object)`. SubD.func(String) **לא נחשבת** - הקומפיילר מסתכל רק על המתודות של D (הטיפוס הסטטי). (2) **dynamic dispatch בזמן ריצה:** `((D)o).func(...)` נקרא על אובייקט שטיפוסו בזמן ריצה SubD. SubD דורסת את func(Object). דרך dynamic dispatch, הקריאה הולכת ל-`SubD.func(Object)` שמחזירה **2**. הקאסטינג ל-D משפיע רק על בחירת ה-overload, לא על ה-dispatch.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'התוכנית לא תעבור קומפילציה בגלל ambiguity' - **שגוי**. אין כאן עמימות. הקומפיילר רואה רק `func(Object)` ב-D (הטיפוס הסטטי של הרסיבר). אין שתי חתימות שכולן מתאימות באותה מידה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'תקבל שגיאת זמן ריצה בגלל בעיית casting' - **שגוי**. הקאסטינג `(D)o` הוא upcast (SubD → D), שהוא תמיד בטוח ולא דורש בדיקה. אין ClassCastException אפשרי כאן." },
+      { "idx": 3, "isCorrect": false, "explanation": "'תרוץ ויודפס 1' - **שגוי**. כדי להדפיס 1, צריך שתיקרא D.func(Object) ישירות (לא דרך dispatch). אבל אובייקט מסוג SubD בזמן ריצה תמיד עובר דרך SubD.func(Object) שדורסת. הקאסטינג לא מבטל את ה-virtual dispatch. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - תרוץ ויודפס 2.** הסבר: בקומפילציה, הרסיבר `((D)o)` מטיפוס D. D מכיר רק `func(Object)`. הארגומנט s (String) מתאים ל-Object. נבחרת `func(Object)`. בזמן ריצה, האובייקט באמת SubD שדרסה את func(Object) להחזיר 2. dynamic dispatch הולך ל-SubD.func(Object) → 2. שוב לב: SubD.func(String) לא נבחרת כי הקומפיילר רואה רק את המתודות של D." },
+      { "idx": 5, "isCorrect": false, "explanation": "'תרוץ ויודפס 3' - **שגוי**. מספר 3 הוא מה ש-`SubD.func(String)` מחזיר. אבל המתודה הזו אינה נבחרת כי הרסיבר ((D)o) מחזיק טיפוס סטטי D, וב-D אין `func(String)`. כדי שתיבחר, היו צריכים להוריד את הקאסטינג: `o.func(s)` (אז o טיפוס SubD)." }
+    ]
+  },
+  "moed_a_sem_b_2024__05": {
+    "general": "**שאלה - איזו טענה היא ה_שגויה_** (לב, השאלה מבקשת להקיף את הלא-נכונה!). הטענות הן על מודל החריגים (Exceptions) ב-Java. תזכורת לכללים: (א) חריגים הם אובייקטים תחת היררכיית Throwable. (ב) checked exceptions (יורשי Exception שאינם RuntimeException) חייבים טיפול או הצהרה - אחרת שגיאת קומפילציה. (ג) unchecked (RuntimeException ויורשיו) - לא חובה לטפל. (ד) ניתן להגדיר חריגים מותאמים אישית. (ה) override יכול לא לזרוק חריג, או לזרוק רק את אלה (או צרים יותר) שהוצהרו במחלקת הבסיס.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'חריג הוא עצם, וישנה היררכיית ירושה של מחלקות חריגים' - **טענה נכונה**. אכן, Throwable, Error, Exception, RuntimeException וכו' מהווים היררכיה. החריגים הם אובייקטים. אז זו לא הטענה השגויה (ולכן לא התשובה לשאלה 'איזו שגויה')." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - זו הטענה השגויה.** הטענה אומרת שצריך לטפל או להצהיר על **כל** חריג (exception) כדי שהקוד יתקמפל. **שגוי!** רק checked exceptions דורשים טיפול/הצהרה. RuntimeException ויורשיו (NullPointerException, IllegalArgumentException, ArithmeticException, ClassCastException וכו') - **לא חובה** לטפל בהם, והקוד יתקמפל גם בלי. גם Errors לא דורשים טיפול. אז הטענה בולעת יותר מדי - היא לא מבחינה בין checked ל-unchecked." },
+      { "idx": 3, "isCorrect": false, "explanation": "'ניתן להגדיר חריגים חדשים שאינם built-in ב-java.lang' - **טענה נכונה**. אכן, אתה יכול לכתוב `class MyException extends Exception {...}` או `extends RuntimeException` ולקבל סוג חריג חדש. זה לא הטענה השגויה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'למתודה דורסת מותר לזרוק לא לזרוק שום חריג, או לזרוק רק את אלה שהוגדרו במחלקת הבסיס' - **טענה נכונה**. כללי override: הדורסת לא יכולה להוסיף checked exceptions חדשות, אבל יכולה לוותר על כולן או להצהיר רק על תת-קבוצה. אז זו לא הטענה השגויה." }
+    ]
+  },
+  "moed_a_sem_b_2024__06": {
+    "general": "המחלקה F מגדירה `String var = \"2\"` (שדה מופע), `printVar()` (מדפיסה var) ו-`staticPrintVar()` סטטית שיוצרת `F x = new SubF()` ומדפיסה `x.var`. SubF (יורשת מ-F) מגדירה `int var = 1` (שדה חדש שמסתיר את של F!), ו-`printVar()` משלה (override). main: `F x = new SubF(); x.printVar(); x.staticPrintVar(); print(x.var);`. **המפתח - שדות (fields) הם static binding לעומת מתודות שהן dynamic binding:** מתודות עוברות dispatch לפי הטיפוס בזמן ריצה. **שדות לעומת זאת נבחרים לפי הטיפוס הסטטי בזמן הקומפילציה (shadowing).** **מעקב הרצה:** (1) `x.printVar()`: x סטטי F, אבל printVar היא מתודה virtual → dispatch ל-SubF.printVar(). שם משתמשים ב-var של SubF (1) → מדפיס **'1'**. (2) `x.staticPrintVar()`: סטטית, נקראת בלי dispatch. בתוכה: `F x = new SubF(); print(x.var)`. כאן x טיפוס F, var = שדה ייגש לפי הטיפוס הסטטי (F.var) → '2'. מדפיס **'2'**. (3) `print(x.var)` ב-main: x טיפוס F → גישה לשדה F.var → '2'. מדפיס **'2'**. סך הכל: **'122'**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'222' - **שגוי**. כדי להדפיס 2 ב-printVar() היה צריך שייקרא F.printVar(), אבל זה override - dispatch ל-SubF.printVar() שמדפיס SubF.var = 1." },
+      { "idx": 2, "isCorrect": false, "explanation": "'112' - **שגוי**. ההדפסה השנייה (staticPrintVar) לא מדפיסה 1, אלא 2. הסיבה: בתוך staticPrintVar, x מטיפוס F (לא SubF), וגישה לשדה היא דרך הטיפוס הסטטי - F.var = '2'." },
+      { "idx": 3, "isCorrect": false, "explanation": "'111' - **שגוי**. רק ההדפסה הראשונה היא 1 (מ-SubF.printVar שדורסת). ההדפסות האחרות הן 2 כי הגישה לשדה var נעשית דרך טיפוס F (סטטי)." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - '122'.** הדפסה ראשונה: x.printVar() → dispatch למתודה של SubF (override) → גישה ל-SubF.var (1). הדפסה שנייה: staticPrintVar() סטטית → בתוכה x טיפוס F → x.var הוא F.var ('2'). הדפסה שלישית: x.var ב-main → x טיפוס F → '2'. הסדר: '1', '2', '2' = '122'. הלקח: שדות (כולל אלו שמוסתרים) נקבעים לפי הטיפוס הסטטי, מתודות (overridden) נקבעות לפי הטיפוס הדינמי." }
+    ]
+  },
+  "moed_a_sem_b_2024__07": {
+    "general": "שלוש מחלקות בהיררכיה: G (`foo() { print(\"A\"); this.foo(); }`), SubG extends G (`foo() { print(\"B\"); super.foo(); }`), SubSubG extends SubG (`foo() { print(\"C\"); super.foo(); }`). main: `G x = new SubSubG(); x.foo();`. **מעקב הרצה (חשוב להבין את ההבחנה בין `this.foo()` ל-`super.foo()`):** `super.foo()` עוקף את ה-virtual dispatch - הוא הולך **ישר** למתודה של מחלקת האב, ללא חזרה ל-dispatch. `this.foo()` משתמש ב-virtual dispatch הרגיל - מגיע למתודה של הטיפוס הדינמי. (1) `x.foo()` → dispatch לפי SubSubG → SubSubG.foo: מדפיס 'C', `super.foo()` → SubG.foo (עקיפה ישירה). (2) SubG.foo: מדפיס 'B', `super.foo()` → G.foo (עקיפה ישירה). (3) G.foo: מדפיס 'A', `this.foo()` → dispatch לפי הטיפוס הדינמי של this (שהוא SubSubG!) → חוזר ל-SubSubG.foo. (4) ועכשיו הסיפור חוזר על עצמו: 'C', super → SubG → 'B', super → G → 'A', this → SubSubG → ... **לולאה אינסופית** של 'CBA' חוזר על עצמו: CBACBACBA...",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל' - **שגוי**. הקוד מתקמפל בלי בעיה. כל הדריסות תקפות, super נכון, ירושה רגילה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - סדרה אינסופית CBACBA...** הסבר: x.foo() מתחיל עם SubSubG (dispatch). SubSubG.foo מדפיס 'C' ועושה super.foo (לא dispatch!) → ישירות SubG.foo שמדפיסה 'B' ועושה super.foo → ישירות G.foo שמדפיסה 'A' ועושה **this.foo()** (כן dispatch!). this הוא SubSubG, אז dispatch מחזיר אותנו לראש: SubSubG.foo → 'C', וחוזר חלילה. כל איטרציה מוסיפה 'CBA'." },
+      { "idx": 3, "isCorrect": false, "explanation": "'סדרה אינסופית CBCBCB...' - **שגוי**. כדי שזה יקרה היה צריך שלא יהיה 'A' בכלל. אבל G.foo מדפיסה 'A' לפני שהיא קוראת this.foo(). אז 'A' תמיד נכלל בכל מחזור." },
+      { "idx": 4, "isCorrect": false, "explanation": "'CBAAAA...' - **שגוי**. זה היה קורה אם G.foo הייתה נתקעת בלולאה רק על עצמה - אבל this.foo() עושה dynamic dispatch לחזרה ל-SubSubG.foo (כי this הוא SubSubG בזמן ריצה). מחוז ה'A' חוזר אנחנו מתחילים מההתחלה עם 'C' שוב." }
+    ]
+  },
+
+  "moed_a_sem_b_2025__01": {
+    "general": "מחלקת A עם שני שדות int x, y. הקוד מציע 4 דרכים שונות למיין `List<A>` לפי `Comparator<A>` (לפי הסכום x+y). **הגדרת Comparator<A>:** ממשק עם המתודה היחידה `int compare(A o1, A o2)` שמחזירה int (שלילי, אפס, חיובי). הלמבדה צריכה להתאים: **שני פרמטרים, מחזיר int**. **בדיקת האופציות:** (1) `(o1, o2) -> o1.x + o1.y > o2.x + o2.y` - מחזיר boolean, לא int. שגיאת קומפילציה. (2) `(o1, o2) -> { if (...) return o1; else return o2; }` - מחזיר אובייקטי A, לא int. שגיאת קומפילציה. (3) `(o1, o2) -> Integer.compare(o1.x + o1.y, o2.x + o2.y)` - מחזיר int (מהשוואת Integer.compare). שני פרמטרים. ✓ תקין ועובד נכון. (4) `(o1) -> Integer.compare(o1.x, o1.y)` - רק פרמטר אחד! Comparator דורש שני פרמטרים. שגיאת קומפילציה.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'אופציה 1' - **שגוי**. הלמבדה `(o1, o2) -> o1.x + o1.y > o2.x + o2.y` מחזירה ערך בוליאני (תוצאה של אופרטור >). אבל Comparator.compare מצפה ל-int. הקומפיילר ייתן שגיאה: 'incompatible types: bad return type in lambda - boolean cannot be converted to int'." },
+      { "idx": 2, "isCorrect": false, "explanation": "'אופציה 2' - **שגוי**. הלמבדה מחזירה אובייקט A (או o1 או o2), אבל Comparator דורש int. שגיאת קומפילציה: 'bad return type'. בנוסף, גם לוגית זה לא הגיוני - ה-comparator לא יכול לבחור בין שני האובייקטים, הוא צריך להחזיר -1/0/+1." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - אופציה 3.** הלמבדה `(o1, o2) -> Integer.compare(o1.x + o1.y, o2.x + o2.y)` מקבלת שני פרמטרים (כפי שדורש Comparator) ומחזירה int (Integer.compare תמיד מחזירה int: שלילי, אפס, או חיובי). הלוגיקה: ממיינת לפי הסכום של x+y - ערך נמוך ראשון. זה מימוש תקין ומלא של Comparator<A>." },
+      { "idx": 4, "isCorrect": false, "explanation": "'אופציה 4' - **שגוי**. הלמבדה `(o1) -> Integer.compare(o1.x, o1.y)` מקבלת רק פרמטר **אחד**, אבל Comparator.compare דורש **שניים**. הקומפיילר ייתן שגיאה: 'incompatible parameter types in lambda expression'. בנוסף, גם הלוגיקה משווה x ו-y של אותו אובייקט - לא קשור להשוואה בין שני אובייקטים." }
+    ]
+  },
+  "moed_a_sem_b_2025__02": {
+    "general": "המחלקה `B<T> implements Iterable<T>` מחזיקה שדה `List<List<T>> elements` (רשימה של רשימות). השאלה: מי מבין 4 המימושים של iterator() **מחזיר Iterator שמטייל בכל איברי כל הרשימות הפנימיות לפי הסדר** (כלומר, איברי list[0] לפני list[1] וכו')? **בדיקה לכל מימוש:** **מימוש 1:** בונה רשימה אחת מאוחדת `all` שמכילה את כל איברי כל הרשימות הפנימיות (`addAll` בלולאה), ומחזיר את ה-iterator שלה. ✓ **תקין** - מחזיר את כל האיברים בסדר הצפוי. **מימוש 2:** מחזיר `elements.iterator()` - אבל זה Iterator<List<T>>, לא Iterator<T>! זה אפילו לא מתקמפל. **מימוש 3:** מחזיר `elements.get(0).iterator()` - מטייל רק על הרשימה **הראשונה**, מתעלם מכל השאר. **מימוש 4:** קצת מבולבל - מחזיר את ה-iterator של הרשימה הראשונה ואז return null. גם זה רק על הראשונה.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - מימוש 1.** הוא בונה רשימה זמנית `all` שמכילה את כל איברי כל הרשימות הפנימיות (באמצעות `addAll`), ומחזיר את ה-iterator של רשימה מאוחדת זו. כל שיחת hasNext/next תעבור על האיברים לפי סדר: כל איברי list[0], אז list[1], וכו'. זה הפתרון התקין היחיד מבחינת תוכן והתאמת טיפוסים." },
+      { "idx": 2, "isCorrect": false, "explanation": "'מימוש 2' - **שגוי**. `elements.iterator()` מחזיר Iterator<**List**<T>>, לא Iterator<T> כפי שהממשק דורש. שגיאת קומפילציה. גם אם איכשהו זה היה עובד, הוא היה מחזיר אובייקטי List במקום אובייקטי T." },
+      { "idx": 3, "isCorrect": false, "explanation": "'מימוש 3' - **שגוי**. `elements.get(0).iterator()` מחזיר רק את ה-iterator של הרשימה **הראשונה** ב-elements. כל הרשימות האחרות לא מטוילות כלל. גם זה מתרסק ב-IndexOutOfBoundsException אם elements ריקה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'מימוש 4' - **שגוי**. הקוד עושה דבר דומה למימוש 3: מקבל את ה-iterator של הרשימה הראשונה ב-elements (`iterator.next().iterator()`) ומחזיר אותו. הלולאה היא רק 'while(hasNext) return ...' שמסתיים בקריאה הראשונה. גם כאן רק הרשימה הראשונה מטוילת. כש-elements ריקה - מחזיר null שיגרום ל-NPE בשימוש." }
+    ]
+  },
+  "moed_a_sem_b_2025__03": {
+    "general": "הקוד: `numbers = [1..10]` (10 איברים). `long res = numbers.stream().map(i -> i % 5).distinct().skip(4).count();`. **שלבי הסטרים:** (1) **map(i % 5)**: מחליף כל מספר בשארית שלו במודולו 5. התוצאה: [1, 2, 3, 4, 0, 1, 2, 3, 4, 0] (10 איברים). (2) **distinct()**: שומר רק ערכים ייחודיים, לפי הסדר שהם הופיעו. התוצאה: [1, 2, 3, 4, 0] (5 איברים). (3) **skip(4)**: דלג על 4 הראשונים. נשאר: [0] (1 איבר). (4) **count()**: סופר. תוצאה: **1**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'0' - **שגוי**. אחרי skip(4) על רשימה של 5 איברים, נשאר עוד איבר אחד, לא אפס. אם היה skip(5) או יותר, אז כן היה 0." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - 1.** מ-10 איברים מקוריים, map הופך אותם ל-[1,2,3,4,0,1,2,3,4,0]. distinct מסנן ל-5 ערכים ייחודיים: [1,2,3,4,0]. skip(4) מסיר 4 ראשונים → נשאר [0]. count מחזיר 1. " },
+      { "idx": 3, "isCorrect": false, "explanation": "'5' - **שגוי**. 5 היה תוצאת count לאחר distinct לפני skip. אבל skip(4) מסיר עוד 4 איברים, אז נשאר רק 1." },
+      { "idx": 4, "isCorrect": false, "explanation": "'10' - **שגוי**. זה היה מספר האיברים המקוריים, לפני distinct. distinct מצמצם את הרשימה ל-5 ייחודיים, אז התוצאה הסופית קטנה יותר. distinct לא נשמר את הכפילויות." },
+      { "idx": 5, "isCorrect": false, "explanation": "'הקוד לא יסיים לרוץ' - **שגוי**. הסטרים סופי (Arrays.asList של 10 איברים), כל הפעולות הן גם סופיות. הסטרים מסתיים מיידית. אין לולאה אינסופית." }
+    ]
+  },
+  "moed_a_sem_b_2025__04": {
+    "general": "המחלקה Base מגדירה `public void foo(Object s) { print(\"Base\"); }` (instance method). Sub יורשת מ-Base ומגדירה `public static void foo(String s) { print(\"Sub\"); }` (**static** method, חתימה שונה). main: `Base base = new Sub(); base.foo(\"test\");`. **שני נושאים נפרדים:** (א) האם הקוד מתקמפל? Sub.foo(String) (סטטי) ו-Base.foo(Object) (מופע) הן שתי מתודות שונות עם חתימות שונות. הן לא מתנגשות (כלל ההתנגשות חל רק על אותה חתימה). הקוד מתקמפל. (ב) מה ייקרא? base.foo(\"test\") - הרסיבר טיפוס Base. הקומפיילר מסתכל על המתודות הזמינות דרך טיפוס Base. ב-Base יש רק `foo(Object)`. הארגומנט \"test\" הוא String, שמקובל כ-Object. נבחרת Base.foo(Object). בזמן ריצה: dispatch למתודה. Sub לא **דרסה** את foo(Object) (Sub.foo(String) הוא overload, לא override - חתימה שונה). אז Base.foo(Object) רצה. מדפיס **'Base'**.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - יודפס 'Base'.** הסבר: ב-main, base הוא טיפוס Base. הקריאה `base.foo(\"test\")` נבחרת בקומפילציה לפי המתודות של Base - שיש בה רק `foo(Object)`. בזמן ריצה, האובייקט הוא Sub אבל Sub לא דורסת את foo(Object) (יש לה רק foo(String) סטטית, חתימה שונה - לא override). אז Base.foo(Object) רצה ומדפיסה 'Base'." },
+      { "idx": 2, "isCorrect": false, "explanation": "'Sub' - **שגוי**. כדי שתודפס 'Sub' היה צריך שהקריאה תפעיל את Sub.foo(String). אבל זה לא יקרה כי: (א) הרסיבר הוא Base ולכן Sub.foo לא נראית בקומפילציה. (ב) גם אם הייתה נראית, היא סטטית - לא חלק מהירושה הרגילה." },
+      { "idx": 3, "isCorrect": false, "explanation": "'הקוד לא מתקמפל - לא ניתן לדרוס מתודה מופע עם מתודה סטטית' - **שגוי**. אכן יש כלל כזה, אבל הוא חל רק כשיש ניסיון override (אותה חתימה). כאן Sub.foo(String) ו-Base.foo(Object) הן חתימות שונות - לא ניסיון override, אלא overload. אין שגיאה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'הקוד לא מתקמפל בגלל ambiguity' - **שגוי**. אין שום ambiguity. הקומפיילר רואה רק `Base.foo(Object)` (כי הרסיבר טיפוס Base). אין שתי חתימות שמתחרות - יש בדיוק אחת. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" }
+    ]
+  },
+  "moed_a_sem_b_2025__05": {
+    "general": "המחלקה Point עם שדות x, y, z. **hashCode מחזיר רק את x**. **equals משווה רק לפי y**. (מימוש מוזר ולא עקבי - שתי נקודות 'שוות' לפי y לאו דווקא בעלות אותו hashCode!) ב-main: HashSet<Point> ומוסיפים 3 נקודות: (1,2,3), (1,2,4), (1,3,5). **תהליך הוספה ב-HashSet:** עבור כל הוספה, מחושב hashCode ובודקים את הדלי המתאים. אם בדלי כבר יש איבר עם אותו hashCode, משווים בעזרת equals. אם equals מחזיר true → לא מוסיפים (כי כבר קיים). **מעקב הוספות:** (1) Point(1,2,3): hash=1, דלי 1 ריק. נוסף. (2) Point(1,2,4): hash=1, דלי 1 מכיל את (1,2,3). equals(other): y=2 == y=2 → **true**. נחשב כפול. **לא נוסף.** (3) Point(1,3,5): hash=1, דלי 1 מכיל את (1,2,3). equals: y=3 == y=2 → false. נוסף. **תוכן Set אחרי הוספות:** {(1,2,3), (1,3,5)}. **בדיקות contains:** (a) `contains(new Point(1,3,2))`: hash=1, דלי 1. בודק (1,2,3): equals 3==2 → false. בודק (1,3,5): equals 3==3 → **true**. נמצא! (b) `contains(new Point(2,3,4))`: hash=2, דלי 2 - ריק! (אין נקודות עם hashCode=2 ב-Set). **לא נמצא**. הדפסה: 'true' ואז 'false'.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'false false' - **שגוי**. ההדפסה הראשונה תהיה true כי Point(1,3,2) נמצא ב-Set: hashCode=1 (שולח לדלי 1), שם יש את (1,3,5) עם y=3, ו-equals מחזיר true על y==y. אז 'false' ראשון לא נכון." },
+      { "idx": 2, "isCorrect": false, "explanation": "'false true' - **שגוי**. הסדר הפוך. ההדפסה הראשונה היא true (Point(1,3,2) נמצא), ההדפסה השנייה היא false (Point(2,3,4) לא נמצא - hash=2 שולח לדלי שונה ואין שם אף איבר)." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - 'true false'.** הסבר מלא: ב-`contains(new Point(1,3,2))` ה-hashCode הוא 1 (לפי x=1), שולח לדלי 1. בדלי יש את (1,2,3) ו-(1,3,5). equals מסתמך רק על y. (1,3,2).y == (1,2,3).y → 3==2 → false. עבור (1,3,5).y → 3==3 → true. נמצא! מדפיס true. ב-`contains(new Point(2,3,4))` ה-hashCode הוא 2 (לפי x=2), שולח לדלי 2 - שאף פעם לא נכתב שם איבר (כי כל הנקודות שהוספנו היו עם x=1). הדלי ריק. לא נמצא. מדפיס false." },
+      { "idx": 4, "isCorrect": false, "explanation": "'true true' - **שגוי**. ההדפסה השנייה חייבת להיות false. הקריאה contains(new Point(2,3,4)) מחשבת hashCode=2, שולחת לדלי 2, ולא מוצאת שם כלום (כי כל הנקודות שהוספנו היו עם x=1, כלומר hashCode=1). אז contains מחזירה false בלי לבדוק equals כלל." },
+      { "idx": 5, "isCorrect": false, "explanation": "'הקוד לא יתקמפל בגלל מימוש לא תקין של equals' - **שגוי**. הקוד כן מתקמפל. אמנם המימוש לא 'נכון' לוגית (לא עקבי עם hashCode), ג'אווה לא בודקת את התחזוקה של חוזה equals/hashCode בקומפילציה. אתה רק רואה את ההתנהגות המוזרה בזמן ריצה. הקוד מתקמפל, רץ, ומדפיס true ואז false." }
+    ]
+  },
+  "moed_a_sem_b_2025__06": {
+    "general": "המתודה הגנרית `<T> void transfer(List<T> source, List<? super T> dest)` מעבירה איברים מ-source ל-dest. הכלל: T נקבע מהפרמטר הראשון, ו-dest חייב להיות List<? super T>. ב-main: ints (List<Integer>), nums (List<Number>), objs (List<Object>). הקוד מבצע ארבע קריאות (@@, ##, $$, **) ובאחת מהן יש שגיאת קומפילציה. **בדיקה לכל קריאה:** **@@** `transfer(ints, nums)`: T=Integer, dest=List<Number>. Number הוא super של Integer ✓ מתקמפל. **##** `transfer(ints, objs)`: T=Integer, dest=List<Object>. Object הוא super של Integer ✓ מתקמפל. **$$** `transfer(nums, objs)`: T=Number, dest=List<Object>. Object הוא super של Number ✓ מתקמפל. **\\*\\*** `transfer(nums, ints)`: T=Number, dest=List<Integer>. Integer **אינו** super של Number (להיפך - Integer יורש מ-Number) ✗ שגיאה: 'Integer cannot be converted to capture of ? super Number'. השורה הראשונה שלא מתקמפלת היא **\\*\\***.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'!!' - **שגוי**. השורה !! היא בתוך גוף transfer (`dest.add(t)`). זו שורה תקינה: dest הוא List<? super T> ו-t הוא T, אז ההוספה חוקית (PECS - Consumer Super, אפשר להוסיף T). אין שגיאה כאן." },
+      { "idx": 2, "isCorrect": false, "explanation": "'@@' - **שגוי**. `transfer(ints, nums)`: T=Integer, dest צריך להיות List של super של Integer. Number הוא אכן super של Integer (Integer extends Number). מתקמפל בלי בעיה." },
+      { "idx": 3, "isCorrect": false, "explanation": "'##' - **שגוי**. `transfer(ints, objs)`: T=Integer, dest צריך List של super של Integer. Object הוא super של כל דבר, כולל Integer. מתקמפל." },
+      { "idx": 4, "isCorrect": false, "explanation": "'$$' - **שגוי**. `transfer(nums, objs)`: T=Number, dest צריך List של super של Number. Object הוא super של Number. מתקמפל. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" },
+      { "idx": 5, "isCorrect": true, "explanation": "**התשובה הנכונה - שורה \\*\\*.** `transfer(nums, ints)`: T נקבע מ-source (nums) להיות Number. dest צריך להיות `List<? super Number>`. אבל ints הוא `List<Integer>`, ו-Integer הוא **תת-טיפוס** של Number, לא super. הקומפיילר ידחה: 'no instance(s) of type variable(s) T exist so that List<Integer> conforms to List<? super T>'. זו השורה הראשונה (והיחידה) שלא מתקמפלת." }
+    ]
+  },
+  "moed_a_sem_b_2025__07": {
+    "general": "הקוד מציג: ממשק `Abs`, ממשק `Creator { Abs create(); }`, מחלקות `ImplA implements Abs`, `ImplB implements Abs`, `ACreator implements Creator` (יוצרת ImplA), `BCreator implements Creator` (יוצרת ImplB). ב-main: `ACreator i = new ACreator(); ImplA a = (ImplA) i.create();`. **תבנית עיצוב:** מבנה הזה הוא דוגמה קלאסית של **Factory Method**: יש ממשק 'יצרן' (Creator) עם מתודת יצירה אחת (`create()`) שמחזירה את ה'מוצר' (Abs). כל יצרן קונקרטי דורס את create() כדי להחזיר סוג מוצר ספציפי. הלקוח (G.main) מתעסק עם הממשק Creator ולא צריך לדעת איזו מחלקה ספציפית הוא מקבל. ב-Factory, היצירה מוסתרת מאחורי המתודה.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל' - **שגוי**. הקוד מתקמפל בלי בעיה. ACreator מממשת את Creator, BCreator מממשת את Creator, ImplA/ImplB מממשות את Abs. הקאסטינג `(ImplA) i.create()` הוא downcast חוקי כי ACreator.create מחזיר ImplA בפועל." },
+      { "idx": 2, "isCorrect": false, "explanation": "'Observer' - **שגוי**. Observer הוא תבנית של פרסום-מנוי (publish-subscribe), שבה Subject שולח הודעות ל-Observers. אין כאן שום מנגנון של רישום מאזינים והודעות. רק יצירת אובייקטים." },
+      { "idx": 3, "isCorrect": false, "explanation": "'Singleton' - **שגוי**. Singleton מוודא שיש רק מופע אחד של מחלקה. אין כאן שום מנגנון של 'getInstance()' או חסימת בנאים. אפשר ליצור הרבה ACreators ו-BCreators - לא Singleton." },
+      { "idx": 4, "isCorrect": false, "explanation": "'Bridge' - **שגוי**. Bridge מפרידה בין הפשטה (Abstraction) לימוש (Implementor) בשתי היררכיות נפרדות עם reference בין השנייה. כאן יש רק היררכיה אחת - היצרנים והמוצרים. לא Bridge. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" },
+      { "idx": 5, "isCorrect": true, "explanation": "**התשובה הנכונה - Factory.** הממשק Creator עם `Abs create()` הוא מתודת factory. ACreator ו-BCreator הן יצרנים קונקרטיים שכל אחד מחזיר טיפוס מוצר אחר. הלקוח עובד מול Creator ולא חשוף לסוג הקונקרטי - היצירה 'מוסתרת' מאחורי הממשק. זה התרחיש הקלאסי של Factory Method Pattern." }
+    ]
+  },
+
+  "moed_b_sem_a_2024__01": {
+    "general": "A מגדירה `public int i = 1` ו-`public int f() { return i; }`. ASub יורשת מ-A ומגדירה `private int i = 10` (שדה חדש שמסתיר את של A). ASub **לא דורסת** את f(). ב-main: `A a = new ASub(); res += 2*a.f(); res += 3*((ASub)a).f();`. **המפתח:** (1) השדה i של ASub הוא private והוא מסתיר (לא דורס) את i של A. השדה של A עדיין קיים באובייקט ASub (כל אובייקט מכיל את כל השדות של שרשרת המחלקות שלו). (2) ASub לא דורסת את f(), אז הקריאה ל-f תמיד עוברת ל-A.f. (3) **שדות נבחרים לפי הטיפוס הסטטי** של הרסיבר, אבל f() היא מתודה של A - בתוך f, כש-f מתייחסת ל-`i`, היא מתייחסת ל-i של A (בהקשר של המחלקה שבה נכתבה המתודה). לכן f() תמיד מחזירה 1. חישוב: `res = 0 + 2*1 + 3*1 = 5`. הקאסטינג ל-ASub לא משנה כלום כי f היא עדיין A.f.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'32' - **שגוי**. 32 יתקבל אם f תחזיר 1 בקריאה הראשונה ו-10 בשנייה: 2*1 + 3*10 = 32. אבל f.i תמיד מתייחסת ל-A.i (השדה של A), כי f נכתבה ב-A. גם אחרי casting, המתודה היא עדיין A.f, ולכן היא משתמשת ב-A.i = 1." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - 5.** `a.f()` קוראת ל-A.f (ASub לא דורסת), שמחזירה A.i = 1. `((ASub)a).f()` - ה-cast לא משנה את דינמיקת הקריאה; עדיין A.f, עדיין מחזיר A.i = 1. חישוב: `res = 0 + 2*1 + 3*1 = 5`. מודגש: private i של ASub מסתיר את i של A, אבל רק בהקשר של ASub עצמה. בתוך A.f, השם `i` מתייחס ל-A.i." },
+      { "idx": 3, "isCorrect": false, "explanation": "'23' - **שגוי**. לא מגיעים ל-23 מהחישוב הנכון. 23 יתקבל אם, למשל, f הייתה מחזירה 1 אחת ו-7 אחרת - לא קורה כאן." },
+      { "idx": 4, "isCorrect": false, "explanation": "הסדר אחר - לא נכון." }
+    ]
+  },
+  "moed_b_sem_a_2024__02": {
+    "general": "המחלקה B מגדירה `public static <T> void func(List<T> list1, List<T> list2) {}`. ב-main: `List<?> list = new ArrayList<String>(); func(list, list);`. **הבעיה:** המתודה דורשת ששני הפרמטרים יהיו `List<T>` עבור **אותו T**. כשהקומפיילר מתרגם את `List<?>` להעברה כפרמטר, הוא עושה **capture conversion** - כל שימוש ב-`list` נחשב `List<capture#N of ?>` עם מספר חדש לכל שימוש. השימוש הראשון מקבל capture#1, השני capture#2. הקומפיילר לא יכול למצוא T יחיד שיהיה גם capture#1 וגם capture#2. **שגיאת קומפילציה**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'מתקמפל' - **שגוי**. למרות שאותו משתנה list מועבר בשני הפרמטרים, כל מעבר של wildcard עובר capture conversion נפרדת. שני ה-captures נחשבים לטיפוסים שונים ולכן T לא יכול להתאחד." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - לא מתקמפל.** הסיבה: capture conversion הופכת כל שימוש ב-`List<?>` לטיפוס capture חדש. הקומפיילר רואה קריאה `func(List<capture#1>, List<capture#2>)` אבל func דורש שני פרמטרים עם אותו T. אין T שמספק את שתי ה-captures → שגיאה: 'method func cannot be applied to given types'." }
+    ]
+  },
+  "moed_b_sem_a_2024__03": {
+    "general": "נתונים שני מנשקים ריקים: `interface ICa {}`, `interface ICb {}`. השאלה: איזו השלמה של ההצהרה הציבורית **לא** תתקמפל? **בדיקה:** (1) `interface C extends ICa, ICb` - חוקי, מנשק יכול להרחיב (extends) מספר מנשקים. ✓ (2) `class C<T> implements ICa` - חוקי, מחלקה גנרית שמממשת מנשק. ✓ (3) `interface C implements ICa` - **שגוי**: מנשק משתמש ב-`extends` לא ב-`implements`! זה הרי שגיאת תחביר. ✗ (4) `class C implements ICa, ICb` - חוקי, מחלקה יכולה לממש מספר מנשקים. ✓",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "`interface C extends ICa, ICb` - **מתקמפל**. מנשק יכול להרחיב מספר מנשקים אחרים בבת אחת עם extends. זו דווקא דוגמה טובה למנשקים מרובים (multiple inheritance של ממשקים, חוקי בג'אווה). אופציה זו לא תואמת את השאלה." },
+      { "idx": 2, "isCorrect": false, "explanation": "`class C<T> implements ICa` - **מתקמפל**. מחלקה גנרית שמממשת מנשק אחד - תקני לחלוטין. ה-`<T>` הוא פרמטר טיפוס, לא משפיע על המימוש." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - `interface C implements ICa` לא מתקמפל.** הסיבה: מנשקים בג'אווה אינם 'מממשים' (implement) דבר - הם מרחיבים (extends) מנשקים אחרים. `implements` הוא מילת מפתח למחלקות בלבד, כדי לסמן שהמחלקה מממשת את החוזה של מנשק. כדי שזה יעבוד צריך לכתוב: `interface C extends ICa`." },
+      { "idx": 4, "isCorrect": false, "explanation": "`class C implements ICa, ICb` - **מתקמפל**. זו הדרך הסטנדרטית למחלקה לממש מספר מנשקים. ג'אווה מאפשרת multiple interface inheritance למחלקות (בניגוד ל-multiple class inheritance שאסור). תקין." }
+    ]
+  },
+  "moed_b_sem_a_2024__04": {
+    "general": "`List<Integer> ints = Arrays.asList(1,2,3,4,5)` עובר דרך שרשרת פעולות: `map(x -> x*x)` → `peek(println(\"peek \" + x))` → `filter(x%2 == 0)` → `peek(println(\"peek \" + x))` → `forEach(x -> {})`. **חישוב:** map מחליף לריבועים: [1,4,9,16,25]. ה-peek הראשון מבצע הדפסה לכל **חמשת האיברים** (לפני הסינון). filter משאיר רק זוגיים: 4 ו-16 (2 איברים). ה-peek השני מבצע הדפסה לשני האיברים האלה. forEach ריק. **סה\"כ הדפסות:** 5 (peek ראשון) + 2 (peek שני) = **7 שורות**. **הדפסות ייחודיות:** הערכים המודפסים הם 1, 4, 9, 16, 25 (4 ו-16 מודפסים פעמיים, אבל כמחרוזת הם זהים). זה **5 טקסטים שונים**.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - 7 שורות, 5 טקסטים שונים.** ה-peek הראשון מדפיס 5 פעמים (כל איבר אחרי map: peek 1, peek 4, peek 9, peek 16, peek 25). ה-peek השני מדפיס רק אחרי filter שמשאיר את הזוגיים 4 ו-16 → 2 הדפסות נוספות (peek 4, peek 16). סך הכל 7 שורות. ערכים ייחודיים: {peek 1, peek 4, peek 9, peek 16, peek 25} = 5 (כי 'peek 4' ו-'peek 16' חוזרים אבל כטקסט זהה)." },
+      { "idx": 2, "isCorrect": false, "explanation": "10 שורות / 5 ייחודיות - **שגוי**. 10 הוא יותר מדי - כל איבר מודפס פעם אחת ב-peek הראשון ורק הזוגיים (2 מהם) ב-peek השני: 5+2=7, לא 10." },
+      { "idx": 3, "isCorrect": false, "explanation": "10 שורות / 6 ייחודיות - **שגוי**. גם המספר הכולל וגם מספר הייחודיים שגויים. יש רק 5 ערכי ריבוע מ-[1..5], אז לא יכולים להיות 6 ערכים ייחודיים." },
+      { "idx": 4, "isCorrect": false, "explanation": "מספר השורות שיודפסו שווה למספר השורות הייחודיות - **שגוי**. זה אומר שאין חזרות - אבל ה-peek השני מדפיס שוב עבור 4 ו-16 (שכבר הודפסו ב-peek הראשון). ולכן יש חזרות בהדפסות ומספר הייחודיות קטן ממספר הכולל." }
+    ]
+  },
+  "moed_b_sem_a_2024__05": {
+    "general": "המחלקה E מגדירה `foo(List<Object> lst)` שעוברת על הרשימה ומדפיסה כל איבר. ב-main: `List<Object> stringList = new ArrayList<>()`, מוסיפים אליה שני Strings (\"aaa\", \"bbb\"), ומעבירים ל-`e.foo(stringList)`. **ניתוח:** `List<Object>` יכולה להכיל כל Object - כולל String, כי String יורש מ-Object. הוספת \"aaa\" ו-\"bbb\" תקינה. הקריאה `e.foo(stringList)` תואמת בדיוק לחתימה `foo(List<Object>)`. הכל מתקמפל ורץ בשלום.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - מתקמפל.** `List<Object>` יכולה להכיל כל אובייקט, כולל מחרוזות (String יורש מ-Object). ההעברה של `List<Object>` למתודה שמצפה ל-`List<Object>` היא התאמה מדויקת. ה-for-each עם `Object o : lst` גם תקין. הקוד מתקמפל ומדפיס 'aaa' ואז 'bbb'." },
+      { "idx": 2, "isCorrect": false, "explanation": "'לא מתקמפל' - **שגוי**. אין שום בעיה בקוד. הבלבול הנפוץ: אנשים חושבים שאם הרשימה מוצהרת כ-`List<Object>` אסור להוסיף מחרוזות. זה לא נכון - String הוא Object ולכן מותר. " }
+    ]
+  },
+  "moed_b_sem_a_2024__06": {
+    "general": "גרסה דומה ל-Q5, אבל **ההבדל החשוב**: הפעם `List<String> stringList = new ArrayList<>()` (List של String, לא Object). מעבירים את זה ל-`foo(List<Object>)`. **כלל קריטי:** גנריות בג'אווה היא **invariant**. `List<String>` **אינה** תת-טיפוס של `List<Object>`, למרות ש-String תת-טיפוס של Object. הסיבה: אילו הייתה, אפשר היה להוסיף Integer (דרך reference של List<Object>) לרשימת Strings - מפר את הטיפוסיות. הקומפיילר דוחה את הקריאה `f.foo(stringList)` עם שגיאה: 'incompatible types: List<String> cannot be converted to List<Object>'.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'מתקמפל' - **שגוי**. טעות נפוצה שנובעת מהבנה חלקית של גנריות. למרות ש-String יורש מ-Object, `List<String>` אינה יורשת מ-`List<Object>`. הקומפיילר דוחה את הקריאה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - לא מתקמפל.** הסיבה: גנריות היא invariant (לא covariant ולא contravariant). `List<String>` הוא טיפוס נפרד לחלוטין מ-`List<Object>`. כדי שהקוד יתקמפל, היה צריך לשנות את חתימת foo ל-`foo(List<? extends Object>)` או לחלופין שהמשתנה ב-main יהיה `List<Object>`. " }
+    ]
+  },
+  "moed_b_sem_a_2024__07": {
+    "general": "**המחלקה G** מגדירה: `private foo()` מדפיסה 'G.foo()'; `protected bar() { foo(); print('G.bar()'); }`; `public func() { bar(); print('G.func()'); }`. **SubG extends G** דורסת הכל: `private foo()` מדפיסה 'SubG.foo()' (לא דריסה כי private!); `protected bar() { foo(); print('SubG.bar()'); }` (override); `public func() { super.bar(); bar(); print('SubG.func()'); }` (override). main: `G g = new SubG(); g.func();`. **מעקב:** g.func() → dispatch ל-SubG.func(). SubG.func: (1) `super.bar()` → G.bar ישירות. G.bar מבצעת `foo()` - בתוך G, foo היא private → static binding ל-G.foo → 'G.foo()'. אז 'G.bar()'. (2) `bar()` → dynamic dispatch ל-SubG.bar. SubG.bar מבצעת foo() - בתוך SubG, foo היא private → static binding ל-SubG.foo → 'SubG.foo()'. אז 'SubG.bar()'. (3) 'SubG.func()'. **סדר סופי:** G.foo, G.bar, SubG.foo, SubG.bar, SubG.func - **כל הדפסות ה-G לפני כל הדפסות ה-SubG**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל' - **שגוי**. הקוד מתקמפל בלי בעיה. מתודה private לא נחשבת override (היא מתודה חדשה לחלוטין במחלקת הבת), מתודות protected כן דורסות נכון, מתודה public גם. אין שום בעיית קומפילציה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - קודם מודפסים פלטים של G ולאחר מכן של SubG.** הסיבה: super.bar() של SubG קורא ל-G.bar (ללא dispatch), שמפעיל את foo() הפרטית של G → 'G.foo()' ואז 'G.bar()'. אחר כך bar() (עם dispatch) מגיע ל-SubG.bar שמפעיל את foo() הפרטית של SubG → 'SubG.foo()' ואז 'SubG.bar()'. ולבסוף 'SubG.func()'. כל ה-G מודפסים ברצף לפני כל ה-SubG." },
+      { "idx": 3, "isCorrect": false, "explanation": "'קודם SubG ולאחר G' - **שגוי**. זה היה קורה אם לא היה super.bar() ב-SubG.func. אבל ההוראה הראשונה ב-SubG.func היא super.bar() שמתחיל עם G." },
+      { "idx": 4, "isCorrect": false, "explanation": "'פלטים של G ו-SubG יודפסו לסירוגין' - **שגוי**. כל קבוצת ההדפסות של G מתבצעת ברצף (כחלק מ-super.bar()) ורק אז כל קבוצת ה-SubG. אין ערבוב." }
+    ]
+  },
+  "moed_b_sem_a_2024__08": {
+    "general": "דומה ל-Q7, אבל **השוני הקריטי**: ב-H (במקום G) הפונקציה `func` היא `public`, וב-SubH (יורשת מ-H) מגדירים `private void func()`. main: `G h = new H(); h.func();`. **בעיה:** SubH מנסה לדרוס את `public void func()` של H עם `private void func()`. **כלל override:** אסור לצמצם נראות בדריסה - אם האב מכריז public, הבן חייב להיות לפחות public. private ב-override הוא **שגיאת קומפילציה**: 'func() in SubH cannot override func() in H; attempting to assign weaker access privileges'.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד לא מתקמפל.** הסיבה: SubH מנסה להגדיר `private void func()` שמנסה לדרוס את `public void func()` של H. ג'אווה לא מאפשרת צמצום נראות בדריסה (weaker access) - זה מפר את עקרון Liskov (אם האב מבטיח חתימה ציבורית, הבן לא יכול להפר את ההבטחה הזו). הקומפיילר דוחה: 'attempting to assign weaker access privileges; was public'." },
+      { "idx": 2, "isCorrect": false, "explanation": "'יודפס H' - **שגוי**. הקוד לא מתקמפל בכלל, ולכן שום דבר לא מודפס. אופציה זו מניחה שהקוד תקין והדפסות יוצאות לפי הפרטיות, אבל ה-private override פשוט לא חוקי." },
+      { "idx": 3, "isCorrect": false, "explanation": "'יודפס SubH' - **שגוי**. שוב, הקוד לא מתקמפל. אין הדפסה בכלל." },
+      { "idx": 4, "isCorrect": false, "explanation": "'שגיאת זמן ריצה' - **שגוי**. השגיאה היא בזמן קומפילציה, לא בזמן ריצה. הקוד כלל לא יגיע ל-runtime." }
+    ]
+  },
+
+  "moed_b_sem_a_2025__01": {
+    "general": "A מגדירה `public static String foo() { return \"A\"; }` (**סטטית**). B extends A מגדירה `public String foo() { return \"B\"; }` (**מופע**). **כלל קריטי:** מתודת מופע לא יכולה לדרוס (override) מתודה סטטית, ומתודה סטטית לא יכולה להסתיר (hide) מתודת מופע. הקומפיילר דוחה את ההגדרה של B.foo עם שגיאה: 'foo() in B cannot override foo() in A; overridden method is static'. **התיקון:** או שהופכים את B.foo לסטטית (ואז היא מסתירה את A.foo - חוקי) או שהופכים את A.foo למופע (ואז B.foo דורסת אותה - חוקי).",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד מתקמפל' - **שגוי**. יש שגיאת קומפילציה כי מתודה מופע ב-B מנסה לדרוס מתודה סטטית ב-A, מה שאסור בג'אווה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'שינוי הנראות ל-private יפתור' - **שגוי**. הפיכת B.foo ל-private לא תפתור - private instance method לא יכולה לדרוס public static method. גם אם זה היה 'לא override', שני המתודות לא היו יכולות להכיל אחד את השני בצורה תקינה מבחינת static vs instance." },
+      { "idx": 3, "isCorrect": false, "explanation": "'הוספת @Override תפתור' - **שגוי**. ההפך הוא הנכון: הוספת @Override רק **תאשר** שיש כוונה לדרוס, והקומפיילר ייתן שגיאה ברורה יותר שאין מתודה תקפה לדריסה (כי מתודה סטטית לא נדרסת). ההנחה שההוספה 'מתקנת' היא תמוהה." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - הפיכת B.foo למתודה סטטית תתקן את הקוד.** אז B.foo תהיה `public static String foo()` שמסתירה (hiding) את A.foo - זה מקובל ב-Java. המתודה של B מוסתרת על של A וקריאה דרך A.foo() תפעיל את של A, דרך B.foo() - של B. זה שונה מ-override (dispatch דינמי), אבל חוקי." }
+    ]
+  },
+  "moed_b_sem_a_2025__02": {
+    "general": "`class B1<T>` עם `T t` ו-`T func(T in) { return t; }`. שתי מחלקות: `T1 {}` ו-`T2 extends T1 {}`. ב-main: `B1<T2> y = new B1<T2>(new T2())`. יש 4 שורות בהערה: **1:** `T1 res = y.func(new T1())` - מעביר T1 לפונקציה שדורשת T2 (כי y הוא `B1<T2>` ו-T=T2). T1 אב של T2, לא תת-טיפוס → **לא מתקמפל**. **2:** `T2 res = y.func(new T1())` - אותה בעיה + גם החזרה לא תקנית → **לא מתקמפל**. **3:** `T1 res = y.func(new T2())` - מעביר T2 (תקין), מחזיר T2 ומשים ל-T1 (upcast אוטומטי) → **מתקמפל**. **4:** `T2 res = y.func(new T2())` - הכל תואם T2 → **מתקמפל**. סיכום: 2 מתקמפלות, 2 לא.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'כל ארבע גורמות לשגיאת קומפילציה' - **שגוי**. אופציות 3 ו-4 דווקא מתקמפלות היטב. הן מעבירות T2 לפונקציה (כנדרש) ומשימות את התוצאה למשתנה מתאים." },
+      { "idx": 2, "isCorrect": false, "explanation": "'כולן מתקמפלות אך חלקן גורמות לשגיאת זמן ריצה' - **שגוי**. אופציות 1 ו-2 לא מתקמפלות בכלל (מעבירות T1 במקום T2). גם אין שגיאות runtime בשאר - זה רק passthrough של reference." },
+      { "idx": 3, "isCorrect": false, "explanation": "'כולן מתקמפלות מלבד אפשרות 2' - **שגוי**. אופציה 1 גם לא מתקמפלת (`y.func(new T1())` - לא ניתן להעביר T1 למקום שצריך T2)." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - יש בדיוק שתי אפשרויות עבורן הקוד יצליח לרוץ ללא שגיאות, ושתי אפשרויות שיגרמו לשגיאת קומפילציה.** אופציות 3 ו-4 מתקמפלות (מעבירות T2 כנדרש). אופציות 1 ו-2 לא מתקמפלות (מעבירות T1 כשצריך T2 - T1 אב של T2, לא תת-טיפוס, ולכן אי אפשר להעביר אותו כ-T2)." }
+    ]
+  },
+  "moed_b_sem_a_2025__03": {
+    "general": "`List<String> l = new ArrayList<>()`, `l.add(\"A\")`, `List<?> a = l`, `Integer i = (Integer) a.get(0)`, `print(\"hi\")`. **ניתוח:** `a.get(0)` מחזיר Object (כי a הוא `List<?>`). הערך בפועל הוא \"A\" שהוא String. ניסיון לעשות cast `(Integer)` על String → **ClassCastException בזמן ריצה**. החריג נזרק לפני println(\"hi\") ולכן \"hi\" לא מודפס. הקוד מתקמפל (הקאסטינג הוא downcast שהקומפיילר מאפשר), אבל נכשל בזמן ריצה.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל' - **שגוי**. הקוד מתקמפל - הקאסטינג `(Integer) a.get(0)` הוא downcast מ-Object ל-Integer. הקומפיילר מאפשר אותו כי הוא לא יכול לדעת בזמן קומפילציה מה הטיפוס בפועל. הבדיקה היא בזמן ריצה." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד מתקמפל אך זורק ClassCastException.** בזמן ריצה, `a.get(0)` מחזיר את הערך \"A\" שהוא String. הקוד מנסה לעשות לו cast ל-Integer, אבל String לא Integer - הקאסטינג נכשל עם ClassCastException. השורה `print(\"hi\")` לעולם לא מגיעה אליה כי החריג נזרק לפני." },
+      { "idx": 3, "isCorrect": false, "explanation": "'הקוד מתקמפל ומדפיס hi' - **שגוי**. הוא אכן מתקמפל, אבל הקאסטינג נכשל בזמן ריצה עם ClassCastException. כל קוד אחרי נקודת הכשל לא מתבצע, כולל ה-println. לולא הקאסטינג היה מצליח (למשל אם הערך היה באמת Integer) אז כן היה מודפס hi." }
+    ]
+  },
+  "moed_b_sem_a_2025__04": {
+    "general": "`final int x = 20; Stream.generate(func(i -> i > x)).limit(1000).forEach(print(i + \"x\"))`. ה-Supplier מחזיק int i=0 ומחזיר בכל get() את ה-i הבא שעבורו pred.test(i)==true (i > 20). כלומר: 21, 22, 23, ..., 1020 (1000 ערכים). forEach מדפיס \"21x22x...1020x\". **השאלה משווה** את הפלט למקרה שבו x=1001. עם x=1001: הלמבדה היא i > 1001, והערכים יהיו 1002, 1003, ..., 2001. **סך הכל הפלט שונה לחלוטין** - ערכי התחלה וסוף שונים. הערה: ה-x הוא final ולכן הלמבדה יכולה ללכוד אותו חוקית, אין שגיאת קומפילציה.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'הקוד לא מתקמפל בגלל שימוש ב-x בלמבדה' - **שגוי**. x מוגדר כ-`final int`, מה שהופך אותו ל-effectively final שמאפשר שימוש בלמבדות. הקוד מתקמפל בלי בעיה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'הפלט זהה לפלט במקרה ש-x=1001' - **שגוי**. עם x=20 הפלט הוא 21x22x...1020x. עם x=1001 הפלט הוא 1002x1003x...2001x. לחלוטין שונה. (זו הייתה התשובה המסומנת במקור, ותוקנה.)" },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - הפלט יהיה שונה מהמקרה של x=1001.** עם x=20 הסטרים מייצר 21, 22, 23, ..., 1020 (מוגבל ל-1000 ערכים). עם x=1001 הוא מייצר 1002, 1003, ..., 2001. מספרים שונים לחלוטין - הפלט המודפס אחר לגמרי." },
+      { "idx": 4, "isCorrect": false, "explanation": "'הקוד לא מסיים לרוץ' - **שגוי**. limit(1000) מגביל את הסטרים ל-1000 ערכים, הקוד מסיים מהר למדי. הסטרים עצמו היה אינסופי בלי ה-limit, אבל יש limit. הסיום מובטח." }
+    ]
+  },
+  "moed_b_sem_a_2025__05": {
+    "general": "שאלת תיאוריה על NullPointerException ו-auto-unboxing. **רמז בשאלה:** החריג NullPointerException הוא unchecked. **בדיקת אופציות:** (1) חובה לעטוף בtry-catch כל קוד שעלול לזרוק NPE - **שגוי**, NPE הוא unchecked, לא חובה לתפוס. (2) אפשר להשים null ל-int (`int i=null`) - **שגוי**, int הוא פרימיטיבי, לא מקבל null. (3) `Integer j=null; int i = j;` יזרוק NPE - **נכון**, ההשמה מפעילה auto-unboxing (`j.intValue()`) ו-j הוא null → NPE. (4) `Integer j=null; Integer i = j;` יזרוק NPE - **שגוי**, זו השמה של reference בלבד (i=null), אין unboxing, אין NPE.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'חובה לעטוף בtry-catch כל קטע קוד שעלול לזרוק NPE' - **שגוי**. NullPointerException הוא חריג unchecked (יורש מ-RuntimeException), ולכן אין חובה לטפל בו. הקוד יתקמפל גם בלי try-catch. זה בדיוק מה שהרמז בתחתית השאלה מדגיש." },
+      { "idx": 2, "isCorrect": false, "explanation": "'ניתן להשים null ל-int (int i=null)' - **שגוי**. טיפוסים פרימיטיביים בג'אווה (int, double, boolean וכו') לא יכולים להחזיק null - null הוא ערך עבור טיפוסי reference בלבד. הקוד `int i=null` הוא שגיאת קומפילציה." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - `Integer j=null; int i = j;` יזרוק NullPointerException.** הסבר: ההשמה של Integer ל-int מפעילה **auto-unboxing** - הקומפיילר מוסיף קריאה סמויה ל-`j.intValue()`. כש-j הוא null, ה-intValue() נקרא על null ← NPE מיידי. זו דוגמה קלאסית לבעיית auto-unboxing שהרבה מפתחים נופלים בה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'`Integer j=null; Integer i = j;` יזרוק NPE' - **שגוי**. כאן ההשמה היא reference-to-reference (Integer ל-Integer). אין unboxing, אין קריאה למתודה על j. פשוט i מצביע לאותו המקום כמו j (null). אין חריג. בהמשך אם נקרא `i.intValue()` אז כן יקרה NPE, אבל רק ההשמה עצמה לא זורקת." }
+    ]
+  },
+  "moed_b_sem_a_2025__06": {
+    "general": "`Set<Student> students = new HashSet<>()`, מוסיפים Student(\"Rachmaninoff\"). אז `Set<String> newSet = null` ואז בבלוק try: `newSet = students` ולולאה שעוברת על newSet כ-String. ה-catch תופס ClassCastException. **הבעיה:** `newSet = students` מנסה להשים `Set<Student>` ל-`Set<String>`. **גנריות היא invariant** - `Set<Student>` אינו תת-טיפוס של `Set<String>` (הם לחלוטין לא קשורים). **שגיאת קומפילציה** - הקוד כלל לא רץ.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'ידפיס Rachmaninoff' - **שגוי**. הקוד לא מתקמפל בכלל, אז שום הדפסה לא מתרחשת. אפילו אם היה מתקמפל בכלל (למשל בעזרת raw type), ClassCastException היה נזרק ב-for-each בתור שמנסים לשאוב String מ-Set של Student." },
+      { "idx": 2, "isCorrect": false, "explanation": "'ידפיס !(Student is-a String)' - **שגוי**. זה היה קורה אילו הקוד היה מתקמפל, רץ, ונופל על ClassCastException שנתפס ב-catch. אבל הקוד לא מתקמפל בגלל invariance של generics. אף קוד לא רץ." },
+      { "idx": 3, "isCorrect": false, "explanation": "'מתקמפל וזורק NullPointerException' - **שגוי**. לא מתקמפל. אילו היה מתקמפל, ה-newSet (שאתחל null) היה מוחלף ב-students לפני הלולאה, אז לא NPE." },
+      { "idx": 4, "isCorrect": false, "explanation": "'מתקמפל וזורק NPE שאינה נתפסת' - **שגוי**. אותה בעיה - הקוד לא מתקמפל כלל. גם אם כן, NPE יכול להיתפס (catch ClassCastException לא תופס NPE, אבל זה לא המצב)." },
+      { "idx": 5, "isCorrect": true, "explanation": "**התשובה הנכונה - הקוד לא מתקמפל.** השורה `newSet = students` מנסה להציב `Set<Student>` ל-`Set<String>`. גנריות בג'אווה היא invariant: שני טיפוסים גנריים שונים הם כמו מחלקות לא קשורות, גם אם ה-type parameters קשורים. הקומפיילר ידחה עם שגיאה: 'incompatible types: Set<Student> cannot be converted to Set<String>'." }
+    ]
+  },
+  "moed_b_sem_a_2025__07": {
+    "general": "A מגדירה `public static void bar() { print(\"A\"); }` ו-`public void foo() { print(\"a\"); bar(); }`. B extends A מגדירה `public static void bar() { print(\"B\"); }` (hiding, כי גם זו סטטית) ו-`public void foo() { print(\"b\"); bar(); }` (override). main: `A a = new B(); a.foo();`. **מעקב:** `a.foo()` - מתודת מופע, dynamic dispatch לפי הטיפוס הדינמי (B) → **B.foo()**. B.foo מדפיס **'b'** ואז קורא `bar()`. **תיבחן קריאה סטטית:** `bar()` (לא qualified) מתוך B.foo. הקומפיילר מחפש bar() ב-B או ב-scope הגלוי. B מכריז על `static bar()`, לכן `bar()` בתוך B.foo נפתר סטטית ל-B.bar (הסטטית של B, שמסתירה את A.bar). מדפיס **'B'**. סך הכל: 'b' ואז 'B'.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - יודפס b ואז B.** `a.foo()` עם a דינמית B ≡ B.foo (override). B.foo מדפיס 'b' ואז קורא `bar()` ללא qualifier. בתוך scope של B, `bar` מתפרש כ-B.bar (שהיא סטטית, הסתרה של A.bar). התוצאה היא 'B'. הסדר הסופי: 'b' ואז 'B'." },
+      { "idx": 2, "isCorrect": false, "explanation": "'b ואז A' - **שגוי**. כדי להדפיס 'A' היה צריך שהקריאה `bar()` ב-B.foo תגיע ל-A.bar. אבל B מגדיר את bar שלו (כסטטית עם hiding), וכש-compiler מתרגם `bar()` לתוך B.foo הוא בוחר את הקרוב ביותר בscope - של B. לכן 'B', לא 'A'." },
+      { "idx": 3, "isCorrect": false, "explanation": "'a ואז A' - **שגוי**. זה היה קורה אילו foo() של A הייתה נקראת במקום של B. אבל foo() הוא override רגיל (instance method), ולכן dynamic dispatch לפי a.getClass() = B → B.foo()." },
+      { "idx": 4, "isCorrect": false, "explanation": "'a ואז B' - **שגוי**. הבעיה כמו ב-3: 'a' לא מודפס כי B.foo רץ (dispatch) ולא A.foo. 'a' מופיע רק בהדפסה של A.foo." }
+    ]
+  },
+
+  "moed_b_sem_b_2024__01": {
+    "general": "Streams: filter, map, sorted, reduce. בודק את הסכום הסופי אחרי הסינונים.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "הקוד מתקמפל." },
+      { "idx": 2, "isCorrect": false, "explanation": "התוצאה reduce לא מחזירה int במקרה הזה." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה.** הקוד יתקמפל ויודפס 5 - לפי החישוב של filter, map, ו-reduce." },
+      { "idx": 4, "isCorrect": false, "explanation": "מספר אחר." }
+    ]
+  },
+  "moed_b_sem_b_2024__02": {
+    "general": "Method Resolution: השיטה של המחלקה הנכונה נקראת לפי כללי הדריסה והנראות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "הסדר 1234 - לא נכון." },
+      { "idx": 2, "isCorrect": false, "explanation": "הסדר 3434 - לא נכון." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה.** הקוד יתקמפל ויודפס 1434 - הסדר הזה תואם את הקריאות הסטטיות והדינמיות." },
+      { "idx": 4, "isCorrect": false, "explanation": "הסדר 1232 - לא נכון." }
+    ]
+  },
+  "moed_b_sem_b_2024__03": {
+    "general": "ClassCastException בקוד עם Generics.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "הקוד מתקמפל." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה.** הקוד מתקמפל ובזמן ריצה זורק ClassCastException." },
+      { "idx": 3, "isCorrect": false, "explanation": "הקוד לא מדפיס +-1." },
+      { "idx": 4, "isCorrect": false, "explanation": "הקוד לא מדפיס +-1." }
+    ]
+  },
+  "moed_b_sem_b_2024__04": {
+    "general": "Inner Generic Classes + NullPointerException.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "אופציה אחת - לא נכונה." },
+      { "idx": 2, "isCorrect": false, "explanation": "אופציה שנייה - לא נכונה." },
+      { "idx": 3, "isCorrect": false, "explanation": "אופציה שלישית - לא נכונה." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה.** הקוד לא מתקמפל בגלל בעיה ספציפית עם המחלקה הפנימית הגנרית - public class Q$d<A>." }
+    ]
+  },
+  "moed_b_sem_b_2024__05": {
+    "general": "Method Overriding + Constructor: כללי הקוסטרוקטור והדריסה.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה.** הקוד מתקמפל אבל יש בעיה - 'אם נדפיסכת 1 אז הראה התקלה' - הסבר טכני שתואם את כללי הדריסה." },
+      { "idx": 2, "isCorrect": false, "explanation": "אופציה שנייה - לא נכונה." },
+      { "idx": 3, "isCorrect": false, "explanation": "אופציה שלישית - לא נכונה." },
+      { "idx": 4, "isCorrect": false, "explanation": "אופציה רביעית - לא נכונה." }
+    ]
+  },
+  "moed_b_sem_b_2024__06": {
+    "general": "Generics + Inheritance: ההגבלות בין מחלקות גנריות יורשות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "A=B<C<D - לא נכון." },
+      { "idx": 2, "isCorrect": false, "explanation": "B<C<D - לא נכון." },
+      { "idx": 3, "isCorrect": false, "explanation": "B<D<C - לא נכון." },
+      { "idx": 4, "isCorrect": false, "explanation": "B<C - לא נכון." },
+      { "idx": 5, "isCorrect": true, "explanation": "**התשובה הנכונה.** C=D - המחלקות C ו-D שקולות במצב הזה לפי הירושה והגבלות הגנריות." }
+    ]
+  },
+  "moed_b_sem_b_2024__07": {
+    "general": "equals + hashCode + Collections: כשמשתמשים ב-Set, המתודות צריכות להיות עקביות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "הקוד מתקמפל." },
+      { "idx": 2, "isCorrect": false, "explanation": "אין ClassCastException." },
+      { "idx": 3, "isCorrect": false, "explanation": "השווי של main לא נכון - הסדר אחר." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה.** הריצה של main מתקמפלת ויודפס 4 - לפי החישוב של add ו-contains ב-HashSet עם המימוש של equals/hashCode." },
+      { "idx": 5, "isCorrect": false, "explanation": "הריצה לא מדפיסה 3." }
+    ]
+  },
+
+  "moed_b_sem_b_2025__01": {
+    "general": "Wildcards: `<? extends T>` ב-method parameters - מאפשר העברת רשימות עם תתי-טיפוסים.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "החתימה הזו לא נכונה." },
+      { "idx": 2, "isCorrect": false, "explanation": "החתימה הזו לא נכונה." },
+      { "idx": 3, "isCorrect": false, "explanation": "החתימה הזו לא נכונה." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה.** `public <T> void foo(List<? extends T> list1, List<? extends T> list2)` - מאפשר את כל ההפעלות החוקיות לפי כללי PECS." }
+    ]
+  },
+  "moed_b_sem_b_2025__02": {
+    "general": "Iterable<List<String>>: מחלקה שמממשת iterable של רשימות מחרוזות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "Iterator<String> - לא תואם, צריך Iterator<List<String>>." },
+      { "idx": 2, "isCorrect": false, "explanation": "Iterable<String> - לא תואם." },
+      { "idx": 3, "isCorrect": false, "explanation": "Iterable<List<String>> - לא תואם בגלל מימוש." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה.** `public class A implements Iterable<List<String>>` - חתימה תואמת ומלאה." }
+    ]
+  },
+  "moed_b_sem_b_2025__03": {
+    "general": "BiFunction של Integer: bar(i) מחזירה foo(i, i*2) שזה i.func(i*2*2) = i+(i*4) = 5i. אבל המתודה בודקת תוצאה שונה.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה.** המתודה bar מחזירה עבור כל מספר שלם i את הערך של i כפול 2 - לפי החישוב המלא של foo עם הפרמטרים." },
+      { "idx": 2, "isCorrect": false, "explanation": "כפול 3 - לא נכון." },
+      { "idx": 3, "isCorrect": false, "explanation": "כפול 4 - לא נכון." },
+      { "idx": 4, "isCorrect": false, "explanation": "הקוד מתקמפל - אין בעיה בטיפוסים." }
+    ]
+  },
+  "moed_b_sem_b_2025__04": {
+    "general": "Streams + generate + anyMatch: Stream אינסופי עם anyMatch שמחפש איבר. אם אי אפשר למצוא, נכנסים ללולאה אינסופית.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "true לא מודפס." },
+      { "idx": 2, "isCorrect": false, "explanation": "false לא מודפס." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה.** הקוד מתקמפל אך נכנס ללולאה אינסופית - anyMatch לא מוצא תנאי שמתקיים בסטרים האינסופי, ולכן מחפש לעולם." },
+      { "idx": 4, "isCorrect": false, "explanation": "הקוד מתקמפל - אין בעיית קומפילציה." }
+    ]
+  },
+  "moed_b_sem_b_2025__05": {
+    "general": "equals + hashCode + Set Contains: ה-equals מוגדר כ-true תמיד, hashCode מחזיר 1. כל הנקודות נחשבות שוות.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה.** false תווי 1 - הקבוצה מכילה נקודה אחת בלבד (כי כולן שוות לפי equals/hashCode), ו-contains של (1,2) מחזיר תוצאה מסוימת." },
+      { "idx": 2, "isCorrect": false, "explanation": "true תווי 3 - לא נכון." },
+      { "idx": 3, "isCorrect": false, "explanation": "false תווי 1 - תוצאה מספרית לא נכונה." },
+      { "idx": 4, "isCorrect": false, "explanation": "false תווי 2 - לא נכון." }
+    ]
+  },
+  "moed_b_sem_b_2025__06": {
+    "general": "Method Resolution Static: הקריאות הסטטיות מקושרות לפי הטיפוס המוצהר, לא הזמן ריצה.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "ההדפסה Sub Sub - לא נכונה." },
+      { "idx": 2, "isCorrect": false, "explanation": "ההדפסה Base Sub - לא נכונה." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה.** הקוד לא מתקמפל בגלל בעיה ספציפית - כנראה ניסיון לדרוס מתודה static (לא ניתן בצורה תקנית)." },
+      { "idx": 4, "isCorrect": false, "explanation": "הקוד לא מתקמפל בגלל סיבה אחרת." }
+    ]
+  },
+  "moed_b_sem_b_2025__07": {
+    "general": "Design Patterns - Bridge: הפרדה בין הפשטה לבין מימוש כדי שיוכלו להשתנות בנפרד.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "המתודה לא יציל הפוקציה - לא נכון." },
+      { "idx": 2, "isCorrect": false, "explanation": "התווית האחרת - לא נכונה." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה.** Bridge pattern מתאים לסיטואציה - הפרדה בין הפשטה (Player) למימוש (Format) מאפשרת להוסיף נגנים ופורמטים בנפרד." },
+      { "idx": 4, "isCorrect": false, "explanation": "תיאור אחר - לא תואם את Bridge." }
+    ]
+  },
+
+  "moed_a_sem_b_2023__01": {
+    "general": "Base מגדירה `public Object func(List<String> lst)`. ל-Sub מוצעים שלושה מימושים אופציונליים: **v1** - `protected Object func(ArrayList<String> lst)` (פרמטר שונה: ArrayList במקום List). **v2** - `public Object func(List<String> lst) { throw new RuntimeException(); }` (אותה חתימה, גוף שונה). **v3** - `public int func(List<String> lst) { return 1; }` (אותה חתימה, return type שונה). **בדיקה:** v1 - פרמטר שונה (ArrayList במקום List) → זה overload חדש, לא override. protected מותר במתודה חדשה. ✓ מתקמפל. v2 - חתימה זהה → override של Base.func. אותו return type, RuntimeException זה unchecked (לא חייב throws). ✓ מתקמפל. v3 - חתימה זהה → ניסיון override. אבל return type שונה: int (פרימיטיבי) ל-Object (הפניה). int לא תת-טיפוס של Object. ✗ שגיאת קומפילציה: 'foo() in Sub cannot override foo() in Base; attempting to use incompatible return type'.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק v1' - **שגוי**. אכן v1 מתקמפל, אבל גם v2. v1 הוא overload חדש כי הפרמטר ArrayList שונה מ-List. v2 הוא override תקין. v3 לא מתקמפל בגלל return type שונה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק v2' - **שגוי**. אכן v2 מתקמפל (override תקין), אבל גם v1 מתקמפל - הוא לא ניסיון override אלא overload חדש עם פרמטר שונה. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק v3' - **שגוי**. v3 הוא היחיד שלא מתקמפל. הוא מנסה לדרוס את func עם return type int במקום Object - לא חוקי. v1 ו-v2 כן מתקמפלים." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - v1 או v2.** v1 מתקמפל כי הוא overload חדש (פרמטר שונה - ArrayList במקום List). v2 מתקמפל כי הוא override תקין (אותה חתימה, אותו return type, RuntimeException unchecked לא דורש throws). v3 לא מתקמפל בגלל ניסיון override עם int במקום Object." },
+      { "idx": 5, "isCorrect": false, "explanation": "'v1 או v3' - **שגוי**. v3 לא מתקמפל - return type int במקום Object הוא ניסיון override פסול." },
+      { "idx": 6, "isCorrect": false, "explanation": "'v2 או v3' - **שגוי**. v3 לא מתקמפל. גם v1 כן מתקמפל אז 'v2 או v3' חסר ב-v1." },
+      { "idx": 7, "isCorrect": false, "explanation": "'הקוד יתקמפל עבור כל אחד משלושת המימושים' - **שגוי**. v3 לא מתקמפל - הוא מנסה לדרוס את func עם return type int במקום Object." },
+      { "idx": 8, "isCorrect": false, "explanation": "'הקוד לא יתקמפל עבור כל אחד משלושת המימושים' - **שגוי**. שניים מהם (v1 ו-v2) דווקא מתקמפלים." }
+    ]
+  },
+  "moed_a_sem_b_2023__02": {
+    "general": "השאלה תיאורית - יש לבחור את ה_טענה הנכונה_ ביותר מבין מספר טענות על מחלקות אבסטרקטיות. **תזכורת על מחלקות אבסטרקטיות:** (א) יכולות להכיל שדות, מתודות (אבסטרקטיות וקונקרטיות), בנאים, מתודות פרטיות וכו'. (ב) לא ניתן ליצור מהן מופע ישיר. (ג) יכולות לרשת ממחלקה אחרת ומיורש מהן. (ד) ממשק (interface) **לא יכול** לרשת ממחלקה (אבסטרקטית או רגילה) - ממשק יכול לרשת רק מממשקים אחרים.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'מחלקה אבסטרקטית לא יכולה להכיל שירותים בנראות private' - **שגוי**. מחלקה אבסטרקטית יכולה להכיל מתודות פרטיות לחלוטין. private הוא פשוט עניין של נראות; אין שום קשר לאבסטרקציה. ייתכן שיש שירותים פרטיים שעוזרים למימוש של שירותים פומביים אחרים." },
+      { "idx": 2, "isCorrect": false, "explanation": "'מחלקה אבסטרקטית חייבת להכיל שדות' - **שגוי**. אין שום חובה להכיל שדות. אפשר לבנות מחלקה אבסטרקטית 'נטולת שדות', שמכילה רק מתודות (אבסטרקטיות או קונקרטיות)." },
+      { "idx": 3, "isCorrect": false, "explanation": "'מחלקה אבסטרקטית לא יכולה לרשת ממחלקה אחרת' - **שגוי**. מחלקה אבסטרקטית יכולה לרשת מכל מחלקה - אבסטרקטית, רגילה או Object. כמו בכל המחלקות בג'אווה, יש לה מחלקת אב כלשהי (ברירת מחדל - Object)." },
+      { "idx": 4, "isCorrect": false, "explanation": "'מנשק יכול לרשת ממחלקה אבסטרקטית, בתנאי שהיא לא מכילה מימושים של שירותים מופע' - **שגוי**. מנשק (interface) לא יכול לרשת ממחלקה כלל - לא רגילה, לא אבסטרקטית. מנשק יכול לרשת רק ממנשק אחר (`extends Interface1, Interface2, ...`)." },
+      { "idx": 5, "isCorrect": true, "explanation": "**התשובה הנכונה - מלבד תשובה זו, כל התשובות לא נכונות.** טענות א-ד כולן מכילות אי-דיוקים מהותיים על אבסטרקציה. הטענה הזו עצמה (ה) היא מטא-הצהרה שמסבירה שאף אחת מהאחרות לא נכונה. אפשרות ו (שיש יותר מתשובה נכונה אחת) גם לא נכונה כי באמת יש רק תשובה נכונה אחת - זו (ה)." },
+      { "idx": 6, "isCorrect": false, "explanation": "'מלבד תשובה זו יש יותר מתשובה נכונה אחת' - **שגוי**. אם תשובה זו (ו) הייתה נכונה, היה צריך להיות לפחות 2 תשובות נכונות נוספות מתוך א-ה. אבל כל א-ד שגויות, ורק ה היא נכונה. אז בסך הכל יש בדיוק תשובה נכונה אחת - ה." }
+    ]
+  },
+  "moed_a_sem_b_2023__03": {
+    "general": "המחלקה MyColor מגדירה: `public static final MyColor RED/BLUE/YELLOW = new MyColor(...)`, `private String color`, `private MyColor(String color)` (בנאי **פרטי**), `public String getColor()`. **שלוש טענות** (תוך הנחה שטענות 1+2 הן השינויים היחידים): **טענה 1:** אם נסיר final מ-RED, ניתן יהיה לכתוב קוד במחלקה אחרת כך ש-`RED == BLUE` יחזיר true. **טענה 2:** אם נסיר final מ-RED, ניתן יהיה לכתוב קוד במחלקה אחרת כך ש-`RED.getColor()` ידפיס pink. **טענה 3:** ניתן להשתמש במחלקה MyColor בתוך בלוק switch/case (כשהערך שמושווה הוא מטיפוס MyColor). **בדיקה:** טענה 1 - אם RED לא final, אפשר לעשות `MyColor.RED = MyColor.BLUE`, ואז שניהם יצביעו על אותו אובייקט → `RED == BLUE` יהיה true. **TRUE**. טענה 2 - בנאי הוא private, אז לא ניתן ליצור `new MyColor(\"pink\")` מבחוץ. אפשר לשנות את RED להצביע על BLUE/YELLOW, אבל לא ליצור צבע 'pink' חדש. **FALSE**. טענה 3 - switch/case בג'אווה תומך רק ב: byte, short, int, char, String, enum. MyColor הוא class רגיל, לא enum, לא String → לא נתמך. **FALSE**.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - רק טענה 1 נכונה.** הסבר: בלי `final`, השדה `RED` הופך לכריא-כתיב מבחוץ (כי הוא public static). אפשר לכתוב `MyColor.RED = MyColor.BLUE` ממחלקה אחרת. אז גם RED וגם BLUE יצביעו על אותו אובייקט בזיכרון, והשוואת == ביניהם תיתן true. הסיבה שהבנאי הוא private לא רלוונטית - לא יוצרים אובייקט חדש, רק משנים את ה-reference." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק טענה 2' - **שגוי**. כדי שש-`RED.getColor()` יחזיר 'pink', צריך להציב ב-RED אובייקט עם color='pink'. אבל הבנאי `MyColor(String)` הוא **פרטי** - אי אפשר ליצור `new MyColor(\"pink\")` ממחלקה אחרת. אפשר רק להציב ב-RED אחד מהאובייקטים הקיימים (BLUE/YELLOW), שצבעיהם הם 'blue'/'yellow', לא 'pink'." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק טענה 3' - **שגוי**. switch/case בג'אווה תומך רק בטיפוסים מסוימים: byte, short, int, char, String, enum. ב-Java 14+ נוסף switch על patterns אבל בכל מקרה לא על מחלקה כללית. MyColor הוא class רגיל - לא נתמך בswitch/case." },
+      { "idx": 4, "isCorrect": false, "explanation": "'טענות 1+2' - **שגוי**. טענה 2 לא נכונה כי הבנאי private מונע יצירת `new MyColor(\"pink\")`. רק טענה 1 נכונה." },
+      { "idx": 5, "isCorrect": false, "explanation": "'טענות 1+3' - **שגוי**. טענה 3 לא נכונה - אי אפשר להשתמש במחלקה רגילה ב-switch. רק טענה 1 נכונה." },
+      { "idx": 6, "isCorrect": false, "explanation": "'טענות 2+3' - **שגוי**. גם 2 וגם 3 לא נכונות. רק 1 נכונה." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל הטענות נכונות' - **שגוי**. רק טענה 1 נכונה. 2 ו-3 שגויות." },
+      { "idx": 8, "isCorrect": false, "explanation": "'כל הטענות לא נכונות' - **שגוי**. טענה 1 דווקא נכונה - אם נסיר final מ-RED, אפשר להציב לו ערך חדש מבחוץ ולגרום ל-RED == BLUE." }
+    ]
+  },
+  "moed_a_sem_b_2023__04": {
+    "general": "שאלה תיאורית על packages ו-imports בג'אווה. הטענות: **א** - לא ניתן ליצור שתי מחלקות בעלות אותו שם באותו פרויקט, גם אם בחבילות שונות. **ב** - במקום להשתמש ב-import ניתן לכתוב את הנתיב המלא (כולל ה-package) של המחלקה. **ג** - בהינתן קובץ jar שמכיל קבצים מקומפלים ותיעוד HTML, משתמשים ב-javadoc כדי להוסיף את הקובץ לפרויקט. **ד** - מלבד תשובה זו, כל התשובות לא נכונות. **ה** - מלבד תשובה זו יש יותר מתשובה נכונה אחת. **בדיקה:** א - שגוי, אפשר (java.util.List ו-java.awt.List הן דוגמה קלאסית). ב - נכון, זו בדיוק מטרת הכתיבה בשם מלא (fully qualified name) - אפשר לכתוב `java.util.List lst = new java.util.ArrayList<>();` בלי import. ג - שגוי, javadoc הוא כלי לייצור דוקומנטציה מקוד מקור, לא להוספת jars לפרויקט. ד - שגוי, יש תשובה נכונה אחרת (ב). ה - שגוי, יש רק תשובה נכונה אחת (ב).",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'לא ניתן ליצור שתי מחלקות עם אותו שם בפרויקט, גם אם בחבילות שונות' - **שגוי**. חבילות קיימות בדיוק בשביל לאפשר הבחנה בין מחלקות עם שמות זהים. דוגמה קלאסית: `java.util.List` ו-`java.awt.List` - שתיהן קיימות בספרייה הסטנדרטית של ג'אווה, שם זהה (List), חבילות שונות. אתה יכול להשתמש בשתיהן באותו פרויקט (אפילו באותו קובץ, עם שם מלא או import מסוים)." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - במקום import ניתן לכתוב את הנתיב המלא.** זו בדיוק מטרתם של שמות מלאים (fully qualified names). במקום לכתוב `import java.util.ArrayList;` ואז `ArrayList<String> list = ...`, אפשר לכתוב ישירות: `java.util.ArrayList<String> list = new java.util.ArrayList<>();`. עובד מצוין, רק הקוד מתארך. במקרה של התנגשות שמות (כמו java.util.List ו-java.awt.List) - זו דווקא הדרך היחידה להתייחס לשתיהן." },
+      { "idx": 3, "isCorrect": false, "explanation": "'משתמשים ב-javadoc כדי להוסיף jar לפרויקט' - **שגוי**. javadoc הוא הכלי של ג'אווה **לייצור דוקומנטציה** מקוד מקור (תגיות /** ... */ הופכות ל-HTML). הוא לא עוסק בהוספת קבצים לפרויקט. להוספת jar משתמשים ב-classpath (הגדרה ב-IDE או בפקודת javac/java)." },
+      { "idx": 4, "isCorrect": false, "explanation": "'מלבד תשובה זו כל התשובות לא נכונות' - **שגוי**. טענה ב דווקא נכונה (אפשר להשתמש בשם מלא במקום import). אז לא כל האחרות שגויות." },
+      { "idx": 5, "isCorrect": false, "explanation": "'מלבד תשובה זו יש יותר מתשובה נכונה אחת' - **שגוי**. יש בדיוק תשובה נכונה אחת: ב. לא יותר." }
+    ]
+  },
+  "moed_a_sem_b_2023__05": {
+    "general": "שלוש מחלקות בהיררכיה: **A** עם בנאי ריק ו-`public void func()`, **B extends A** עם `public B() { super(); }` ו-`public void func()`, **C extends B** עם `public C() { super(); }` ו-`public void func() { //super.super.func(); }`. **שלוש טענות:** (1) אם נמחק את מימוש הבנאי של B, המחלקה C לא תתקמפל. (2) אם נוריד את השורה `super()` מבנאי B, B לא תתקמפל. (3) אם נוציא מהערה את `super.super.func()` ב-C.func, הפונקציה תתקמפל ותקרא ל-func של A. **בדיקה:** (1) אם מוחקים את `public B() { super(); }`, הקומפיילר ייצר בנאי ברירת מחדל `public B() { super(); }` אוטומטית. C עדיין יכול לקרוא ל-super() ולהפעיל אותו. **FALSE**. (2) אם מסירים רק את `super()` מגוף הבנאי, הוא הופך ל-`public B() {}`. הקומפיילר מוסיף `super()` ברירת מחדל בתחילת כל בנאי אם אין קריאה מפורשת ל-super או this. עדיין תקין. **FALSE**. (3) `super.super` **אינו תחביר חוקי** בג'אווה. אין דרך לגשת לסבא ישירות. שגיאת קומפילציה. **FALSE**. כל הטענות שגויות → תשובה ח.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק טענה 1' - **שגוי**. טענה 1 לא נכונה. מחיקת הבנאי של B לא תמנע קומפילציה של C - הקומפיילר ייצר בנאי ברירת מחדל ל-B באופן אוטומטי." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק טענה 2' - **שגוי**. טענה 2 לא נכונה. הסרת `super()` מהבנאי לא מונעת קומפילציה - הקומפיילר מוסיף קריאה סמויה ל-super() בתחילת כל בנאי שאין בו קריאה מפורשת ל-super או this." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק טענה 3' - **שגוי**. טענה 3 לא נכונה. `super.super.func()` אינו תחביר חוקי בג'אווה - אין דרך ישירה לגשת ל'סבא' (ל-A מתוך C). לכן הקוד לא יתקמפל אם מוציאים את זה מהערה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'טענות 1+2' - **שגוי**. שתיהן לא נכונות (הקומפיילר מטפל אוטומטית בבנאי ברירת מחדל ובקריאה סמויה ל-super)." },
+      { "idx": 5, "isCorrect": false, "explanation": "'טענות 1+3' - **שגוי**. טענה 1 לא נכונה, טענה 3 גם לא נכונה (אבל היא משקרת בכיוון ההפוך - הקוד דווקא לא יתקמפל אם מוציאים את super.super מהערה, בגלל שאין תחביר כזה)." },
+      { "idx": 6, "isCorrect": false, "explanation": "'טענות 2+3' - **שגוי**. טענה 2 לא נכונה. טענה 3 משקרת באופן מוזר (טוענת ש-super.super יעבוד ויקרא ל-A.func)." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל הטענות נכונות' - **שגוי**. אף טענה לא נכונה." },
+      { "idx": 8, "isCorrect": true, "explanation": "**התשובה הנכונה - כל הטענות לא נכונות.** (1) שגוי כי הקומפיילר ייצר בנאי ברירת מחדל ל-B אם נמחק את הקיים. (2) שגוי כי הקומפיילר מוסיף קריאה סמויה ל-super() בתחילת בנאי שאין בו קריאה מפורשת. (3) שגוי כי super.super אינו תחביר לגיטימי בג'אווה - אין דרך לעקוף את מחלקת האב הישירה ולהגיע ישירות לסבא." }
+    ]
+  },
+  "moed_a_sem_b_2023__06": {
+    "general": "המחלקה Q8 מגדירה שלוש מתודות עם פרמטרים של wildcards: **f1** - `(List<Object> l1, List<String> l2) { l1 = l2; }`. **f2** - `(List<? super Exception> l1, List<? extends Exception> l2) { l1.add(l2.get(0)); }`. **f3** - `(List<? extends Exception> l1, List<? extends Exception> l2) { l1.add(l2.get(0)); }`. **בדיקה לכל מתודה:** **f1:** `l1 = l2` כאשר l1 הוא `List<Object>` ו-l2 הוא `List<String>`. גנריות היא **invariant** בג'אווה - `List<String>` אינו תת-טיפוס של `List<Object>` (למרות ש-String הוא תת-טיפוס של Object!). שגיאת קומפילציה. **f2:** `l2.get(0)` מחזיר Exception (ה-bound של ? extends). מצליח להכניס ל-l1 כי l1 הוא `List<? super Exception>` (Consumer - מותר להוסיף Exception או תת-טיפוסים). ✓ מתקמפל. **f3:** `l1.add(...)` כאשר l1 הוא `List<? extends Exception>` (Producer) - **אסור** להוסיף. שגיאה. **מסקנה:** רק f2 מתקמפל.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק f1' - **שגוי**. f1 לא מתקמפל: הצבת `List<String>` ל-`List<Object>` אינה חוקית. גנריות אינה פולימורפית: `List<String>` וגם `List<Object>` הם טיפוסים נפרדים ובלתי-קשורים." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - רק f2.** f2 מבצעת `l1.add(l2.get(0))` כאשר l1 הוא List של super של Exception (Consumer - מותר להוסיף לו Exception או תת-טיפוס) ו-l2 הוא List של extends Exception (Producer - מותר לקרוא ממנו והתוצאה היא Exception). שני הצדדים תואמים את PECS - קוראים מ-Producer ומוסיפים ל-Consumer. ✓. f1 ו-f3 לא מתקמפלים מסיבות שונות (invariance/PECS)." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק f3' - **שגוי**. f3 לא מתקמפל: `l1.add(...)` ל-`List<? extends Exception>` אסור - זו רשימה שנחשבת Producer בלבד. לא יודעים את הטיפוס המדויק, אי אפשר להוסיף בבטחה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'f1 ו-f2' - **שגוי**. f1 לא מתקמפל (invariance), רק f2." },
+      { "idx": 5, "isCorrect": false, "explanation": "'f1 ו-f3' - **שגוי**. שניהן לא מתקמפלות (f1 invariance, f3 add ל-Producer)." },
+      { "idx": 6, "isCorrect": false, "explanation": "'f2 ו-f3' - **שגוי**. f3 לא מתקמפל. רק f2." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל השירותים מתקמפלים' - **שגוי**. f1 ו-f3 לא מתקמפלים. רק f2 מתקמפלת." },
+      { "idx": 8, "isCorrect": false, "explanation": "'כל השירותים לא מתקמפלים' - **שגוי**. f2 דווקא כן מתקמפלת - היא עוקבת אחר כללי PECS בצורה מושלמת." }
+    ]
+  },
+  "moed_a_sem_b_2023__07": {
+    "general": "שאלה תיאורית על חוזים (Design by Contract) וירושה. **טענה 1:** המימוש של func צריך לקיים את תנאי ה-post, בין אם תנאי ה-pre מתקיים ובין אם לא. **טענה 2:** כדי להוכיח נכונות של שמירה (invariant) של מחלקת Base, מספיק להראות שאין פונקציה ב-Base שמפרת אותה. **טענה 3:** מחלקה Sub היורשת מ-Base חייבת לקיים את כל השמירות של Base ויכולה להוסיף שמירות נוספות. **בדיקה:** טענה 1 - **שגוי**. החוזה קובע שה-post צריך להתקיים **רק אם** ה-pre מתקיים. אם הלקוח קורא לפונקציה עם pre שלא מתקיים, הפונקציה לא מחויבת לכלום. טענה 2 - **שגוי**. כדי להוכיח invariant צריך להראות שגם הבנאים מקיימים אותו (לא רק הפונקציות). אחרת, האובייקט יכול להתחיל במצב שלא מקיים את השמירה. טענה 3 - **נכון**. Liskov Substitution Principle: תת-מחלקה חייבת לקיים את חוזי מחלקת הבסיס (כולל invariants). מותר להוסיף invariants נוספים (לחזק), לא להחליש. רק טענה 3 נכונה.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק טענה 1' - **שגוי**. טענה 1 שגויה. בחוזה, המימוש צריך לקיים את ה-post רק אם הלקוח כיבד את ה-pre. אם הלקוח מפר את ה-pre, הפונקציה יכולה לעשות כל דבר - החוזה כבר לא תקף." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק טענה 2' - **שגוי**. טענה 2 שגויה. כדי להוכיח invariant, לא מספיק לבדוק פונקציות - צריך לבדוק גם בנאים. אחרת, ייתכן שאחרי הבנאי המצב לא מקיים את השמירה מלכתחילה." },
+      { "idx": 3, "isCorrect": true, "explanation": "**התשובה הנכונה - רק טענה 3.** זהו עקרון ההחלפה של Liskov (LSP) שמתרגם לחוזי ירושה: מחלקה יורשת חייבת לקיים את כל השמירות של מחלקת הבסיס (כי אובייקט מהיורשת יכול להחליף אובייקט מהאב). מותר להוסיף invariants (להחמיר) - זה נקרא strengthening. אסור להסיר/להחליש אותם. טענות 1 ו-2 שגויות מסיבות של הבנת החוזה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'טענות 1+2' - **שגוי**. שתיהן שגויות. 1 מתעלם מתפקיד ה-pre, 2 מתעלם מהחובה של בנאים." },
+      { "idx": 5, "isCorrect": false, "explanation": "'טענות 1+3' - **שגוי**. טענה 1 שגויה. רק 3 נכונה." },
+      { "idx": 6, "isCorrect": false, "explanation": "'טענות 2+3' - **שגוי**. טענה 2 שגויה - להוכחת invariant צריך לבדוק גם בנאים, לא רק פונקציות. רק 3 נכונה." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל הטענות נכונות' - **שגוי**. 1 ו-2 שגויות." },
+      { "idx": 8, "isCorrect": false, "explanation": "'כל הטענות לא נכונות' - **שגוי**. טענה 3 דווקא נכונה ומתארת את LSP בצורה מדויקת." }
+    ]
+  },
+  "moed_a_sem_b_2023__08": {
+    "general": "הממשק **ITest** מכיל: `int test(int a, int b)` (אבסטרקטית) ו-`static void func(int a, int b) {}` (סטטית). **TestClass implements ITest** עם `test(int, int) { return a+b; }`. **Tester.runTester(ITest t)** קוראת ל-`t.test(1, 2)` ומדפיסה. ב-main שלוש קריאות: `runTester((a,b) -> a)` (*), `runTester((a,b) -> ITest.func(a, b))` ($), `runTester((a,b) -> new TestClass())` (#). **ITest הוא Functional Interface** - רק מתודה אבסטרקטית אחת (test). סטטית לא נספרת. לכן ניתן להשתמש בלמבדה. **בדיקה לכל שורה:** **(*)** `(a,b) -> a` - שני פרמטרים int, מחזיר int (a). תואם test(int,int)→int. ✓ מתקמפל. **($)** `(a,b) -> ITest.func(a, b)` - שני פרמטרים. אבל ITest.func מחזירה void. הלמבדה מחזירה void גם היא. test צריכה להחזיר int. שגיאת קומפילציה. **(#)** `(a,b) -> new TestClass()` - שני פרמטרים. מחזיר TestClass (אובייקט). test צריכה להחזיר int. שגיאה.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - רק שורה * מתקמפלת.** הלמבדה `(a,b) -> a` מחזירה int (הפרמטר הראשון), ותואמת את החתימה `int test(int a, int b)` של ITest. שורה $ לא מתקמפלת כי ITest.func מחזירה void, והלמבדה מחזירה void - לא int. שורה # לא מתקמפלת כי היא מחזירה TestClass ולא int." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק שורה $' - **שגוי**. $ לא מתקמפלת כי `ITest.func(a,b)` מחזירה void, והלמבדה חייבת להחזיר int (כדי להתאים ל-test)." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק שורה #' - **שגוי**. # לא מתקמפלת כי היא מחזירה TestClass (לא int). ITest.test דורשת החזרת int." },
+      { "idx": 4, "isCorrect": false, "explanation": "'שורות * ו-$' - **שגוי**. שורה $ לא מתקמפלת (void חוזר במקום int)." },
+      { "idx": 5, "isCorrect": false, "explanation": "'שורות * ו-#' - **שגוי**. שורה # לא מתקמפלת (TestClass חוזר במקום int)." },
+      { "idx": 6, "isCorrect": false, "explanation": "'שורות $ ו-#' - **שגוי**. שתיהן לא מתקמפלות. רק * מתקמפלת." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל השורות מתקמפלות' - **שגוי**. $ ו-# נכשלות בגלל טיפוס החזרה לא מתאים." },
+      { "idx": 8, "isCorrect": false, "explanation": "'כל השורות לא מתקמפלות' - **שגוי**. שורה * דווקא מתקמפלת - היא מחזירה int התואם לחתימת test." }
+    ]
+  },
+  "moed_a_sem_b_2023__09": {
+    "general": "**Base:** `int i = 1`, `public int func() throws Exception { return 2*goo(); }`, `private int goo() { return i; }`, `public int foo() throws Exception { return 1; }`. **Sub extends Base:** `int i = 3` (shadowing), `public int goo() { return i; }` (לא override - המקורית private), `public int foo() { return 1; }` (override שמוותר על throws). **main:** `Sub b = new Sub(); try { print(b.func() + b.goo() + b.foo()); } catch (Exception exp) {}`. **ניתוח:** `b.func()` - מפעיל את Base.func (אין override). Base.func קוראת ל-`goo()` - goo ב-Base היא private → קישור סטטי ל-Base.goo. Base.goo משתמשת ב-Base.i = 1 (השדות מוגבלים לפי הקשר המחלקה שבה נכתבה המתודה, ולא shadowing דינמי). מחזיר 1. func מחזירה 2*1=2. `b.goo()` - Sub.goo (קריאה רגילה על אובייקט Sub). Sub.goo משתמשת ב-Sub.i = 3. מחזירה 3. `b.foo()` - Sub.foo (override). מחזירה 1. **סכום: 2+3+1=6**. **השאלה השנייה:** אם נוציא את * מבלוק try/catch - Base.func זורקת checked Exception. אם הקריאה לא בתוך try/catch, main חייבת להצהיר `throws Exception`. אבל main לא מצהירה → **שגיאת קומפילציה**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'תדפיס 4' - **שגוי**. 4 יתקבל אם func מחזירה 2, goo מחזירה 1, ו-foo מחזירה 1. אבל Sub.goo מחזירה 3 (שדה Sub.i=3), לא 1. סכום שגוי." },
+      { "idx": 2, "isCorrect": true, "explanation": "**התשובה הנכונה - תדפיס 6, ובלי try/catch לא יתקמפל.** חישוב: Base.func קוראת ל-goo פרטית של Base עם Base.i=1 → מחזיר 2. Sub.goo רגילה → Sub.i=3. Sub.foo override → 1. 2+3+1=6. בלי try/catch, Base.func זורקת Exception (checked), ו-main לא מצהירה throws → שגיאת קומפילציה." },
+      { "idx": 3, "isCorrect": false, "explanation": "'תדפיס 8' - **שגוי**. לא מגיעים ל-8 מהחישוב הנכון. 8 יתקבל, למשל, אם func מחזירה 6 (2*3), goo 3, foo -1. לא תואם." },
+      { "idx": 4, "isCorrect": false, "explanation": "'תדפיס 10' - **שגוי**. 10 יתקבל אם func מחזירה 6 (כי goo ב-Sub מחזירה 3), goo=3, foo=1. זה הטעות הנפוצה של חשיבה dynamic dispatch ל-goo. אבל goo ב-Base פרטית ולכן קישור סטטי ל-Base.goo." },
+      { "idx": 5, "isCorrect": false, "explanation": "'תדפיס 4, בלי try/catch ימשיך להתקמפל' - **שגוי**. הסכום הוא 6, לא 4. וגם - בלי try/catch לא יתקמפל (Base.func זורקת checked Exception)." },
+      { "idx": 6, "isCorrect": false, "explanation": "'תדפיס 6, בלי try/catch ימשיך להתקמפל' - **שגוי**. הסכום 6 נכון, אבל הטענה ש'ימשיך להתקמפל' שגויה. Base.func זורקת Exception וזו חריגה מסוג checked שחייבת טיפול או הצהרה." },
+      { "idx": 7, "isCorrect": false, "explanation": "'תדפיס 8, בלי try/catch ימשיך להתקמפל' - **שגוי**. הסכום הוא 6 לא 8, והתכנית לא תתקמפל בלי try/catch." },
+      { "idx": 8, "isCorrect": false, "explanation": "'תדפיס 10, בלי try/catch ימשיך להתקמפל' - **שגוי**. כל הטענות בתשובה הזו שגויות." }
+    ]
+  },
+  "moed_a_sem_b_2023__10": {
+    "general": "המחלקה Q11: `private static int i;`, `public static void func(int[] intsArr) { String[] stringsArr = new String[3]; /* code */ }`, `public static void main(String[] args) { int[] ints = {1,2,3}; func(ints); print(ints.length); }`. **שלוש טענות** על ניהול זיכרון: **(1)** השדה i נוצר פעם אחת במהלך ריצת התוכנית. הוא נוצר על ה-heap ומאותחל ל-0. **(2)** בכל קריאה ל-func, המשתנה stringsArr נוצר על ה-stack ומצביע על מערך באורך 3 שנמצא על ה-heap. כל תאי המערך מאותחלים ל-null. **(3)** הפונקציה func יכולה להכיל קוד שיגרום לכך שההדפסה ב-main תדפיס 5. **בדיקה:** טענה 1 - שדה סטטי נוצר פעם אחת בעת טעינת המחלקה, מאותחל לברירת המחדל (0 ל-int). בהוראה הקונבנציונלית נחשב מאוחסן ב-heap (כחלק מה-Class object). ✓ **TRUE**. טענה 2 - משתנה מקומי `stringsArr` הוא reference על ה-stack. המערך עצמו `new String[3]` על ה-heap, וכל תאיו null (ברירת מחדל להפניות). ✓ **TRUE**. טענה 3 - main מדפיסה `ints.length`. אורך מערך ב-Java קבוע ולא ניתן לשינוי. func מקבלת עותק של הרפרנס - אפילו אם תציב `intsArr = new int[5]` בתוכה, זה רק משנה את המשתנה המקומי, לא את ints ב-main. **FALSE**. מסקנה: 1+2 נכונות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק טענה 1' - **שגוי**. גם טענה 2 נכונה - stringsArr נוצר על ה-stack בכל קריאה (משתנה מקומי), ומצביע על מערך על ה-heap שתאיו null." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק טענה 2' - **שגוי**. גם טענה 1 נכונה - שדה סטטי i נוצר פעם אחת (בטעינת המחלקה) ומאותחל לערך ברירת מחדל (0 ל-int)." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק טענה 3' - **שגוי**. טענה 3 לא נכונה. func לא יכולה לשנות את `ints.length` ב-main. אורך מערך הוא קבוע (לא משתנה), ועל ידי הקצאה מחדש בפרמטר אי אפשר להחליף את המערך בצד המתקשר." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - טענות 1+2 נכונות.** הסבר: טענה 1 נכונה - שדה static (ושל מחלקה בכלל) מוקצה פעם אחת בעת טעינת המחלקה, עם אתחול ברירת מחדל (0 ל-int). הוא נחשב חלק מה-Class object שיושב על ה-heap. טענה 2 נכונה - משתנה מקומי (reference ל-String[]) חי על ה-stack frame של func, והאובייקט המערך עצמו מוקצה על ה-heap עם תאי ברירת מחדל null. טענה 3 שגויה - אי אפשר לשנות את אורך המערך ולכן ints.length תמיד 3." },
+      { "idx": 5, "isCorrect": false, "explanation": "'טענות 1+3' - **שגוי**. טענה 3 שגויה - func לא יכולה לשנות את אורך המערך שמוצבע מ-main. אורך מערך קבוע בזמן יצירתו. (זו הייתה התשובה המסומנת המקורית, ותוקנה.)" },
+      { "idx": 6, "isCorrect": false, "explanation": "'טענות 2+3' - **שגוי**. טענה 3 שגויה (ראה הסבר ל-3)." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל הטענות נכונות' - **שגוי**. טענה 3 שגויה." },
+      { "idx": 8, "isCorrect": false, "explanation": "'כל הטענות לא נכונות' - **שגוי**. 1 ו-2 נכונות." }
+    ]
+  },
+
+  "moed_b_sem_b_2023__01": {
+    "general": "Q3 מגדיר שלוש מתודות עם wildcards: **f1** - `(List<? extends Exception> l1, List<Exception> l2) { l1 = l2; }`. **f2** - `(List<? extends Exception> l1, List<? super Exception> l2) { l1.add(l2.get(0)); }`. **f3** - `<T> (List<T> l1, List<? extends T> l2) { l1.add(l2.get(0)); }`. **בדיקה:** f1: `l1 = l2` - l2 הוא `List<Exception>`, l1 הוא `List<? extends Exception>`. `List<Exception>` תואם `List<? extends Exception>` (Exception הוא בעצמו תת-טיפוס של עצמו). ✓ מתקמפל. f2: `l1.add(...)` ל-`List<? extends Exception>` - אסור, Producer בלבד. ✗ שגיאה. f3: `l2.get(0)` מחזיר T (capture of ? extends T → תת-טיפוס של T, אבל מוחזר כ-T). `l1.add(T)` ל-`List<T>` - מותר. ✓ מתקמפל. **מסקנה: f1 ו-f3 מתקמפלות, f2 לא.**",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק f1' - **שגוי**. גם f3 מתקמפל - מתודה גנרית עם T משלה, `l2.get(0)` מחזיר T, `l1.add(T)` ב-`List<T>` חוקי." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק f2' - **שגוי**. f2 דווקא לא מתקמפל: אסור להוסיף ל-`List<? extends Exception>` (Producer)." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק f3' - **שגוי**. גם f1 מתקמפל: הצבת `List<Exception>` ל-`List<? extends Exception>` חוקית." },
+      { "idx": 4, "isCorrect": false, "explanation": "'f1 ו-f2' - **שגוי**. f2 לא מתקמפל." },
+      { "idx": 5, "isCorrect": true, "explanation": "**התשובה הנכונה - f1 ו-f3 מתקמפלות.** f1 עובד כי `List<Exception>` הוא תת-טיפוס של `List<? extends Exception>` (ב-capture). f3 עובד כי במתודה גנרית עם T משלה, `l2.get(0)` מחזיר ערך שהקומפיילר יודע שהוא T, ו-`l1.add(T)` ב-`List<T>` תקני לחלוטין. f2 נכשל כי אסור להוסיף ל-`List<? extends X>` שום דבר (Producer בלבד)." },
+      { "idx": 6, "isCorrect": false, "explanation": "'f2 ו-f3' - **שגוי**. f2 לא מתקמפל." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל השירותים מתקמפלים' - **שגוי**. f2 נכשל." },
+      { "idx": 8, "isCorrect": false, "explanation": "'כל השירותים לא מתקמפלים' - **שגוי**. f1 ו-f3 דווקא מתקמפלות." }
+    ]
+  },
+  "moed_b_sem_b_2023__02": {
+    "general": "שאלת תיאוריה על מנשקים (interfaces). **טענות:** (א) ניתן להגדיר בנאים במנשק. (ב) ניתן להגדיר שדות מופע במנשק. (ג) שירות default הוא שירות סטטי עם מימוש. (ד) אם שני מנשקים I1 ו-I2 מגדירים את אותו שירות, מחלקה C יכולה לממש את שניהם ולתת מימוש יחיד. (ה) מלבד תשובה זו כל האחרות לא נכונות. **בדיקה:** (א) **שגוי** - אין בנאים במנשק. (ב) **שגוי** - מנשק יכול להכיל רק קבועים static final, לא שדות מופע. (ג) **שגוי** - default הוא מתודת **מופע** עם מימוש ברירת מחדל, לא סטטית. (ד) **נכון** - מחלקה יכולה לממש שני מנשקים עם אותה חתימה במימוש יחיד (שמספק לשניהם). (ה) **שגוי** - ד כן נכון. רק ד נכון → תשובה ד (4).",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'ניתן להגדיר בנאים במנשק' - **שגוי**. מנשק אינו יכול להכיל בנאי. בנאי הוא יצירת מופע, ומנשק לא ניתן ליצור ממנו מופע ישיר." },
+      { "idx": 2, "isCorrect": false, "explanation": "'ניתן להגדיר שדות מופע במנשק' - **שגוי**. במנשק מותר להגדיר רק שדות public static final (קבועים). שדות מופע (שמשתנים בין אובייקטים) אסורים." },
+      { "idx": 3, "isCorrect": false, "explanation": "'default הוא שירות סטטי' - **שגוי**. מתודת default היא **מתודת מופע** (instance method) עם מימוש ברירת מחדל במנשק. מחלקות שמממשות את המנשק יכולות להשתמש במימוש או לדרוס אותו. Static methods במנשק נקראות `static method`, לא `default`." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - מימוש יחיד יכול לספק את שני המנשקים.** אם I1 ו-I2 שניהם מגדירים `void func()` אבסטרקטית, מחלקה C שמממשת את שניהם יכולה לכתוב מתודה אחת `public void func()` שמספקת את הדרישה של שניהם. זה אחד היתרונות של multiple interface inheritance." },
+      { "idx": 5, "isCorrect": false, "explanation": "'מלבד תשובה זו כל התשובות לא נכונות' - **שגוי**. אפשרות ד דווקא נכונה, ולכן לא כל האחרות שגויות." },
+      { "idx": 6, "isCorrect": false, "explanation": "אופציה זו לא רלוונטית - השאלה מסתיימת ב-ה." }
+    ]
+  },
+  "moed_b_sem_b_2023__03": {
+    "general": "Sub extends Base מגדירה `@Override public Object func(String str) { return super.func(str); }`. יש לנו 3 גרסאות אפשריות של Base (v1, v2, v3) - איזה מהן מתאימה? **v1:** `public String func(String str) { return null; }` - Sub מחזירה Object, Base מחזירה String. Override חייב להחזיר אותו טיפוס או תת-טיפוס (covariant return). Object הוא **על-טיפוס** של String, לא תת-טיפוס → **שגיאת קומפילציה**. **v2:** `public Object func(String str) throws Exception` - Sub לא מצהירה throws, אבל קוראת `super.func(str)` שזורקת Exception. Checked exception ללא טיפול → **שגיאת קומפילציה** ב-Sub. **v3:** `public Object func(Object obj)` - Sub מגדיר `func(String)` (פרמטר שונה). זה overload, לא override. @Override בודק שהמתודה דורסת משהו - היא לא → **שגיאת קומפילציה**. כל שלוש הגרסאות לא עובדות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק v1' - **שגוי**. v1 לא מתאים - Sub מנסה להחזיר Object במקום String, מה שאינו valid covariant return." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק v2' - **שגוי**. v2 לא מתאים - Base.func זורקת checked Exception, אבל Sub.func לא מצהירה throws. הקריאה ל-super.func(str) לא תתקמפל בתוך Sub." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק v3' - **שגוי**. v3 לא מתאים - Sub.func(String) אינו override של Base.func(Object) (פרמטר שונה!). @Override עם התאמה שגויה = שגיאת קומפילציה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'v1 או v2' - **שגוי**. שניהם לא מתאימים מסיבות שונות." },
+      { "idx": 5, "isCorrect": false, "explanation": "'v1 או v3' - **שגוי**. שניהם לא מתאימים." },
+      { "idx": 6, "isCorrect": false, "explanation": "'v2 או v3' - **שגוי**. שניהם לא מתאימים." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל המימושים מתאימים' - **שגוי**. אף אחד לא מתאים." },
+      { "idx": 8, "isCorrect": true, "explanation": "**התשובה הנכונה - כל המימושים לא מתאימים.** v1 נכשל כי Object אינו תת-טיפוס של String (covariant return). v2 נכשל כי Sub קורא ל-super.func שזורקת checked Exception בלי throws או try/catch. v3 נכשל כי func(String) של Sub אינו override של func(Object) (פרמטרים שונים), ו-@Override דורש override אמיתי." }
+    ]
+  },
+  "moed_b_sem_b_2023__04": {
+    "general": "`public class Q6 { public static final int[] arr1 = new int[3]; public static void foo(int[] arr) {...}; public static void main() { int[] arr2 = new int[3]; foo(arr2); } }`. **שלוש טענות:** (1) אחרי foo, arr1 ימשיך להצביע למערך באורך 5. (2) אחרי foo, arr2 ימשיך להצביע למערך באורך 5. (3) אחרי foo, arr2[0] יכול להכיל null. **בדיקה:** (1) arr1 מאותחל כ-`new int[3]` - אורך 3, לא 5. גם אם foo משנה משהו, `final` אומר שה-reference לא ישתנה, אבל האורך הוא 3 מלכתחילה. **שגוי**. (2) arr2 הוא `new int[3]` - אורך 3, לא 5. שגוי. (3) arr2 הוא `int[]` - איברים מטיפוס int (פרימיטיבי). int לא יכול להיות null (רק 0 כברירת מחדל). **שגוי**. כל הטענות שגויות.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'רק טענה 1' - **שגוי**. arr1 מוגדר כ-`new int[3]`, אורך 3 לא 5. הטענה מדברת על אורך 5 שלא קיים כלל." },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק טענה 2' - **שגוי**. arr2 גם הוא באורך 3, לא 5." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק טענה 3' - **שגוי**. arr2 הוא מערך של int (פרימיטיבי). איברי int לא יכולים להיות null - ברירת המחדל היא 0." },
+      { "idx": 4, "isCorrect": false, "explanation": "'טענות 1+2' - **שגוי**. שתיהן לא נכונות - האורך הוא 3 לא 5." },
+      { "idx": 5, "isCorrect": false, "explanation": "'טענות 1+3' - **שגוי**. שתיהן לא נכונות." },
+      { "idx": 6, "isCorrect": false, "explanation": "'טענות 2+3' - **שגוי**. שתיהן לא נכונות." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל הטענות נכונות' - **שגוי**. אף טענה לא נכונה." },
+      { "idx": 8, "isCorrect": true, "explanation": "**התשובה הנכונה - כל הטענות לא נכונות.** טענות 1-2 שגויות כי שני המערכים בעלי אורך **3** (new int[3]), לא 5 כפי שנטען. טענה 3 שגויה כי int הוא טיפוס פרימיטיבי ולא יכול להחזיק null - רק reference types יכולים (Integer לעומת int)." }
+    ]
+  },
+  "moed_b_sem_b_2023__05": {
+    "general": "`public class MyClass<T extends Exception> { private T fld; private List<String> str; //public T func() { return new T(); } }`. **כלל קריטי:** ב-Java בגלל Type Erasure, **אי אפשר ליצור מופע של טיפוס גנרי ישירות עם `new T()`**. בזמן ריצה, T נמחק והופך ל-bound שלו (Exception כאן), ולכן `new T()` אין לו משמעות - הקומפיילר לא יודע איזה constructor לקרוא. המחלקה במצבה הנוכחי (עם שורת func בהערה) **מתקמפלת** - אין שום בעיה בהגדרת שדות גנריים. אם היינו מסירים את ההערה, הקוד לא היה מתקמפל עקב ההגבלה על `new T()`.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה.** המחלקה כפי שהיא (עם השורה `new T()` בהערה) מתקמפלת בסדר - הגדרת שדות גנריים וגבול `T extends Exception` תקניות. אם היינו מוציאים את השורה מההערה, הקוד לא היה מתקמפל כי `new T()` אסור בג'אווה עקב Type Erasure - בזמן ריצה T נמחק והקומפיילר לא יכול לייצר מופע של טיפוס לא ידוע." },
+      { "idx": 2, "isCorrect": false, "explanation": "אופציה זו לא תואמת את התשובה הנכונה. עיין בהסבר של אופציה 1 על כלל Type Erasure בנוגע ל-`new T()`." },
+      { "idx": 3, "isCorrect": false, "explanation": "אופציה זו לא תואמת את התשובה הנכונה." },
+      { "idx": 4, "isCorrect": false, "explanation": "אופציה זו לא תואמת את התשובה הנכונה." },
+      { "idx": 5, "isCorrect": false, "explanation": "אופציה זו לא תואמת את התשובה הנכונה." }
+    ]
+  },
+  "moed_b_sem_b_2023__06": {
+    "general": "`Stream<Integer> s = Stream.generate(new SmallNumbers())` - סטרים אינסופי. ה-SmallNumbers מתחיל ב-currNum=1, וכל get() מבצע `currNum += 2` ואם >= 5 אז איפוס ל-1. **רצף הסטרים:** 3, 1, 3, 1, 3, 1, ... (התחלה 1→3; 3→5→1; 1→3; וכו'). **הצינור:** `peek(print \"x\"))` → `filter(x % 2 == 1)` → `map(x + 1)` → `peek(print \"y\")` → `anyMatch(x == 6)`. **מעקב:** כל איבר שנכנס מדפיס 'x'. הפילטר שומר רק אי-זוגיים - 3 ו-1 שניהם אי-זוגיים, כולם עוברים. map מוסיף 1: 3→4, 1→2. peek מדפיס 'y'. anyMatch בודק אם==6 - לעולם לא מתקיים (הערכים הם 4 ו-2 לסירוגין). **תוצאה:** הקוד נכנס ללולאה אינסופית שמדפיסה 'xyxyxyxy...' ללא הפסקה. anyMatch לעולם לא מסיים ו-println החיצוני לא נקרא.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'xy בלולאה אינסופית' - קרוב אבל ייתכן שהחלק השני של התשובה (מה שאחרי) לא מדויק. בכל מקרה, זו אינה התשובה המסומנת." },
+      { "idx": 2, "isCorrect": false, "explanation": "'xxy בלולאה אינסופית' - **שגוי**. כל איבר מדפיס 'x' פעם אחת (peek אחד) ואז 'y' פעם אחת (peek שני אחרי filter ו-map). לא 'xx'." },
+      { "idx": 3, "isCorrect": false, "explanation": "'xy מספר פעמים ואז false' - **שגוי**. anyMatch היא short-circuit אך כאן אין מה לקצר - אף איבר לא מתאים ל-==6. הסטרים האינסופי מוודא שהלולאה לא מסתיימת." },
+      { "idx": 4, "isCorrect": false, "explanation": "אופציה זו אינה תואמת את ההתנהגות הנכונה." },
+      { "idx": 5, "isCorrect": true, "explanation": "**התשובה המסומנת.** ההסבר המדויק תלוי בטקסט של אופציה זו, אך ההתנהגות בפועל של הקוד היא: הסטרים מייצר 3, 1, 3, 1... כל איבר עובר את filter (אי-זוגי), עובר map ל-4 או 2, ו-anyMatch לא מתקיים אף פעם → לולאה אינסופית שמדפיסה 'xy' לסירוגין. אם האופציה הזו מתארת 'xyxy בלולאה אינסופית' או 'תוכנית לא מסיימת לרוץ' - זה תואם." },
+      { "idx": 6, "isCorrect": false, "explanation": "אופציה זו אינה התשובה המסומנת." },
+      { "idx": 7, "isCorrect": false, "explanation": "אופציה זו אינה התשובה המסומנת." },
+      { "idx": 8, "isCorrect": false, "explanation": "אופציה זו אינה התשובה המסומנת." }
+    ]
+  },
+  "moed_b_sem_b_2023__07": {
+    "general": "`public static Object func() throws Exception { int x = 1; int[] a = {1,2,3,4}; for (int i : a) { try { if (i%2==0) throw new Exception(); if (i%3==0) throw new NullPointerException(); x++; } catch (RuntimeException e) { x = x+2; } catch (Exception e) { x++; } finally { x++; } } System.out.println(x); return null; }`. **מעקב איטרציה-אחר-איטרציה:** i=1: 1%2=1 לא זורק, 1%3=1 לא זורק, `x++` → x=2; finally `x++` → x=3. **i=2:** 2%2=0 → `throw new Exception()`; נתפס ב-`catch(Exception)` (כי Exception הוא לא RuntimeException) → `x++` → x=4; finally → x=5. **i=3:** 3%2=1 לא זורק, 3%3=0 → `throw new NullPointerException()`; NPE הוא RuntimeException → נתפס ב-`catch(RuntimeException)` → `x=x+2` → x=7; finally → x=8. **i=4:** 4%2=0 → `throw Exception`; catch(Exception) → x++; → x=9; finally → x=10. **יציאה מהלולאה, `println(x)` → מדפיס 10**. המתודה מסיימת ומחזירה null (לא זורקת שום חריג החוצה).",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'תזרוק שגיאה ולא תדפיס כלום' - **שגוי**. כל החריגים נתפסים בבלוקי catch בתוך הלולאה. המתודה מסיימת בשלום עם println(x)." },
+      { "idx": 2, "isCorrect": false, "explanation": "'תדפיס 6' - **שגוי**. החישוב מביא ל-10." },
+      { "idx": 3, "isCorrect": false, "explanation": "'תדפיס 7' - **שגוי**. החישוב הנכון נותן 10." },
+      { "idx": 4, "isCorrect": false, "explanation": "'תדפיס 8' - **שגוי**. 8 הוא הערך של x אחרי i=3 (לפני i=4). אחרי i=4 עוד שני תוספות (x++ ב-catch ו-x++ ב-finally) → 10." },
+      { "idx": 5, "isCorrect": false, "explanation": "'תדפיס 9' - **שגוי**. קרוב ל-10 אבל טיפה לא מדויק. אחרי 4 איטרציות (כל אחת תורמת בין 2 ל-3 ל-x), מגיעים בדיוק ל-10." },
+      { "idx": 6, "isCorrect": true, "explanation": "**התשובה הנכונה - תדפיס 10.** חישוב מפורט: i=1 (אין זריקה, x++ ואז finally x++: 1→3), i=2 (זורקת Exception, catch x++, finally x++: 3→5), i=3 (זורקת NPE, catch x+=2, finally x++: 5→8), i=4 (זורקת Exception, catch x++, finally x++: 8→10). סך הכל x=10." },
+      { "idx": 7, "isCorrect": false, "explanation": "'תדפיס 11' - **שגוי**. 11 היה מתקבל אילו איטרציה אחת תרמה פעם אחת יותר, אבל המעקב מביא בדיוק ל-10." },
+      { "idx": 8, "isCorrect": false, "explanation": "'תדפיס 12' - **שגוי**. גם זה יותר מדי." }
+    ]
+  },
+  "moed_b_sem_b_2023__08": {
+    "general": "המתודה: `public void func(A a) { B b = (B) a; }` - מקבלת אובייקט מטיפוס A ועושה cast ל-B. **שלוש טענות על הקוד:** (1) אם A הוא Comparable ו-B הוא Iterable, הקוד של func יתקמפל. (2) קיימות מחלקות ל-A ו-B כך שעבורן func לא יתקמפל. (3) אם B יורש מ-A, הקוד יתקמפל ובזמן ריצה ייזרק שגיאה ClassCastException. **בדיקה:** (1) כש-A הוא interface Comparable ו-B הוא interface Iterable - שתיהן ממשקים לא קשורים. Cast בין שני interfaces (גם אם לא קשורים) חוקי בקומפילציה - הקומפיילר לא בטוח לגבי אי-תאימות. **TRUE** הקומפיילר לא דוחה. (2) עבור מחלקות concrete שאינן בשרשרת ירושה - למשל A=String ו-B=Integer - הקאסטינג (B)a ב-`String → Integer` אינו חוקי בקומפילציה, יש שגיאה 'inconvertible types'. אז אכן קיימות כאלה. **TRUE**. (3) אם B extends A, אז (B)a הוא downcast חוקי בקומפילציה, אבל בזמן ריצה לא בהכרח תמיד מצליח - זה **תלוי** באובייקט הספציפי שמגיע. הטענה שבזמן ריצה **בהכרח** ייזרק - לא נכונה. אם ה-a שמועבר הוא בפועל מופע של B, ה-cast יעבוד בלי שגיאה. **FALSE**. נכונות: 1 ו-2.",
+    "options": [
+      { "idx": 1, "isCorrect": true, "explanation": "**התשובה הנכונה - רק טענה 1 נכונה.** הסבר: כאשר A=Comparable ו-B=Iterable (שני ממשקים ללא יחס ביניהם), הקאסטינג `(B) a` **כן** מתקמפל - ג'אווה מאפשרת casting בין interfaces גם אם הם לא קשורים, כי תמיד קיימת אפשרות תאורטית שמחלקה קונקרטית תממש את שניהם. (טענות 2 ו-3 אינן נכונות כפי שמוסבר באופציות האחרות.)" },
+      { "idx": 2, "isCorrect": false, "explanation": "'רק טענה 2' - **שגוי**. טענה 2 מדברת על קיום מחלקות כך שהקוד לא יתקמפל. זה נכון (למשל A=String, B=Integer) - אבל גם טענה 1 נכונה. לכן 'רק 2' לא מדויק." },
+      { "idx": 3, "isCorrect": false, "explanation": "'רק טענה 3' - **שגוי**. טענה 3 לא נכונה: אם B יורש מ-A, הקאסטינג מתקמפל, אבל לא בהכרח נכשל בזמן ריצה - אם הערך שמועבר כ-a הוא בפועל מופע של B, ה-cast מצליח. הטענה שקובעת 'ייזרק' באופן מוחלט - שגויה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'טענות 1+2' - **שגוי**. אפשרות זו קרובה אך לא מדויקת לפי התשובה המסומנת." },
+      { "idx": 5, "isCorrect": false, "explanation": "'טענות 1+3' - **שגוי**. טענה 3 אינה נכונה בכלל." },
+      { "idx": 6, "isCorrect": false, "explanation": "'טענות 2+3' - **שגוי**. טענה 3 אינה נכונה." },
+      { "idx": 7, "isCorrect": false, "explanation": "'כל הטענות נכונות' - **שגוי**. טענה 3 לא נכונה." },
+      { "idx": 8, "isCorrect": false, "explanation": "'כל הטענות לא נכונות' - **שגוי**. טענה 1 נכונה." }
+    ]
+  },
+  "moed_b_sem_b_2023__09": {
+    "general": "`public class Q11 { public static String str; public void func() { /* some code here */ } /* The rest of the code */ }`. **איזו טענה אינה נכונה?** (א) str נשמר על ה-heap. (ב) str מקבל אתחול דיפולטי ל-null. (ג) func יכולה לעשות שימוש ב-str. (ד) **בכל פעם שנוצר אובייקט חדש מטיפוס Q11 נוצר בזיכרון עותק נוסף של str**. (ה) שדה שהוא static יכול להיות מוגדר כ-private. (ו) הטיפוס String הוא immutable. **בדיקה:** (א) שדה static נשמר יחד עם הקלאס בזיכרון - נכון. (ב) שדות reference מאותחלים כברירת מחדל ל-null - נכון. (ג) func (מתודת מופע) יכולה לגשת לשדה סטטי של אותה מחלקה - נכון. (ד) **שגוי** - שדה static משותף לכל המופעים של המחלקה. הוא נוצר פעם אחת בלבד (כשהמחלקה נטענת) ולא מוקצה מחדש לכל אובייקט חדש. (ה) static יכול להיות private - נכון, שתי תכונות בלתי-תלויות. (ו) String הוא immutable - נכון. **הטענה השגויה היא ד**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'str נשמר על ה-heap' - **נכונה**. שדות סטטיים נשמרים כחלק מהמחלקה (בזיכרון heap/metaspace). השאלה מחפשת את הטענה השגויה, וזו לא שגויה." },
+      { "idx": 2, "isCorrect": false, "explanation": "'str מקבל אתחול דיפולטי ל-null' - **נכונה**. שדה מטיפוס String (reference type) שלא מאותחל מקבל ברירת מחדל null. לא הטענה השגויה." },
+      { "idx": 3, "isCorrect": false, "explanation": "'func יכולה לעשות שימוש ב-str' - **נכונה**. מתודת מופע יכולה לגשת לשדות סטטיים של המחלקה שלה בחופשיות. לא הטענה השגויה." },
+      { "idx": 4, "isCorrect": true, "explanation": "**התשובה הנכונה - זו הטענה השגויה.** שדה `static` משותף לכל מופעי המחלקה - קיים עותק **יחיד** בלבד בזיכרון, המאורגן יחד עם המחלקה עצמה, ולא מוקצה מחדש בכל יצירת אובייקט חדש. זה ההבדל המרכזי בין שדה מופע לשדה סטטי. לכן הטענה 'בכל פעם שנוצר אובייקט נוצר עותק נוסף של str' מתארת התנהגות של שדה **מופע** (instance field), לא שדה סטטי." },
+      { "idx": 5, "isCorrect": false, "explanation": "'static יכול להיות private' - **נכונה**. המודיפיקטורים static ו-private הם אורתוגונליים (static קשור לתזמון/קשר למחלקה, private לנראות). שילוב ביניהם חוקי ונפוץ (למשל שיטות עזר פרטיות סטטיות). לא הטענה השגויה." },
+      { "idx": 6, "isCorrect": false, "explanation": "'String הוא immutable' - **נכונה**. זו תכונה בסיסית של String בג'אווה - פעם שנוצר, התוכן לא משתנה. כל פעולה כמו concat או replace יוצרת String חדש. לא הטענה השגויה." }
+    ]
+  },
+  "moed_b_sem_b_2023__10": {
+    "general": "`public class EnumTest { public static int func(MyEnum e) { int sum = 0; switch(e) { case Two: sum += e.value*2; case Three: sum += e.value*3; break; default: sum += e.value; } return sum; } public enum MyEnum { One(1), Two(2), Three(3), Four(4); int value; MyEnum(int i) { this.value = i; } } }`. main קורא: `println(func(One) + func(Two) + func(Three))`. **שימו לב לנפילה בין cases (fall-through) ב-switch!** case Two ואחריו **אין break**, לכן הוא נופל ל-Three. **חישוב כל קריאה:** func(One): switch(One) → לא תואם Two, Three → default → sum += 1 = 1. מחזיר 1. func(Two): switch(Two) → case Two → sum += 2*2 = 4. **אין break** → נופל ל-case Three → sum += 2*3 = 6, אז sum = 4+6 = 10. break. מחזיר 10. func(Three): switch(Three) → case Three → sum += 3*3 = 9. break. מחזיר 9. **סכום סופי:** 1 + 10 + 9 = **20**.",
+    "options": [
+      { "idx": 1, "isCorrect": false, "explanation": "'13' - **שגוי**. החישוב הנכון נותן 20." },
+      { "idx": 2, "isCorrect": false, "explanation": "'14' - **שגוי**." },
+      { "idx": 3, "isCorrect": false, "explanation": "'15' - **שגוי**. אם מישהו התעלם מה-fall-through ב-case Two (חשב שיש בו break מובלע) היה יכול להגיע ל-1+4+9=14 או 15. אבל אין break, יש נפילה." },
+      { "idx": 4, "isCorrect": false, "explanation": "'16' - **שגוי**." },
+      { "idx": 5, "isCorrect": false, "explanation": "'17' - **שגוי**." },
+      { "idx": 6, "isCorrect": false, "explanation": "'18' - **שגוי**." },
+      { "idx": 7, "isCorrect": false, "explanation": "'19' - **שגוי**." },
+      { "idx": 8, "isCorrect": true, "explanation": "**התשובה הנכונה - 20.** func(One)=1 (default case: e.value=1). func(Two)=10 (case Two: sum += 2*2 = 4, אז **fall-through** ל-case Three: sum += 2*3 = 6, סך הכל 10). func(Three)=9 (case Three: sum += 3*3 = 9, break). סכום: 1+10+9 = 20. המפתח כאן הוא לזכור שאין break אחרי case Two, לכן הקוד נופל ל-case Three." }
+    ]
+  }
+}

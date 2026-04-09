@@ -7,6 +7,9 @@
     { "source": "/login", "destination": "/public/index.html" },
     { "source": "/dashboard", "destination": "/public/index.html" },
     { "source": "/pricing", "destination": "/public/index.html" },
+    { "source": "/quiz", "destination": "/public/index.html" },
+    { "source": "/summary", "destination": "/public/index.html" },
+    { "source": "/review", "destination": "/public/index.html" },
     { "source": "/courses/(.*)", "destination": "/public/index.html" }
   ],
   "headers": [
@@ -21,9 +24,27 @@
       ]
     },
     {
-      "source": "/public/(.*).css",
+      "source": "/public/styles.css",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600" }
+      ]
+    },
+    {
+      "source": "/public/app.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600" }
+      ]
+    },
+    {
+      "source": "/public/images/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/public/data/(.*).json",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400" }
       ]
     }
   ]

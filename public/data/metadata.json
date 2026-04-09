@@ -1,0 +1,931 @@
+{
+  "exams": [
+    {
+      "id": "moed_a_sem_a_2024",
+      "label": "מועד א, סמסטר א, 2024",
+      "date": "2024-04-02",
+      "questions": [
+        {
+          "id": "moed_a_sem_a_2024__01",
+          "examId": "moed_a_sem_a_2024",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_a_sem_a_2024/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2024__02",
+          "examId": "moed_a_sem_a_2024",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_a_sem_a_2024/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2024__03",
+          "examId": "moed_a_sem_a_2024",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_a_sem_a_2024/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2024__04",
+          "examId": "moed_a_sem_a_2024",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_a_sem_a_2024/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2024__05",
+          "examId": "moed_a_sem_a_2024",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_a_sem_a_2024/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2024__06",
+          "examId": "moed_a_sem_a_2024",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_a_sem_a_2024/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2024__07",
+          "examId": "moed_a_sem_a_2024",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_a_sem_a_2024/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2024__08",
+          "examId": "moed_a_sem_a_2024",
+          "section": "ח",
+          "orderIdx": 8,
+          "image": "moed_a_sem_a_2024/q-08_ח.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_a_sem_a_2025",
+      "label": "מועד א, סמסטר א, 2025",
+      "date": "2025-02-03",
+      "questions": [
+        {
+          "id": "moed_a_sem_a_2025__01",
+          "examId": "moed_a_sem_a_2025",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_a_sem_a_2025/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2025__02",
+          "examId": "moed_a_sem_a_2025",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_a_sem_a_2025/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2025__03",
+          "examId": "moed_a_sem_a_2025",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_a_sem_a_2025/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2025__04",
+          "examId": "moed_a_sem_a_2025",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_a_sem_a_2025/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2025__05",
+          "examId": "moed_a_sem_a_2025",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_a_sem_a_2025/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2025__06",
+          "examId": "moed_a_sem_a_2025",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_a_sem_a_2025/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2025__07",
+          "examId": "moed_a_sem_a_2025",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_a_sem_a_2025/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_a_sem_a_2026",
+      "label": "מועד א, סמסטר א, 2026",
+      "date": "2026-02-03",
+      "questions": [
+        {
+          "id": "moed_a_sem_a_2026__01",
+          "examId": "moed_a_sem_a_2026",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_a_sem_a_2026/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2026__02",
+          "examId": "moed_a_sem_a_2026",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_a_sem_a_2026/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2026__03",
+          "examId": "moed_a_sem_a_2026",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_a_sem_a_2026/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2026__04",
+          "examId": "moed_a_sem_a_2026",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_a_sem_a_2026/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2026__05",
+          "examId": "moed_a_sem_a_2026",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_a_sem_a_2026/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2026__06",
+          "examId": "moed_a_sem_a_2026",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_a_sem_a_2026/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_a_2026__07",
+          "examId": "moed_a_sem_a_2026",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_a_sem_a_2026/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_a_sem_b_2023",
+      "label": "מועד א, סמסטר ב, 2023",
+      "date": "2023-07-28",
+      "questions": [
+        {
+          "id": "moed_a_sem_b_2023__01",
+          "examId": "moed_a_sem_b_2023",
+          "section": "3",
+          "orderIdx": 1,
+          "image": "moed_a_sem_b_2023/q-01_3.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__02",
+          "examId": "moed_a_sem_b_2023",
+          "section": "4",
+          "orderIdx": 2,
+          "image": "moed_a_sem_b_2023/q-02_4.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__03",
+          "examId": "moed_a_sem_b_2023",
+          "section": "5",
+          "orderIdx": 3,
+          "image": "moed_a_sem_b_2023/q-03_5.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__04",
+          "examId": "moed_a_sem_b_2023",
+          "section": "6",
+          "orderIdx": 4,
+          "image": "moed_a_sem_b_2023/q-04_6.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__05",
+          "examId": "moed_a_sem_b_2023",
+          "section": "7",
+          "orderIdx": 5,
+          "image": "moed_a_sem_b_2023/q-05_7.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__06",
+          "examId": "moed_a_sem_b_2023",
+          "section": "8",
+          "orderIdx": 6,
+          "image": "moed_a_sem_b_2023/q-06_8.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__07",
+          "examId": "moed_a_sem_b_2023",
+          "section": "9",
+          "orderIdx": 7,
+          "image": "moed_a_sem_b_2023/q-07_9.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__08",
+          "examId": "moed_a_sem_b_2023",
+          "section": "10",
+          "orderIdx": 8,
+          "image": "moed_a_sem_b_2023/q-08_10.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__09",
+          "examId": "moed_a_sem_b_2023",
+          "section": "11",
+          "orderIdx": 9,
+          "image": "moed_a_sem_b_2023/q-09_11.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2023__10",
+          "examId": "moed_a_sem_b_2023",
+          "section": "12",
+          "orderIdx": 10,
+          "image": "moed_a_sem_b_2023/q-10_12.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_a_sem_b_2024",
+      "label": "מועד א, סמסטר ב, 2024",
+      "date": "2024-09-08",
+      "questions": [
+        {
+          "id": "moed_a_sem_b_2024__01",
+          "examId": "moed_a_sem_b_2024",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_a_sem_b_2024/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2024__02",
+          "examId": "moed_a_sem_b_2024",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_a_sem_b_2024/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2024__03",
+          "examId": "moed_a_sem_b_2024",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_a_sem_b_2024/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2024__04",
+          "examId": "moed_a_sem_b_2024",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_a_sem_b_2024/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2024__05",
+          "examId": "moed_a_sem_b_2024",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_a_sem_b_2024/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2024__06",
+          "examId": "moed_a_sem_b_2024",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_a_sem_b_2024/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2024__07",
+          "examId": "moed_a_sem_b_2024",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_a_sem_b_2024/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_a_sem_b_2025",
+      "label": "מועד א, סמסטר ב, 2025",
+      "date": "2025-07-13",
+      "questions": [
+        {
+          "id": "moed_a_sem_b_2025__01",
+          "examId": "moed_a_sem_b_2025",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_a_sem_b_2025/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2025__02",
+          "examId": "moed_a_sem_b_2025",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_a_sem_b_2025/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2025__03",
+          "examId": "moed_a_sem_b_2025",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_a_sem_b_2025/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2025__04",
+          "examId": "moed_a_sem_b_2025",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_a_sem_b_2025/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2025__05",
+          "examId": "moed_a_sem_b_2025",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_a_sem_b_2025/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2025__06",
+          "examId": "moed_a_sem_b_2025",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_a_sem_b_2025/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_a_sem_b_2025__07",
+          "examId": "moed_a_sem_b_2025",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_a_sem_b_2025/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_b_sem_a_2024",
+      "label": "מועד ב, סמסטר א, 2024",
+      "date": "2024-06-07",
+      "questions": [
+        {
+          "id": "moed_b_sem_a_2024__01",
+          "examId": "moed_b_sem_a_2024",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_b_sem_a_2024/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2024__02",
+          "examId": "moed_b_sem_a_2024",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_b_sem_a_2024/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2024__03",
+          "examId": "moed_b_sem_a_2024",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_b_sem_a_2024/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2024__04",
+          "examId": "moed_b_sem_a_2024",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_b_sem_a_2024/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2024__05",
+          "examId": "moed_b_sem_a_2024",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_b_sem_a_2024/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2024__06",
+          "examId": "moed_b_sem_a_2024",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_b_sem_a_2024/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2024__07",
+          "examId": "moed_b_sem_a_2024",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_b_sem_a_2024/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2024__08",
+          "examId": "moed_b_sem_a_2024",
+          "section": "ח",
+          "orderIdx": 8,
+          "image": "moed_b_sem_a_2024/q-08_ח.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_b_sem_a_2025",
+      "label": "מועד ב, סמסטר א, 2025",
+      "date": "2025-04-10",
+      "questions": [
+        {
+          "id": "moed_b_sem_a_2025__01",
+          "examId": "moed_b_sem_a_2025",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_b_sem_a_2025/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2025__02",
+          "examId": "moed_b_sem_a_2025",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_b_sem_a_2025/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2025__03",
+          "examId": "moed_b_sem_a_2025",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_b_sem_a_2025/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2025__04",
+          "examId": "moed_b_sem_a_2025",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_b_sem_a_2025/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2025__05",
+          "examId": "moed_b_sem_a_2025",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_b_sem_a_2025/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2025__06",
+          "examId": "moed_b_sem_a_2025",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_b_sem_a_2025/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_a_2025__07",
+          "examId": "moed_b_sem_a_2025",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_b_sem_a_2025/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_b_sem_b_2023",
+      "label": "מועד ב, סמסטר ב, 2023",
+      "date": "2023-09-01",
+      "questions": [
+        {
+          "id": "moed_b_sem_b_2023__01",
+          "examId": "moed_b_sem_b_2023",
+          "section": "3",
+          "orderIdx": 1,
+          "image": "moed_b_sem_b_2023/q-01_3.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__02",
+          "examId": "moed_b_sem_b_2023",
+          "section": "4",
+          "orderIdx": 2,
+          "image": "moed_b_sem_b_2023/q-02_4.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__03",
+          "examId": "moed_b_sem_b_2023",
+          "section": "5",
+          "orderIdx": 3,
+          "image": "moed_b_sem_b_2023/q-03_5.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__04",
+          "examId": "moed_b_sem_b_2023",
+          "section": "6",
+          "orderIdx": 4,
+          "image": "moed_b_sem_b_2023/q-04_6.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__05",
+          "examId": "moed_b_sem_b_2023",
+          "section": "7",
+          "orderIdx": 5,
+          "image": "moed_b_sem_b_2023/q-05_7.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__06",
+          "examId": "moed_b_sem_b_2023",
+          "section": "8",
+          "orderIdx": 6,
+          "image": "moed_b_sem_b_2023/q-06_8.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__07",
+          "examId": "moed_b_sem_b_2023",
+          "section": "9",
+          "orderIdx": 7,
+          "image": "moed_b_sem_b_2023/q-07_9.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__08",
+          "examId": "moed_b_sem_b_2023",
+          "section": "10",
+          "orderIdx": 8,
+          "image": "moed_b_sem_b_2023/q-08_10.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__09",
+          "examId": "moed_b_sem_b_2023",
+          "section": "11",
+          "orderIdx": 9,
+          "image": "moed_b_sem_b_2023/q-09_11.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2023__10",
+          "examId": "moed_b_sem_b_2023",
+          "section": "12",
+          "orderIdx": 10,
+          "image": "moed_b_sem_b_2023/q-10_12.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_b_sem_b_2024",
+      "label": "מועד ב, סמסטר ב, 2024",
+      "date": "2024-10-27",
+      "questions": [
+        {
+          "id": "moed_b_sem_b_2024__01",
+          "examId": "moed_b_sem_b_2024",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_b_sem_b_2024/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2024__02",
+          "examId": "moed_b_sem_b_2024",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_b_sem_b_2024/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2024__03",
+          "examId": "moed_b_sem_b_2024",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_b_sem_b_2024/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2024__04",
+          "examId": "moed_b_sem_b_2024",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_b_sem_b_2024/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2024__05",
+          "examId": "moed_b_sem_b_2024",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_b_sem_b_2024/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2024__06",
+          "examId": "moed_b_sem_b_2024",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_b_sem_b_2024/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2024__07",
+          "examId": "moed_b_sem_b_2024",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_b_sem_b_2024/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    },
+    {
+      "id": "moed_b_sem_b_2025",
+      "label": "מועד ב, סמסטר ב, 2025",
+      "date": "2025-09-12",
+      "questions": [
+        {
+          "id": "moed_b_sem_b_2025__01",
+          "examId": "moed_b_sem_b_2025",
+          "section": "א",
+          "orderIdx": 1,
+          "image": "moed_b_sem_b_2025/q-01_א.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2025__02",
+          "examId": "moed_b_sem_b_2025",
+          "section": "ב",
+          "orderIdx": 2,
+          "image": "moed_b_sem_b_2025/q-02_ב.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2025__03",
+          "examId": "moed_b_sem_b_2025",
+          "section": "ג",
+          "orderIdx": 3,
+          "image": "moed_b_sem_b_2025/q-03_ג.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2025__04",
+          "examId": "moed_b_sem_b_2025",
+          "section": "ד",
+          "orderIdx": 4,
+          "image": "moed_b_sem_b_2025/q-04_ד.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2025__05",
+          "examId": "moed_b_sem_b_2025",
+          "section": "ה",
+          "orderIdx": 5,
+          "image": "moed_b_sem_b_2025/q-05_ה.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2025__06",
+          "examId": "moed_b_sem_b_2025",
+          "section": "ו",
+          "orderIdx": 6,
+          "image": "moed_b_sem_b_2025/q-06_ו.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        },
+        {
+          "id": "moed_b_sem_b_2025__07",
+          "examId": "moed_b_sem_b_2025",
+          "section": "ז",
+          "orderIdx": 7,
+          "image": "moed_b_sem_b_2025/q-07_ז.png",
+          "numOptions": null,
+          "correctIdx": null,
+          "groupId": null
+        }
+      ]
+    }
+  ]
+}

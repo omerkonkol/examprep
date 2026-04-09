@@ -1,504 +1,968 @@
 // =====================================================
 // ExamPrep - Frontend SPA
 // =====================================================
-// Vanilla JS, no framework. Routes: /, /login, /pricing, /dashboard, /courses/:id
+// Vanilla JS, no framework. All-local mode for the admin
+// testing phase: question data from /public/data/*.json,
+// progress in localStorage. Cloud path comes later for
+// real users.
+// =====================================================
 
-const cfg = window.APP_CONFIG || {};
-let supabase = null;
-if (cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY) {
-  const mod = await import('https://esm.sh/@supabase/supabase-js@2');
-  supabase = mod.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true },
-  });
-}
-
+// ===== Globals =====
 const $app = document.getElementById('app');
-const state = { user: null, profile: null, courses: [] };
 
+const Data = {
+  metadata: null,
+  answers: null,
+  explanations: null,
+  loaded: false,
+  async ensureLoaded() {
+    if (this.loaded) return;
+    const [meta, ans, exp] = await Promise.all([
+      fetch('/public/data/metadata.json').then(r => r.json()),
+      fetch('/public/data/answers.json').then(r => r.json()),
+      fetch('/public/data/explanations.json').then(r => r.json()).catch(() => ({})),
+    ]);
+    this.metadata = meta;
+    this.answers = ans.answers || {};
+    this.explanations = exp || {};
+    this.loaded = true;
+  },
+  publicMeta(qid) {
+    const a = this.answers[qid] || {};
+    return {
+      numOptions: a.numOptions,
+      optionLabels: a.optionLabels || null,
+      topic: a.topic || null,
+      groupId: a.groupId || null,
+    };
+  },
+  reveal(qid) {
+    const a = this.answers[qid] || {};
+    return {
+      correctIdx: a.correctIdx,
+      explanation: this.explanations[qid] || null,
+      topic: a.topic || null,
+    };
+  },
+  imageUrl(relImage) {
+    return `https://tohna1-quiz.vercel.app/images/${encodeURI(relImage)}`;
+  },
+  allQuestions() {
+    if (!this.metadata) return [];
+    return this.metadata.exams.flatMap(e => e.questions);
+  },
+};
+
+// ===== State =====
+const state = {
+  user: null, // { email, name, plan, isAdmin }
+  course: null, // currently selected course (for admin: hardcoded "תוכנה 1")
+  quiz: null, // current quiz session
+  lastBatch: null, // for the mistake review screen
+};
+
+// ===== Local "auth" (for admin testing phase) =====
+// In phase 2 this will be replaced with Supabase Auth.
+const Auth = {
+  KEY: 'ep_user',
+  current() {
+    try { return JSON.parse(localStorage.getItem(this.KEY)); } catch { return null; }
+  },
+  save(user) { localStorage.setItem(this.KEY, JSON.stringify(user)); },
+  clear() { localStorage.removeItem(this.KEY); },
+  // Hardcoded admin credentials for the testing phase
+  ADMIN_EMAIL: 'admin+a55c27@examprep.app',
+  ADMIN_PASS: '!xx!6WxSMpRDNT$3',
+  loginAdmin() {
+    const u = {
+      email: this.ADMIN_EMAIL,
+      name: 'אדמין',
+      plan: 'pro',
+      isAdmin: true,
+    };
+    this.save(u);
+    return u;
+  },
+  loginLocal(email, password, name) {
+    // Local-only mock auth — accepts any email/pass for the testing phase.
+    // In phase 2 this will hit Supabase Auth.
+    if (email === this.ADMIN_EMAIL && password === this.ADMIN_PASS) {
+      return this.loginAdmin();
+    }
+    const u = {
+      email,
+      name: name || email.split('@')[0],
+      plan: 'free',
+      isAdmin: false,
+    };
+    this.save(u);
+    return u;
+  },
+};
+
+// ===== Local progress storage =====
+const Progress = {
+  KEY(uid) { return `ep_progress_${uid}`; },
+  load(uid) {
+    try { return JSON.parse(localStorage.getItem(this.KEY(uid))) || {}; }
+    catch { return { attempts: [], reviewQueue: [], batches: [] }; }
+  },
+  save(uid, data) { localStorage.setItem(this.KEY(uid), JSON.stringify(data)); },
+  recordAttempt(uid, attempt) {
+    const p = this.load(uid);
+    p.attempts = p.attempts || [];
+    p.attempts.push({ ...attempt, ts: Date.now() });
+    if (!attempt.isCorrect || attempt.revealed) {
+      p.reviewQueue = p.reviewQueue || [];
+      if (!p.reviewQueue.includes(attempt.questionId)) p.reviewQueue.push(attempt.questionId);
+    } else {
+      p.reviewQueue = (p.reviewQueue || []).filter(id => id !== attempt.questionId);
+    }
+    this.save(uid, p);
+  },
+  saveBatch(uid, batch) {
+    const p = this.load(uid);
+    p.batches = p.batches || [];
+    p.batches.push(batch);
+    this.save(uid, p);
+  },
+  stats(uid) {
+    const p = this.load(uid);
+    const attempts = p.attempts || [];
+    const seen = new Set(attempts.map(a => a.questionId));
+    const correctIds = new Set(attempts.filter(a => a.isCorrect && !a.revealed).map(a => a.questionId));
+    const wrong = [...seen].filter(id => !correctIds.has(id));
+    return {
+      total: attempts.length,
+      unique: seen.size,
+      correct: correctIds.size,
+      wrong: wrong.length,
+      reviewCount: (p.reviewQueue || []).length,
+    };
+  },
+  history(uid) { return (this.load(uid).attempts || []); },
+};
+
+// ===== Plans / quotas (mirrors server.mjs intent) =====
+const PLANS = {
+  free: { name: 'חינמי', canPractice: true, canAI: false, maxCourses: 1 },
+  basic: { name: 'Basic', canPractice: true, canAI: true, maxCourses: 5 },
+  pro: { name: 'Pro', canPractice: true, canAI: true, maxCourses: -1 },
+  education: { name: 'Education', canPractice: true, canAI: true, maxCourses: -1 },
+};
+
+// ===== Utility =====
 function tmpl(id) {
   const t = document.getElementById(id);
+  if (!t) throw new Error('Missing template: ' + id);
   return t.content.cloneNode(true);
 }
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+function pickRandom(arr, n) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, Math.min(n, a.length));
+}
+function toast(msg, type = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// Render explanation text with inline `code` and **bold** support
+function renderExplanation(text) {
+  if (text == null) return '';
+  const s = String(text);
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === '`') {
+      const end = s.indexOf('`', i + 1);
+      if (end === -1) { out += escapeHtml(s.slice(i)); break; }
+      out += `<code>${escapeHtml(s.slice(i + 1, end))}</code>`;
+      i = end + 1;
+      continue;
+    }
+    if (ch === '*' && s[i + 1] === '*') {
+      const end = s.indexOf('**', i + 2);
+      if (end === -1) { out += escapeHtml(s.slice(i)); break; }
+      out += `<strong>${renderExplanation(s.slice(i + 2, end))}</strong>`;
+      i = end + 2;
+      continue;
+    }
+    out += escapeHtml(ch);
+    i++;
+  }
+  return out;
+}
 
 // ===== Router =====
+function getRoute() {
+  const hash = location.hash || '#/';
+  return hash.replace(/^#/, '');
+}
 function navigate(path) {
-  window.history.pushState({}, '', path);
-  render();
+  location.hash = '#' + path;
 }
-window.addEventListener('popstate', () => render());
+window.addEventListener('hashchange', renderRoute);
 
-document.addEventListener('click', (e) => {
-  const link = e.target.closest('[data-route]');
-  if (link) {
-    e.preventDefault();
-    const path = link.getAttribute('href');
-    navigate(path);
-  }
-});
+function renderRoute() {
+  const route = getRoute();
+  const path = route.split('?')[0];
+  const params = new URLSearchParams(route.split('?')[1] || '');
 
-async function getCurrentUser() {
-  if (!supabase) return null;
-  const { data } = await supabase.auth.getUser();
-  return data?.user || null;
-}
-
-async function getProfile(userId) {
-  if (!supabase) return null;
-  const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
-  return data;
-}
-
-// ===== Render dispatcher =====
-async function render() {
-  const path = window.location.pathname;
-  const params = new URLSearchParams(window.location.search);
-
-  // Public routes
-  if (path === '/' || path === '/index.html') return renderLanding();
-  if (path === '/login') return renderLogin(params.get('signup') === '1');
-  if (path === '/pricing') {
-    renderLanding();
-    setTimeout(() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }), 100);
-    return;
-  }
-
-  // Protected routes
-  const user = await getCurrentUser();
-  if (!user) return navigate('/login');
-  state.user = user;
-  state.profile = await getProfile(user.id);
-
+  if (path === '/' || path === '') return renderLanding();
+  if (path === '/login') return renderAuth(params.get('signup') === '1');
   if (path === '/dashboard') return renderDashboard();
-  if (path.startsWith('/courses/')) return renderCoursePage(path.split('/')[2]);
-
-  // 404 fallback
-  renderLanding();
+  if (path === '/quiz') return state.quiz ? renderQuiz() : navigate('/dashboard');
+  if (path === '/summary') return renderSummary();
+  if (path === '/review') return renderMistakeReview();
+  return renderLanding();
 }
 
-// ===== Landing Page =====
+// ===== Render: Landing =====
 function renderLanding() {
   $app.innerHTML = '';
   $app.appendChild(tmpl('tmpl-landing'));
-  // Smooth scroll for in-page anchors
+
+  // Wire up internal route links
+  document.querySelectorAll('[data-route]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      const route = link.getAttribute('data-route');
+      if (route) {
+        e.preventDefault();
+        navigate(route);
+      }
+    });
+  });
+
+  // Mobile hamburger
+  const hb = document.getElementById('hamburger');
+  if (hb) hb.addEventListener('click', () => document.getElementById('navbar').classList.toggle('open'));
+
+  // FAQ accordion
+  document.querySelectorAll('.faq-q').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const item = btn.closest('.faq-item');
+      const wasOpen = item.classList.contains('open');
+      document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
+      if (!wasOpen) item.classList.add('open');
+    });
+  });
+
+  // Smooth-scroll for in-page anchors
   document.querySelectorAll('a[href^="#"]').forEach(a => {
+    if (a.hasAttribute('data-route')) return;
     a.addEventListener('click', (e) => {
       const id = a.getAttribute('href').slice(1);
-      const el = document.getElementById(id);
-      if (el) {
+      const target = document.getElementById(id);
+      if (target) {
         e.preventDefault();
-        el.scrollIntoView({ behavior: 'smooth' });
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     });
   });
 }
 
-// ===== Login / Signup =====
-// Real RFC-5322 simplified email regex (good enough for 99% of valid emails)
-const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-
-// Block obviously fake/disposable email domains
-const BLOCKED_EMAIL_DOMAINS = [
-  'tempmail.com', 'temp-mail.org', '10minutemail.com', 'guerrillamail.com',
-  'mailinator.com', 'throwaway.email', 'yopmail.com', 'fake.com', 'test.com',
-  'example.com', 'example.org', 'local', 'localhost', 'tohna1.app', 'tohna1quiz.com',
-];
-
-function validateEmail(email) {
-  if (!email) return 'כתובת מייל חובה';
-  if (email.length > 254) return 'כתובת מייל ארוכה מדי';
-  if (!EMAIL_REGEX.test(email)) return 'כתובת מייל לא חוקית';
-  const domain = email.split('@')[1].toLowerCase();
-  if (BLOCKED_EMAIL_DOMAINS.includes(domain)) return 'כתובת המייל הזו אינה מורשית. השתמש במייל אמיתי.';
-  if (!domain.includes('.')) return 'דומיין המייל לא חוקי';
-  const tld = domain.split('.').pop();
-  if (tld.length < 2) return 'סיומת דומיין לא חוקית';
-  return null;
-}
-
-function checkPasswordStrength(password) {
-  return {
-    length: password.length >= 8,
-    letter: /[a-zA-Z]/.test(password),
-    number: /[0-9]/.test(password),
-    symbol: /[!@#$%^&*()_+\-=\[\]{};:'",.<>?\/\\|`~]/.test(password),
-  };
-}
-
-function validatePassword(password) {
-  const checks = checkPasswordStrength(password);
-  if (!checks.length) return 'הסיסמה חייבת להכיל לפחות 8 תווים';
-  if (!checks.letter) return 'הסיסמה חייבת להכיל לפחות אות אחת';
-  if (!checks.number) return 'הסיסמה חייבת להכיל לפחות ספרה אחת';
-  return null;
-}
-
-function passwordStrengthScore(password) {
-  const c = checkPasswordStrength(password);
-  let score = 0;
-  if (c.length) score++;
-  if (c.letter) score++;
-  if (c.number) score++;
-  if (c.symbol) score++;
-  if (password.length >= 12) score++;
-  return score; // 0-5
-}
-
-function renderLogin(signupModeInit = false) {
+// ===== Render: Auth =====
+function renderAuth(signupMode = false) {
   $app.innerHTML = '';
-  $app.appendChild(tmpl('tmpl-login'));
+  $app.appendChild(tmpl('tmpl-auth'));
 
-  let signupMode = signupModeInit;
-  const form = document.getElementById('auth-form');
-  const errEl = document.getElementById('auth-error');
-  const emailErr = document.getElementById('email-error');
-  const pwErr = document.getElementById('password-error');
-  const pwStrength = document.getElementById('password-strength');
-  const strengthFill = document.getElementById('strength-fill');
-  const checkLen = document.getElementById('check-len');
-  const checkLetter = document.getElementById('check-letter');
-  const checkNumber = document.getElementById('check-number');
-  const checkSymbol = document.getElementById('check-symbol');
+  document.querySelectorAll('[data-route]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigate(link.getAttribute('data-route'));
+    });
+  });
+
+  const tabs = document.querySelectorAll('.auth-tab');
+  const submitBtn = document.getElementById('auth-submit');
+  const nameField = document.getElementById('signup-name-field');
+  let mode = signupMode ? 'signup' : 'login';
 
   function applyMode() {
-    document.getElementById('auth-title').textContent = signupMode ? 'הרשמה חדשה' : 'כניסה לחשבון';
-    document.getElementById('auth-tagline').textContent = signupMode
-      ? 'התחל בחינם - 5 PDFs בלי עלות'
-      : 'ברוך הבא חזרה';
-    document.getElementById('btn-primary-action').textContent = signupMode ? 'צור חשבון' : 'כניסה';
-    document.getElementById('btn-toggle-mode').textContent = signupMode
-      ? 'כבר יש לך חשבון? כניסה'
-      : 'אין לך חשבון? הירשם';
-    document.getElementById('auth-password').autocomplete = signupMode ? 'new-password' : 'current-password';
-    if (signupMode) {
-      pwStrength.classList.remove('hidden');
-    } else {
-      pwStrength.classList.add('hidden');
-    }
-    errEl.textContent = '';
-    emailErr.textContent = '';
-    pwErr.textContent = '';
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === mode));
+    nameField.style.display = mode === 'signup' ? '' : 'none';
+    submitBtn.textContent = mode === 'signup' ? 'יצירת חשבון' : 'כניסה';
   }
   applyMode();
 
-  // Toggle mode
-  document.getElementById('btn-toggle-mode').addEventListener('click', () => {
-    signupMode = !signupMode;
+  tabs.forEach(t => t.addEventListener('click', () => {
+    mode = t.dataset.tab;
     applyMode();
-  });
+  }));
 
-  // Live validation
-  const emailInput = document.getElementById('auth-email');
-  const pwInput = document.getElementById('auth-password');
-
-  emailInput.addEventListener('blur', () => {
-    const v = emailInput.value.trim();
-    if (!v) { emailErr.textContent = ''; return; }
-    const err = validateEmail(v);
-    emailErr.textContent = err || '';
-    emailInput.classList.toggle('invalid', !!err);
-    emailInput.classList.toggle('valid', !err);
-  });
-
-  pwInput.addEventListener('input', () => {
-    if (!signupMode) return;
-    const v = pwInput.value;
-    const checks = checkPasswordStrength(v);
-    checkLen.classList.toggle('ok', checks.length);
-    checkLetter.classList.toggle('ok', checks.letter);
-    checkNumber.classList.toggle('ok', checks.number);
-    checkSymbol.classList.toggle('ok', checks.symbol);
-    const score = passwordStrengthScore(v);
-    const pct = (score / 5) * 100;
-    strengthFill.style.width = pct + '%';
-    strengthFill.className = 'strength-fill';
-    if (score >= 4) strengthFill.classList.add('strong');
-    else if (score >= 3) strengthFill.classList.add('good');
-    else if (score >= 2) strengthFill.classList.add('weak');
-    else strengthFill.classList.add('vweak');
-  });
-
-  // Google OAuth
-  document.getElementById('btn-google').addEventListener('click', async () => {
-    if (!supabase) { errEl.textContent = 'המערכת אינה מוגדרת כראוי.'; return; }
-    errEl.textContent = '';
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin + '/dashboard' },
-    });
-    if (error) {
-      const m = error.message || '';
-      if (m.includes('not enabled') || m.includes('provider')) {
-        errEl.textContent = 'כניסה דרך Google עדיין לא הוגדרה במערכת. נסה הרשמה רגילה דרך מייל.';
-      } else {
-        errEl.textContent = 'שגיאה: ' + m;
-      }
-    }
-  });
-
-  // Submit handler (works for both modes)
-  async function doAuth() {
-    errEl.textContent = '';
-    emailErr.textContent = '';
-    pwErr.textContent = '';
-
-    const email = emailInput.value.trim().toLowerCase();
-    const password = pwInput.value;
-
-    // Email validation
-    const emailErrMsg = validateEmail(email);
-    if (emailErrMsg) {
-      emailErr.textContent = emailErrMsg;
-      emailInput.classList.add('invalid');
-      emailInput.focus();
-      return;
-    }
-
-    // Password validation
-    if (signupMode) {
-      const pwErrMsg = validatePassword(password);
-      if (pwErrMsg) {
-        pwErr.textContent = pwErrMsg;
-        pwInput.classList.add('invalid');
-        pwInput.focus();
-        return;
-      }
-    } else {
-      if (password.length < 1) {
-        pwErr.textContent = 'הסיסמה חובה';
-        pwInput.focus();
-        return;
-      }
-    }
-
-    if (!supabase) {
-      errEl.textContent = 'המערכת אינה מוגדרת כראוי. נסה שוב מאוחר יותר.';
-      return;
-    }
-
-    const submitBtn = document.getElementById('btn-primary-action');
-    submitBtn.disabled = true;
-    submitBtn.textContent = signupMode ? 'יוצר חשבון...' : 'מתחבר...';
-
-    try {
-      if (signupMode) {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              username: email.split('@')[0],
-              signup_source: 'web',
-              signup_at: new Date().toISOString(),
-            },
-            emailRedirectTo: window.location.origin + '/dashboard',
-          },
-        });
-        if (error) { errEl.textContent = translateError(error.message); return; }
-        if (data.user && data.session) {
-          // Auto-confirmed
-          await ensureProfile(data.user.id, email);
-          navigate('/dashboard');
-        } else if (data.user && !data.session) {
-          errEl.textContent = '✓ נרשמת בהצלחה! נשלח אליך מייל לאישור החשבון. בדוק את תיבת הדואר.';
-          errEl.style.color = 'var(--success)';
-        }
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) { errEl.textContent = translateError(error.message); return; }
-        await ensureProfile(data.user.id, email);
-        navigate('/dashboard');
-      }
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = signupMode ? 'צור חשבון' : 'כניסה';
-    }
-  }
-
-  document.getElementById('btn-primary-action').addEventListener('click', (e) => {
+  document.getElementById('auth-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    doAuth();
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-pass').value;
+    const name = document.getElementById('auth-name').value.trim();
+    const errEl = document.getElementById('auth-error');
+    errEl.textContent = '';
+    errEl.classList.remove('success');
+    if (!email || !password) { errEl.textContent = 'חובה למלא אימייל וסיסמה'; return; }
+    if (password.length < 6) { errEl.textContent = 'סיסמה חייבת להיות לפחות 6 תווים'; return; }
+    try {
+      const user = Auth.loginLocal(email, password, name);
+      state.user = user;
+      errEl.classList.add('success');
+      errEl.textContent = mode === 'signup' ? 'נרשמת בהצלחה — מעבירים אותך...' : 'התחברת בהצלחה — מעבירים אותך...';
+      setTimeout(() => navigate('/dashboard'), 600);
+    } catch (err) {
+      errEl.textContent = err.message || 'שגיאה לא ידועה';
+    }
   });
-  form.addEventListener('submit', (e) => { e.preventDefault(); doAuth(); });
+
+  document.getElementById('admin-quick-login').addEventListener('click', () => {
+    const user = Auth.loginAdmin();
+    state.user = user;
+    toast('ברוך הבא, אדמין!', 'success');
+    setTimeout(() => navigate('/dashboard'), 400);
+  });
 }
 
-async function ensureProfile(userId, email) {
-  if (!supabase) return;
-  const { data: existing } = await supabase.from('profiles').select('id').eq('id', userId).maybeSingle();
-  if (existing) return;
-  await supabase.from('profiles').upsert({
-    id: userId,
-    username: email.split('@')[0],
-    email,
-    plan: 'free',
-  }, { onConflict: 'id' });
-}
-
-function translateError(msg) {
-  const map = {
-    'Invalid login credentials': 'אימייל או סיסמה שגויים',
-    'User already registered': 'כבר קיים משתמש עם כתובת המייל הזו - נסה להתחבר במקום',
-    'Email not confirmed': 'יש לאשר את המייל. בדוק את תיבת הדואר שלך.',
-    'Email rate limit exceeded': 'נשלחו יותר מדי אימיילים. המתן כמה דקות ונסה שוב.',
-    'Email address is invalid': 'כתובת המייל אינה חוקית',
-    'Signup requires a valid password': 'נדרשת סיסמה חוקית',
-    'Password should be at least 6 characters': 'הסיסמה חייבת להיות לפחות 8 תווים',
-  };
-  for (const [key, val] of Object.entries(map)) {
-    if (msg.toLowerCase().includes(key.toLowerCase())) return val;
-  }
-  return msg;
-}
-
-// ===== Dashboard =====
+// ===== Render: Dashboard =====
 async function renderDashboard() {
+  if (!state.user) state.user = Auth.current();
+  if (!state.user) return navigate('/login');
+
+  await Data.ensureLoaded();
   $app.innerHTML = '';
-  $app.appendChild(tmpl('tmpl-dashboard'));
+  $app.appendChild(tmpl('tmpl-dash'));
 
-  // User badge
-  const username = state.profile?.username || state.user?.email?.split('@')[0] || 'משתמש';
-  const plan = state.profile?.plan || 'free';
-  document.getElementById('user-badge').textContent = `👤 ${username} • ${planLabel(plan)}`;
+  document.querySelectorAll('[data-route]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigate(link.getAttribute('data-route'));
+    });
+  });
 
-  // Logout
-  document.getElementById('btn-logout').onclick = async () => {
-    await supabase.auth.signOut();
+  // User info
+  document.getElementById('user-name').textContent = state.user.name;
+  document.getElementById('user-avatar').textContent = (state.user.name || 'U').slice(0, 1).toUpperCase();
+  const planEl = document.getElementById('user-plan');
+  planEl.textContent = state.user.plan;
+  if (state.user.plan === 'pro' || state.user.plan === 'education') planEl.classList.add('pro');
+  document.getElementById('dash-greet-title').textContent = `שלום ${state.user.name}! 👋`;
+
+  document.getElementById('btn-logout').addEventListener('click', () => {
+    Auth.clear();
     state.user = null;
-    state.profile = null;
     navigate('/');
-  };
+  });
 
-  // Quotas
-  renderQuotaBar();
+  // Stats
+  const stats = Progress.stats(state.user.email);
+  const sg = document.getElementById('dash-stats');
+  sg.innerHTML = `
+    <div class="stat-card brand"><div class="label">סה"כ ניסיונות</div><div class="value">${stats.total}</div></div>
+    <div class="stat-card success"><div class="label">תשובות נכונות (ייחודיות)</div><div class="value">${stats.correct}</div></div>
+    <div class="stat-card danger"><div class="label">טעיתי / הוצגו</div><div class="value">${stats.wrong}</div></div>
+    <div class="stat-card warn"><div class="label">בתור החזרה</div><div class="value">${stats.reviewCount}</div></div>
+  `;
 
-  // Courses
-  await loadCourses();
-
-  // New course
-  document.getElementById('btn-new-course').onclick = () => openNewCourseModal();
-}
-
-function planLabel(plan) {
-  return { free: 'חינמי', basic: 'Basic', pro: 'Pro', education: 'Education' }[plan] || 'חינמי';
-}
-
-function renderQuotaBar() {
-  const p = state.profile;
-  if (!p) return;
-  const limits = {
-    free: { pdfs: 5, courses: 1, ai: 0 },
-    basic: { pdfs: 30, courses: 5, ai: 100 },
-    pro: { pdfs: 150, courses: -1, ai: 500 },
-    education: { pdfs: 500, courses: -1, ai: 2000 },
-  }[p.plan || 'free'];
-  const bar = document.getElementById('quota-bar');
-  bar.innerHTML = `
-    <div style="display:flex;gap:32px;flex-wrap:wrap;">
-      <div>📄 <strong>${p.pdfs_uploaded_this_month || 0}</strong> / ${limits.pdfs} קבצי PDF החודש</div>
-      <div>📚 <strong>${state.courses?.length || 0}</strong> / ${limits.courses === -1 ? '∞' : limits.courses} קורסים</div>
-      <div>✨ <strong>${p.ai_questions_used_this_month || 0}</strong> / ${limits.ai} שאלות AI החודש</div>
-      ${p.plan === 'free' ? '<a href="/pricing" data-route="/pricing" class="btn btn-primary" style="margin-right:auto;">שדרג עכשיו</a>' : ''}
+  // Courses (currently only "תוכנה 1" for admin)
+  const cg = document.getElementById('dash-courses');
+  const totalQuestions = Data.allQuestions().length;
+  const totalExams = Data.metadata.exams.length;
+  cg.innerHTML = `
+    <div class="course-card" style="--course-color:#3933e0" data-course="tohna1">
+      <h3>תוכנה 1</h3>
+      <div class="desc">בנק שאלות אמריקאיות מבחינות עבר של תוכנה 1 — אונ' תל אביב. כולל הסברים מפורטים בעברית לכל שאלה.</div>
+      <div class="meta">
+        <span><strong>${totalQuestions}</strong> שאלות</span>
+        <span><strong>${totalExams}</strong> מבחנים</span>
+        <span>📚 מוכן לתרגול</span>
+      </div>
+    </div>
+    <div class="course-card add" id="btn-add-course-card">
+      <div class="add-card-content">
+        <div class="add-icon">+</div>
+        <strong>הוסף קורס חדש</strong>
+        <small>העלה PDF של מבחן</small>
+      </div>
     </div>
   `;
+
+  document.querySelector('[data-course="tohna1"]').addEventListener('click', () => {
+    state.course = { id: 'tohna1', name: 'תוכנה 1' };
+    showBatchModal();
+  });
+  const addBtn = document.getElementById('btn-add-course-card');
+  if (addBtn) addBtn.addEventListener('click', () => {
+    toast('העלאת PDF — בקרוב! פיצ\'ר זה יופעל בשלב הבא.', '');
+  });
+  const topAddBtn = document.getElementById('btn-add-course');
+  if (topAddBtn) topAddBtn.addEventListener('click', () => {
+    toast('העלאת PDF — בקרוב! פיצ\'ר זה יופעל בשלב הבא.', '');
+  });
 }
 
-async function loadCourses() {
-  if (!supabase) return;
-  const { data, error } = await supabase
-    .from('ep_courses')
-    .select('*')
-    .eq('user_id', state.user.id)
-    .order('created_at', { ascending: false });
-  if (error) {
-    document.getElementById('courses-grid').innerHTML = `<p class="error">שגיאה: ${error.message}</p>`;
-    return;
+// ===== Batch creation modal =====
+function showBatchModal() {
+  // Inject modal
+  const wrap = document.createElement('div');
+  wrap.appendChild(tmpl('tmpl-batch-modal'));
+  document.body.appendChild(wrap.firstElementChild);
+
+  const modal = document.getElementById('batch-modal');
+  const close = () => modal.remove();
+  document.getElementById('batch-close').addEventListener('click', close);
+  document.getElementById('batch-cancel').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  // Populate exam select
+  const examSelect = document.getElementById('batch-exam');
+  examSelect.innerHTML = Data.metadata.exams
+    .map(ex => `<option value="${ex.id}">${escapeHtml(ex.label)} (${ex.questions.length} שאלות)</option>`)
+    .join('');
+
+  document.getElementById('batch-type').addEventListener('change', (e) => {
+    document.getElementById('exam-row').style.display = e.target.value === 'exam' ? '' : 'none';
+  });
+
+  // Toggle for exam mode
+  let examMode = false;
+  const toggle = document.getElementById('exam-mode-toggle');
+  toggle.addEventListener('click', () => {
+    examMode = !examMode;
+    toggle.classList.toggle('on', examMode);
+  });
+
+  document.getElementById('batch-start').addEventListener('click', () => {
+    const size = parseInt(document.getElementById('batch-size').value, 10) || 20;
+    const type = document.getElementById('batch-type').value;
+    const timer = parseInt(document.getElementById('batch-timer').value, 10) || 0;
+
+    let questions = [];
+    if (type === 'random') {
+      questions = pickRandom(Data.allQuestions(), size);
+    } else if (type === 'exam') {
+      const ex = Data.metadata.exams.find(e => e.id === examSelect.value);
+      if (!ex) return;
+      questions = pickRandom(ex.questions, size);
+    } else if (type === 'review') {
+      const rq = Progress.load(state.user.email).reviewQueue || [];
+      const all = Data.allQuestions().filter(q => rq.includes(q.id));
+      if (!all.length) {
+        toast('אין שאלות בתור החזרה. תרגל קצת ואז חזור!', '');
+        return;
+      }
+      questions = pickRandom(all, size);
+    } else if (type === 'unanswered') {
+      const seen = new Set(Progress.history(state.user.email).map(a => a.questionId));
+      const all = Data.allQuestions().filter(q => !seen.has(q.id));
+      if (!all.length) {
+        toast('עברת על כל השאלות! נסה מקבץ אקראי.', 'success');
+        return;
+      }
+      questions = pickRandom(all, size);
+    }
+
+    if (!questions.length) { toast('אין שאלות לתרגול.', 'error'); return; }
+    close();
+    startQuiz({ questions, timerSeconds: timer, examMode });
+  });
+}
+
+// ===== Quiz session =====
+function startQuiz({ questions, timerSeconds, examMode }) {
+  state.quiz = {
+    questions,
+    idx: 0,
+    timerSeconds,
+    timerStart: Date.now(),
+    examMode: !!examMode,
+    selections: {},
+    revealed: {},
+    correct: {},
+    flagged: {},
+    correctIdxByQ: {},
+    questionStartedAt: {},
+    timeUsed: {},
+    batchId: 'b_' + Date.now(),
+    startedAt: Date.now(),
+  };
+  navigate('/quiz');
+}
+
+let timerInterval = null;
+
+function renderQuiz() {
+  $app.innerHTML = '';
+  $app.appendChild(tmpl('tmpl-quiz'));
+
+  const q = state.quiz.questions[state.quiz.idx];
+  const ap = Data.publicMeta(q.id);
+  const total = state.quiz.questions.length;
+  const cur = state.quiz.idx + 1;
+
+  document.getElementById('quiz-progress-label').textContent = `שאלה ${cur} / ${total}`;
+  document.getElementById('quiz-progress-fill').style.width = Math.round((cur / total) * 100) + '%';
+  const exam = Data.metadata.exams.find(e => e.id === q.examId);
+  document.getElementById('quiz-exam-label').textContent = exam ? exam.label : 'תוכנה 1';
+  document.getElementById('quiz-q-num').innerHTML = `שאלה ${cur}<small>${exam ? ' · ' + escapeHtml(exam.label) : ''}</small>`;
+
+  // Image
+  document.getElementById('quiz-image').src = Data.imageUrl(q.image);
+
+  // Flag button
+  const flagBtn = document.getElementById('btn-flag');
+  flagBtn.classList.toggle('flagged', !!state.quiz.flagged[q.id]);
+  flagBtn.textContent = state.quiz.flagged[q.id] ? '🚩 מסומן לחזרה' : '🚩 סמן לחזרה';
+  flagBtn.addEventListener('click', () => {
+    state.quiz.flagged[q.id] = !state.quiz.flagged[q.id];
+    flagBtn.classList.toggle('flagged', state.quiz.flagged[q.id]);
+    flagBtn.textContent = state.quiz.flagged[q.id] ? '🚩 מסומן לחזרה' : '🚩 סמן לחזרה';
+    renderQuizNav();
+  });
+
+  // Answer buttons
+  const ansBar = document.getElementById('quiz-answers');
+  ansBar.innerHTML = '';
+  const numOpts = ap.numOptions || 4;
+  const labels = ap.optionLabels || [];
+  const isBinary = numOpts === 2 && labels.length === 2;
+  for (let i = 1; i <= numOpts; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'quiz-ans';
+    btn.dataset.idx = i;
+    if (isBinary) {
+      btn.classList.add('binary');
+      btn.innerHTML = `<span>${escapeHtml(labels[i - 1])}</span>`;
+    } else {
+      btn.innerHTML = `<span class="num">${i}</span>${labels[i - 1] ? `<span>${escapeHtml(labels[i - 1])}</span>` : ''}`;
+    }
+    btn.addEventListener('click', () => selectAnswer(i));
+    ansBar.appendChild(btn);
   }
-  state.courses = data || [];
-  const grid = document.getElementById('courses-grid');
-  if (!state.courses.length) {
-    grid.innerHTML = `
-      <div style="grid-column:1/-1;text-align:center;padding:60px 20px;background:white;border-radius:16px;border:2px dashed var(--border-strong);">
-        <div style="font-size:48px;margin-bottom:16px;">📚</div>
-        <h3 style="font-size:22px;margin:0 0 8px;">עוד אין לך קורסים</h3>
-        <p style="color:var(--text-2);margin:0 0 20px;">צור את הקורס הראשון שלך והעלה את המבחן הראשון</p>
-        <button class="btn btn-primary" onclick="document.getElementById('btn-new-course').click()">+ קורס חדש</button>
+  refreshAnswerVisual();
+
+  // Reveal button (hidden in exam mode)
+  const revealBtn = document.getElementById('btn-reveal');
+  revealBtn.classList.toggle('hidden', state.quiz.examMode);
+  revealBtn.addEventListener('click', revealSolution);
+
+  // Nav buttons
+  const prevBtn = document.getElementById('btn-prev');
+  prevBtn.disabled = state.quiz.idx === 0;
+  prevBtn.addEventListener('click', () => navQuiz(-1));
+  document.getElementById('btn-next').addEventListener('click', () => navQuiz(1));
+  document.getElementById('btn-quit').addEventListener('click', () => {
+    if (confirm('לסיים את המקבץ? התקדמות תישמר.')) endQuiz();
+  });
+
+  // Timer
+  const timerWrap = document.getElementById('quiz-timer-wrap');
+  if (state.quiz.timerSeconds > 0) {
+    timerWrap.classList.remove('hidden');
+    startTimerTick();
+  } else {
+    timerWrap.classList.add('hidden');
+  }
+
+  // Track question start time
+  if (!state.quiz.questionStartedAt[q.id]) state.quiz.questionStartedAt[q.id] = Date.now();
+
+  // Show solution if already revealed (and not in exam mode)
+  if (state.quiz.revealed[q.id] && !state.quiz.examMode) showSolutionPanel(q);
+
+  renderQuizNav();
+}
+
+function refreshAnswerVisual() {
+  const q = state.quiz.questions[state.quiz.idx];
+  const sel = state.quiz.selections[q.id];
+  const revealed = state.quiz.revealed[q.id] && !state.quiz.examMode;
+  const correctIdx = state.quiz.correctIdxByQ[q.id];
+  document.querySelectorAll('.quiz-ans').forEach(b => {
+    const i = parseInt(b.dataset.idx, 10);
+    b.classList.remove('selected', 'correct', 'wrong');
+    if (sel === i) b.classList.add('selected');
+    if (revealed) {
+      if (correctIdx === i) b.classList.add('correct');
+      else if (sel === i && correctIdx !== i) b.classList.add('wrong');
+    }
+  });
+}
+
+function renderQuizNav() {
+  const grid = document.getElementById('quiz-nav-grid');
+  grid.innerHTML = '';
+  state.quiz.questions.forEach((qq, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'nav-cell';
+    cell.textContent = i + 1;
+    if (i === state.quiz.idx) cell.classList.add('current');
+    else if (state.quiz.revealed[qq.id] && !state.quiz.examMode) {
+      const c = state.quiz.correct[qq.id];
+      cell.classList.add(c ? 'correct' : 'wrong');
+    } else if (state.quiz.selections[qq.id] != null) {
+      cell.classList.add('answered');
+    }
+    if (state.quiz.flagged[qq.id]) cell.classList.add('flagged');
+    cell.addEventListener('click', () => jumpToQuestion(i));
+    grid.appendChild(cell);
+  });
+}
+
+async function jumpToQuestion(target) {
+  if (target === state.quiz.idx) return;
+  // Auto-save if needed
+  saveCurrentSelectionAsAttempt();
+  state.quiz.idx = target;
+  renderQuiz();
+}
+
+function selectAnswer(i) {
+  const q = state.quiz.questions[state.quiz.idx];
+  if (state.quiz.revealed[q.id] && !state.quiz.examMode) return;
+  state.quiz.selections[q.id] = i;
+  refreshAnswerVisual();
+  renderQuizNav();
+}
+
+function revealSolution() {
+  if (state.quiz.examMode) return; // disabled in exam mode
+  const q = state.quiz.questions[state.quiz.idx];
+  if (state.quiz.revealed[q.id]) return;
+  const data = Data.reveal(q.id);
+  state.quiz.revealed[q.id] = true;
+  state.quiz.correctIdxByQ[q.id] = data.correctIdx;
+  const sel = state.quiz.selections[q.id];
+  state.quiz.correct[q.id] = sel === data.correctIdx;
+  refreshAnswerVisual();
+  showSolutionPanel(q);
+  renderQuizNav();
+  // Save attempt
+  const tsec = Math.round((Date.now() - state.quiz.questionStartedAt[q.id]) / 1000);
+  state.quiz.timeUsed[q.id] = tsec;
+  Progress.recordAttempt(state.user.email, {
+    questionId: q.id,
+    selectedIdx: sel ?? null,
+    isCorrect: state.quiz.correct[q.id],
+    revealed: true,
+    timeSeconds: tsec,
+    batchId: state.quiz.batchId,
+  });
+}
+
+function showSolutionPanel(q, dataParam) {
+  const panel = document.getElementById('solution-panel');
+  panel.classList.remove('hidden');
+  const data = dataParam || Data.reveal(q.id);
+  const ap = Data.publicMeta(q.id);
+  const exp = data.explanation;
+  const exam = Data.metadata.exams.find(e => e.id === q.examId);
+  const labels = ap.optionLabels || [];
+  const numOpts = ap.numOptions || 4;
+  const userSel = state.quiz.selections[q.id];
+
+  let html = '';
+  if (exam) html += `<div class="solution-source">📍 ${escapeHtml(exam.label)} · שאלה ${escapeHtml(q.section)}</div>`;
+  if (data.topic) html += `<div class="solution-topic">📌 ${escapeHtml(data.topic)}</div>`;
+  if (exp?.general) {
+    html += `<div class="solution-general"><strong>הסבר כללי:</strong>${renderExplanation(exp.general)}</div>`;
+  }
+  for (let i = 1; i <= numOpts; i++) {
+    const isCorrect = i === data.correctIdx;
+    const isUserSel = userSel === i;
+    const optExp = (exp?.options || []).find(o => o.idx === i);
+    const labelTxt = labels[i - 1] || `אפשרות ${i}`;
+    const expTxt = optExp?.explanation || (isCorrect ? 'זו התשובה הנכונה.' : 'זו אינה התשובה הנכונה.');
+    const cls = ['opt-explain', isCorrect ? 'correct' : 'wrong'];
+    if (isUserSel) cls.push('user-selected');
+    html += `
+      <div class="${cls.join(' ')}">
+        <span class="opt-num">${i}.</span><span class="opt-label">${escapeHtml(labelTxt)}${isUserSel && !isCorrect ? ' — הבחירה שלך' : ''}${isUserSel && isCorrect ? ' ← הבחירה הנכונה שלך!' : ''}</span>
+        <div>${renderExplanation(expTxt)}</div>
       </div>
     `;
+  }
+  if (!exp) {
+    html += `<p class="muted" style="margin-top:12px;">הסבר מפורט לשאלה זו טרם נכתב.</p>`;
+  }
+  document.getElementById('solution-content').innerHTML = html;
+}
+
+function saveCurrentSelectionAsAttempt() {
+  const q = state.quiz.questions[state.quiz.idx];
+  const sel = state.quiz.selections[q.id];
+  if (sel == null) return;
+  if (state.quiz.revealed[q.id]) return; // already saved
+  const data = Data.reveal(q.id);
+  state.quiz.correctIdxByQ[q.id] = data.correctIdx;
+  state.quiz.correct[q.id] = sel === data.correctIdx;
+  state.quiz.revealed[q.id] = true; // mark internally as decided
+  const tsec = Math.round((Date.now() - state.quiz.questionStartedAt[q.id]) / 1000);
+  state.quiz.timeUsed[q.id] = tsec;
+  Progress.recordAttempt(state.user.email, {
+    questionId: q.id,
+    selectedIdx: sel,
+    isCorrect: state.quiz.correct[q.id],
+    revealed: false,
+    timeSeconds: tsec,
+    batchId: state.quiz.batchId,
+  });
+}
+
+function navQuiz(delta) {
+  saveCurrentSelectionAsAttempt();
+  const newIdx = state.quiz.idx + delta;
+  if (newIdx < 0) return;
+  if (newIdx >= state.quiz.questions.length) return endQuiz();
+  state.quiz.idx = newIdx;
+  renderQuiz();
+}
+
+function startTimerTick() {
+  if (timerInterval) clearInterval(timerInterval);
+  const total = state.quiz.timerSeconds;
+  const start = state.quiz.timerStart;
+  const wrap = document.getElementById('quiz-timer-wrap');
+  function tick() {
+    const elapsed = Math.floor((Date.now() - start) / 1000);
+    const remain = Math.max(0, total - elapsed);
+    const mm = Math.floor(remain / 60);
+    const ss = remain % 60;
+    const el = document.getElementById('quiz-timer');
+    if (!el) { clearInterval(timerInterval); return; }
+    el.textContent = `${mm}:${ss.toString().padStart(2, '0')}`;
+    if (remain < 60) wrap?.classList.add('danger'); else wrap?.classList.remove('danger');
+    if (remain === 0) {
+      clearInterval(timerInterval);
+      toast('הזמן נגמר! עוברים לסיכום.', '');
+      setTimeout(endQuiz, 800);
+    }
+  }
+  tick();
+  timerInterval = setInterval(tick, 1000);
+}
+
+function endQuiz() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  saveCurrentSelectionAsAttempt();
+
+  // Compute final correctness for ALL questions (need to know in exam mode too)
+  state.quiz.questions.forEach(qq => {
+    if (state.quiz.correctIdxByQ[qq.id] == null) {
+      const data = Data.reveal(qq.id);
+      state.quiz.correctIdxByQ[qq.id] = data.correctIdx;
+      const sel = state.quiz.selections[qq.id];
+      state.quiz.correct[qq.id] = sel === data.correctIdx;
+    }
+  });
+
+  let correct = 0, wrong = 0, revealed = 0, skipped = 0;
+  for (const qq of state.quiz.questions) {
+    if (state.quiz.selections[qq.id] == null) skipped++;
+    else if (state.quiz.examMode) {
+      // In exam mode, "revealed" doesn't apply mid-batch — count by correctness
+      if (state.quiz.correct[qq.id]) correct++;
+      else wrong++;
+    } else if (state.quiz.revealed[qq.id] && state.quiz.timeUsed[qq.id] != null && !state.quiz.correct[qq.id]) {
+      // Was revealed via the reveal button OR auto-saved as wrong
+      if (state.quiz.correct[qq.id]) correct++;
+      else wrong++;
+    } else if (state.quiz.correct[qq.id]) {
+      correct++;
+    } else {
+      wrong++;
+    }
+  }
+
+  const batchSummary = {
+    batchId: state.quiz.batchId,
+    size: state.quiz.questions.length,
+    correct, wrong, revealed, skipped,
+    examMode: state.quiz.examMode,
+    qids: state.quiz.questions.map(q => q.id),
+    selections: { ...state.quiz.selections },
+    correctIdxByQ: { ...state.quiz.correctIdxByQ },
+    correctMap: { ...state.quiz.correct },
+    startedAt: state.quiz.startedAt,
+    endedAt: Date.now(),
+  };
+  Progress.saveBatch(state.user.email, batchSummary);
+  state.lastBatch = batchSummary;
+  navigate('/summary');
+}
+
+// ===== Render: Summary =====
+function renderSummary() {
+  if (!state.lastBatch) return navigate('/dashboard');
+  $app.innerHTML = '';
+  $app.appendChild(tmpl('tmpl-summary'));
+
+  const b = state.lastBatch;
+  const score = Math.round((b.correct / b.size) * 100);
+  document.getElementById('summary-score-num').textContent = score + '%';
+
+  // Emoji + title based on score
+  let emoji = '🎉', title = 'מצוין!';
+  if (score >= 90) { emoji = '🏆'; title = 'מושלם!'; }
+  else if (score >= 75) { emoji = '🎯'; title = 'מצוין!'; }
+  else if (score >= 60) { emoji = '👍'; title = 'יפה מאוד!'; }
+  else if (score >= 40) { emoji = '💪'; title = 'יש מה לתרגל'; }
+  else { emoji = '📚'; title = 'בוא נלמד מהטעויות'; }
+  document.getElementById('summary-emoji').textContent = emoji;
+  document.getElementById('summary-title').textContent = title;
+  document.getElementById('summary-sub').textContent = `${b.correct} מתוך ${b.size} שאלות נכונות${b.examMode ? ' · מצב מבחן' : ''}`;
+
+  document.getElementById('summary-stats').innerHTML = `
+    <div class="stat-card success"><div class="label">נכון</div><div class="value">${b.correct}</div></div>
+    <div class="stat-card danger"><div class="label">לא נכון</div><div class="value">${b.wrong}</div></div>
+    <div class="stat-card warn"><div class="label">דילגתי</div><div class="value">${b.skipped}</div></div>
+    <div class="stat-card brand"><div class="label">מספר שאלות</div><div class="value">${b.size}</div></div>
+  `;
+
+  // Pills
+  const pillsEl = document.getElementById('summary-pills');
+  pillsEl.innerHTML = '';
+  state.quiz.questions.forEach((qq, i) => {
+    const p = document.createElement('div');
+    p.className = 'q-pill';
+    if (b.selections[qq.id] == null) p.classList.add('skipped');
+    else if (b.correctMap[qq.id]) p.classList.add('correct');
+    else p.classList.add('wrong');
+    p.textContent = i + 1;
+    pillsEl.appendChild(p);
+  });
+
+  document.getElementById('btn-mistake-review').addEventListener('click', () => navigate('/review'));
+  document.getElementById('btn-summary-home').addEventListener('click', () => navigate('/dashboard'));
+
+  // If no mistakes, hide review button
+  if (b.wrong === 0 && b.skipped === 0) {
+    document.getElementById('btn-mistake-review').style.display = 'none';
+  }
+}
+
+// ===== Render: Mistake Review =====
+function renderMistakeReview() {
+  if (!state.lastBatch) return navigate('/dashboard');
+  $app.innerHTML = '';
+  $app.appendChild(tmpl('tmpl-review'));
+
+  const b = state.lastBatch;
+  // Get all questions that were wrong or skipped
+  const wrongQs = state.quiz.questions.filter(q => {
+    const sel = b.selections[q.id];
+    return sel == null || !b.correctMap[q.id];
+  });
+
+  if (!wrongQs.length) {
+    $app.innerHTML = '<div class="loader-screen"><div><h2>אין טעויות לסקור! 🎉</h2><p style="margin-top:14px"><a href="#/dashboard" class="btn btn-primary" data-route="/dashboard">חזרה לדשבורד</a></p></div></div>';
+    document.querySelectorAll('[data-route]').forEach(link => {
+      link.addEventListener('click', (e) => { e.preventDefault(); navigate(link.getAttribute('data-route')); });
+    });
     return;
   }
-  grid.innerHTML = state.courses.map(c => `
-    <div class="course-card" data-course-id="${c.id}">
-      <h3>${escapeHtml(c.name)}</h3>
-      <p style="color:var(--text-2);margin:0;font-size:14px;">${escapeHtml(c.description || '')}</p>
-      <div class="stats">
-        <span>📄 ${c.total_pdfs || 0} מבחנים</span>
-        <span>❓ ${c.total_questions || 0} שאלות</span>
-      </div>
-    </div>
-  `).join('');
-  grid.querySelectorAll('.course-card').forEach(card => {
-    card.onclick = () => navigate('/courses/' + card.dataset.courseId);
-  });
-  renderQuotaBar();
-}
 
-function openNewCourseModal() {
-  const div = document.createElement('div');
-  div.appendChild(tmpl('tmpl-new-course'));
-  document.body.appendChild(div);
+  let idx = 0;
 
-  const overlay = document.getElementById('modal-overlay');
-  const close = () => overlay.remove();
-  document.getElementById('btn-cancel-course').onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  function renderOne() {
+    const q = wrongQs[idx];
+    const data = Data.reveal(q.id);
+    const ap = Data.publicMeta(q.id);
+    const labels = ap.optionLabels || [];
+    const numOpts = ap.numOptions || 4;
+    const sel = b.selections[q.id];
+    const correctIdx = data.correctIdx;
+    const exam = Data.metadata.exams.find(e => e.id === q.examId);
+    const exp = data.explanation;
 
-  const form = document.getElementById('new-course-form');
-  const errEl = document.getElementById('course-error');
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    errEl.textContent = '';
-    const name = form.name.value.trim();
-    const description = form.description.value.trim();
-    const { error } = await supabase.from('ep_courses').insert({
-      user_id: state.user.id,
-      name,
-      description: description || null,
-    });
-    if (error) { errEl.textContent = error.message; return; }
-    close();
-    await loadCourses();
-  };
-}
+    document.getElementById('review-pos').textContent = `שאלה ${idx + 1} מתוך ${wrongQs.length}`;
+    document.getElementById('review-sub').textContent = sel == null ? 'שאלה שדילגת עליה' : 'שאלה שטעית בה';
 
-// ===== Course Page (placeholder for now) =====
-async function renderCoursePage(courseId) {
-  $app.innerHTML = `
-    <div class="dashboard">
-      <header class="navbar">
-        <div class="navbar-inner container">
-          <a href="/dashboard" class="logo" data-route="/dashboard">
-            <span class="logo-icon">📚</span>
-            <span class="logo-text">ExamPrep</span>
-          </a>
-          <div class="nav-cta">
-            <button class="btn btn-ghost" onclick="window.history.back()">← חזרה</button>
+    const yourLabel = sel == null ? 'דילגת' : (labels[sel - 1] || `אפשרות ${sel}`);
+    const correctLabel = labels[correctIdx - 1] || `אפשרות ${correctIdx}`;
+
+    let html = `
+      <div class="review-question-card">
+        <div class="review-meta">
+          ${exam ? `<span class="review-meta-pill exam">${escapeHtml(exam.label)} · שאלה ${escapeHtml(q.section)}</span>` : ''}
+          ${data.topic ? `<span class="review-meta-pill topic">${escapeHtml(data.topic)}</span>` : ''}
+          <span class="review-meta-pill wrong">${sel == null ? '⏭ דילגת' : '✕ טעות'}</span>
+        </div>
+        <div class="review-image">
+          <img src="${Data.imageUrl(q.image)}" alt="שאלה" />
+        </div>
+        <div class="review-answer-summary">
+          <div class="review-answer-box your-wrong">
+            <div class="label">${sel == null ? 'דילגת על השאלה' : 'הבחירה שלך'}</div>
+            <div class="value">${escapeHtml(yourLabel)}</div>
+            <div class="value-sub">${sel == null ? 'לא בחרת תשובה' : `בחרת באפשרות ${sel}`}</div>
+          </div>
+          <div class="review-answer-box correct">
+            <div class="label">התשובה הנכונה</div>
+            <div class="value">${escapeHtml(correctLabel)}</div>
+            <div class="value-sub">אפשרות ${correctIdx}</div>
           </div>
         </div>
-      </header>
-      <main class="container" style="padding:40px 20px;">
-        <h1>קורס #${escapeHtml(courseId)}</h1>
-        <p class="muted">העלאת מבחנים ותרגול - עדיין בפיתוח. הגרסה המלאה תהיה זמינה בקרוב.</p>
-        <div style="background:white;padding:40px;border-radius:16px;border:2px dashed var(--border-strong);text-align:center;margin-top:20px;">
-          <div style="font-size:48px;">🚧</div>
-          <h3>בקרוב</h3>
-          <p>פיצ'רים שיתווספו: העלאת PDF, עיבוד אוטומטי, תרגול שאלות, ניתוח דפוסים, ושאלות AI דומות.</p>
+
+        <div class="review-explanation">
+          <h4>הסבר מפורט</h4>
+          ${exp?.general ? `<div class="general">${renderExplanation(exp.general)}</div>` : ''}
+          <div class="review-options">
+            <h5>הסבר לכל אופציה:</h5>
+    `;
+    for (let i = 1; i <= numOpts; i++) {
+      const isCorrect = i === correctIdx;
+      const isUserSel = sel === i;
+      const optExp = (exp?.options || []).find(o => o.idx === i);
+      const labelTxt = labels[i - 1] || `אפשרות ${i}`;
+      const expTxt = optExp?.explanation || (isCorrect ? 'זו התשובה הנכונה.' : 'זו אינה התשובה הנכונה.');
+      const cls = ['opt-explain', isCorrect ? 'correct' : 'wrong'];
+      if (isUserSel) cls.push('user-selected');
+      html += `
+        <div class="${cls.join(' ')}">
+          <span class="opt-num">${i}.</span><span class="opt-label">${escapeHtml(labelTxt)}${isUserSel && !isCorrect ? ' — הבחירה שלך' : ''}</span>
+          <div>${renderExplanation(expTxt)}</div>
         </div>
-      </main>
-    </div>
-  `;
+      `;
+    }
+    if (!exp) html += `<p class="muted">הסבר מפורט לשאלה זו טרם נכתב.</p>`;
+    html += '</div></div></div>';
+
+    document.getElementById('review-content').innerHTML = html;
+
+    document.getElementById('review-prev').disabled = idx === 0;
+    document.getElementById('review-next').disabled = idx === wrongQs.length - 1;
+  }
+
+  document.getElementById('review-prev').addEventListener('click', () => { if (idx > 0) { idx--; renderOne(); } });
+  document.getElementById('review-next').addEventListener('click', () => { if (idx < wrongQs.length - 1) { idx++; renderOne(); } });
+  document.getElementById('review-back').addEventListener('click', () => navigate('/dashboard'));
+
+  renderOne();
 }
 
+// ===== Keyboard shortcuts (during quiz) =====
+const HEBREW_NUMS = { 'א': 1, 'ב': 2, 'ג': 3, 'ד': 4, 'ה': 5, 'ו': 6, 'ז': 7, 'ח': 8 };
+document.addEventListener('keydown', (e) => {
+  if (!state.quiz) return;
+  if (location.hash !== '#/quiz') return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key >= '1' && e.key <= '9') selectAnswer(parseInt(e.key, 10));
+  else if (HEBREW_NUMS[e.key]) selectAnswer(HEBREW_NUMS[e.key]);
+  else if (e.key === 't' || e.key === 'T' || e.key === 'ם') revealSolution();
+  else if (e.key === 'ArrowRight') navQuiz(-1);
+  else if (e.key === 'ArrowLeft') navQuiz(1);
+});
+
 // ===== Boot =====
-render();
+(function boot() {
+  state.user = Auth.current();
+  if (!location.hash) location.hash = '#/';
+  renderRoute();
+})();
