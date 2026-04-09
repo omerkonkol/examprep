@@ -103,6 +103,149 @@ const Auth = {
   },
 };
 
+// ===== Demo data seeder for the admin testing user =====
+// On first admin login, plant a realistic ~10-day learning history so all the
+// new screens (Progress, Insights, Lab) show a meaningful state immediately.
+// Idempotent: skips if progress already exists.
+const DemoSeed = {
+  KEY_FLAG: 'ep_demo_seeded_v2',
+  // Topic substrings the admin "struggles with" — generates more wrong/revealed
+  // attempts. The remaining topics get high accuracy.
+  WEAK_TOPIC_PATTERNS: [
+    /wildcard.*super/i,
+    /wildcard.*extends/i,
+    /equals.*hashcode/i,
+    /classcast/i,
+    /method overriding.*private/i,
+    /erasure/i,
+    /design pattern/i,
+  ],
+  isWeakTopic(topic) {
+    if (!topic) return false;
+    return this.WEAK_TOPIC_PATTERNS.some(re => re.test(topic));
+  },
+  shouldSeed(uid) {
+    // Re-seed when bumping the version flag.
+    return localStorage.getItem(this.KEY_FLAG + ':' + uid) !== '1';
+  },
+  markSeeded(uid) {
+    localStorage.setItem(this.KEY_FLAG + ':' + uid, '1');
+  },
+  // Build a deterministic-ish history covering ~10 days, ~70 attempts, 6 batches
+  build(uid) {
+    const allQs = Data.allQuestions();
+    if (!allQs.length) return;
+
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const attempts = [];
+    const batches = [];
+    const reviewQueue = [];
+
+    // Helper: deterministic pseudo-random based on a string seed so the
+    // same admin always sees the same demo.
+    let rngState = 0;
+    for (const ch of uid) rngState = (rngState * 31 + ch.charCodeAt(0)) & 0x7fffffff;
+    function rand() {
+      rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
+      return rngState / 0x7fffffff;
+    }
+    function pick(arr) { return arr[Math.floor(rand() * arr.length)]; }
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    // Create 6 batches over the past 10 days, getting progressively better
+    const batchPlan = [
+      { daysAgo: 10, size: 10, baselineCorrectness: 0.45 }, // first attempt - struggling
+      { daysAgo: 8,  size: 15, baselineCorrectness: 0.55 },
+      { daysAgo: 6,  size: 10, baselineCorrectness: 0.60 },
+      { daysAgo: 4,  size: 20, baselineCorrectness: 0.70 }, // exam mode
+      { daysAgo: 2,  size: 12, baselineCorrectness: 0.75 },
+      { daysAgo: 1,  size: 15, baselineCorrectness: 0.82 }, // most recent - improving!
+    ];
+
+    for (const plan of batchPlan) {
+      const batchId = `b_demo_${plan.daysAgo}_${Math.floor(rand() * 99999)}`;
+      const batchTs = now - plan.daysAgo * oneDay - Math.floor(rand() * 4 * 60 * 60 * 1000);
+      const sample = shuffle(allQs).slice(0, plan.size);
+      let correct = 0, wrong = 0;
+      const selections = {};
+      const correctIdxByQ = {};
+      const correctMap = {};
+      for (const q of sample) {
+        const reveal = Data.reveal(q.id);
+        const meta = Data.publicMeta(q.id);
+        const isWeak = DemoSeed.isWeakTopic(reveal.topic || '');
+        // Weak topics: lower correctness; strong topics: bumped up
+        const adjustedAcc = isWeak
+          ? Math.max(0.25, plan.baselineCorrectness - 0.25)
+          : Math.min(0.95, plan.baselineCorrectness + 0.15);
+        const isCorrect = rand() < adjustedAcc;
+        const numOpts = meta.numOptions || 4;
+        const correctIdx = reveal.correctIdx || 1;
+        let selectedIdx;
+        if (isCorrect) {
+          selectedIdx = correctIdx;
+          correct++;
+        } else {
+          // Pick a wrong option
+          do { selectedIdx = 1 + Math.floor(rand() * numOpts); }
+          while (selectedIdx === correctIdx && numOpts > 1);
+          wrong++;
+        }
+        const revealed = !isCorrect && rand() < 0.4; // sometimes peek at solution
+        const timeSeconds = 30 + Math.floor(rand() * 90);
+        const attemptTs = batchTs + Math.floor(rand() * 30 * 60 * 1000); // within 30min of batch start
+        attempts.push({
+          questionId: q.id,
+          selectedIdx,
+          isCorrect,
+          revealed,
+          timeSeconds,
+          batchId,
+          ts: attemptTs,
+        });
+        selections[q.id] = selectedIdx;
+        correctIdxByQ[q.id] = correctIdx;
+        correctMap[q.id] = isCorrect;
+        if (!isCorrect && !reviewQueue.includes(q.id)) reviewQueue.push(q.id);
+      }
+      batches.push({
+        batchId,
+        size: plan.size,
+        correct,
+        wrong,
+        revealed: 0,
+        skipped: 0,
+        examMode: plan.daysAgo === 4, // one batch in exam mode
+        qids: sample.map(q => q.id),
+        selections,
+        correctIdxByQ,
+        correctMap,
+        startedAt: batchTs,
+        endedAt: batchTs + 30 * 60 * 1000,
+      });
+    }
+
+    // Sort attempts chronologically
+    attempts.sort((a, b) => a.ts - b.ts);
+
+    // Persist
+    Progress.save(uid, {
+      attempts,
+      batches,
+      reviewQueue,
+    });
+    DemoSeed.markSeeded(uid);
+  },
+};
+
 // ===== Local progress storage =====
 const Progress = {
   KEY(uid) { return `ep_progress_${uid}`; },
@@ -228,7 +371,331 @@ function renderRoute() {
   if (path === '/quiz') return state.quiz ? renderQuiz() : navigate('/dashboard');
   if (path === '/summary') return renderSummary();
   if (path === '/review') return renderMistakeReview();
+  if (path === '/insights') return renderInsights(params.get('course'));
+  if (path === '/lab') return renderLab(params.get('course'));
+  if (path === '/progress') return renderProgress(params.get('course'));
   return renderLanding();
+}
+
+// ===== Course-scoped data helpers =====
+// Every analysis function below works on a *course-scoped* slice of questions
+// so the same code runs for each course the user adds in the future.
+function questionsForCourse(courseId) {
+  // Local-files phase: the only course is "tohna1" and all 85 questions belong
+  // to it. When we move to the cloud, exam.courseId will be a real FK and we'll
+  // filter on it here. The function signature is already course-aware so the
+  // analysis pipeline doesn't change.
+  if (!Data.metadata) return [];
+  return Data.metadata.exams.flatMap(e => e.questions);
+}
+function examsForCourse(courseId) {
+  if (!Data.metadata) return [];
+  return Data.metadata.exams;
+}
+function attemptsForCourse(uid, courseId) {
+  const all = Progress.history(uid);
+  // Local mode: every attempt belongs to the single course, so no filtering
+  // is required. Cloud mode will tag attempts with course_id and we'll filter
+  // here. Same for the helpers below.
+  return all;
+}
+function batchesForCourse(uid, courseId) {
+  const p = Progress.load(uid);
+  return p.batches || [];
+}
+function reviewQueueForCourse(uid, courseId) {
+  const p = Progress.load(uid);
+  return p.reviewQueue || [];
+}
+
+// ===== Topic taxonomy — normalize raw topic strings into canonical buckets =====
+// Topics in answers.json are very granular ("Method Overriding (private)",
+// "Wildcards (extends/super)", etc.). We bucket them into ~14 canonical themes
+// so the analytics show meaningful aggregates instead of 60 unique labels.
+const TOPIC_BUCKETS = [
+  { id: 'generics',     name: 'Generics & Wildcards', icon: '🧬', color: '#7c3aed', match: /generic|wildcard|<\?|extends |super /i },
+  { id: 'streams',      name: 'Streams API',          icon: '🌊', color: '#0ea5e9', match: /stream/i },
+  { id: 'overriding',   name: 'Method Overriding',    icon: '🔁', color: '#f59e0b', match: /overrid/i },
+  { id: 'overloading',  name: 'Method Overloading',   icon: '↔️', color: '#ec4899', match: /overload/i },
+  { id: 'resolution',   name: 'Method Resolution',    icon: '🎯', color: '#ef4444', match: /method resolution|resolution/i },
+  { id: 'inner',        name: 'Inner Classes',        icon: '📦', color: '#8b5cf6', match: /inner class|nested/i },
+  { id: 'exceptions',   name: 'Exceptions',           icon: '⚠️', color: '#f97316', match: /exception|try.?catch|throw/i },
+  { id: 'equals',       name: 'equals & hashCode',    icon: '🔑', color: '#10b981', match: /equals|hashcode|hashing/i },
+  { id: 'iterators',    name: 'Iterators & Iterable', icon: '🔄', color: '#06b6d4', match: /iterator|iterable/i },
+  { id: 'lambdas',      name: 'Lambdas & Functional', icon: 'λ',  color: '#3b82f6', match: /lambda|functional|predicate|bifunction|comparator/i },
+  { id: 'patterns',     name: 'Design Patterns',      icon: '🏛️', color: '#0d9488', match: /design pattern|observer|factory|bridge|singleton/i },
+  { id: 'constructors', name: 'Constructors',         icon: '🏗️', color: '#65a30d', match: /constructor/i },
+  { id: 'static',       name: 'Static / Instance',    icon: '⚡', color: '#eab308', match: /static|instance field|instance method/i },
+  { id: 'visibility',   name: 'Visibility / Access',  icon: '🔒', color: '#64748b', match: /visibility|private|public|access/i },
+  { id: 'casting',      name: 'Casting & Types',      icon: '🎭', color: '#dc2626', match: /cast|classcast|inherit/i },
+];
+function bucketsForTopic(topicStr) {
+  if (!topicStr) return [];
+  const found = TOPIC_BUCKETS.filter(b => b.match.test(topicStr));
+  return found.length ? found : [{ id: 'other', name: 'אחר', icon: '📌', color: '#94a3b8' }];
+}
+
+// ===== Pattern analysis engine =====
+// Returns an aggregate of every topic bucket: how many questions, which exams,
+// how often the user got it right/wrong, and a "focus score" combining
+// frequency × difficulty × user weakness.
+function analyzeQuestionBank(questions, attempts) {
+  const buckets = new Map(); // bucketId -> { name, icon, color, count, qids, examIds, correct, wrong, attempts, avgOptions }
+
+  for (const q of questions) {
+    const meta = Data.publicMeta(q.id);
+    const reveal = Data.reveal(q.id);
+    const topicStr = reveal.topic || '';
+    const bs = bucketsForTopic(topicStr);
+    for (const b of bs) {
+      let bucket = buckets.get(b.id);
+      if (!bucket) {
+        bucket = {
+          id: b.id, name: b.name, icon: b.icon, color: b.color,
+          count: 0, qids: new Set(), examIds: new Set(),
+          correct: 0, wrong: 0, attemptCount: 0,
+          numOptionsTotal: 0, hardOptionCount: 0,
+          rawTopics: new Set(),
+        };
+        buckets.set(b.id, bucket);
+      }
+      bucket.count++;
+      bucket.qids.add(q.id);
+      bucket.examIds.add(q.examId);
+      bucket.numOptionsTotal += (meta.numOptions || 4);
+      if ((meta.numOptions || 4) >= 6) bucket.hardOptionCount++;
+      if (topicStr) bucket.rawTopics.add(topicStr);
+    }
+  }
+
+  // Apply user attempts (latest per question wins for win/lose accounting)
+  const lastByQ = new Map();
+  for (const a of attempts) lastByQ.set(a.questionId, a);
+  for (const [qid, a] of lastByQ.entries()) {
+    const q = questions.find(qq => qq.id === qid);
+    if (!q) continue;
+    const reveal = Data.reveal(qid);
+    const bs = bucketsForTopic(reveal.topic || '');
+    for (const b of bs) {
+      const bucket = buckets.get(b.id);
+      if (!bucket) continue;
+      bucket.attemptCount++;
+      if (a.isCorrect && !a.revealed) bucket.correct++;
+      else bucket.wrong++;
+    }
+  }
+
+  // Compute derived metrics
+  const list = [...buckets.values()].map(b => {
+    const accuracy = b.attemptCount > 0 ? b.correct / b.attemptCount : null;
+    const avgOptions = b.numOptionsTotal / Math.max(1, b.count);
+    // Focus score = frequency-normalized + (1 - accuracy) weighted + difficulty weight
+    const freqWeight = b.count;
+    const weakness = accuracy == null ? 0.5 : (1 - accuracy); // unknown = neutral
+    const difficulty = (avgOptions - 3) / 5; // normalized 0..1 (3 opts → 0, 8 opts → 1)
+    const focusScore = (freqWeight * 1.5) + (weakness * 4) + (difficulty * 2);
+    return {
+      ...b,
+      qids: [...b.qids],
+      examIds: [...b.examIds],
+      rawTopics: [...b.rawTopics],
+      accuracy, avgOptions, focusScore,
+    };
+  });
+
+  list.sort((a, b) => b.count - a.count);
+  return list;
+}
+
+// ===== High-level / hard question identifier =====
+function identifyHardQuestions(questions, attempts, limit = 20) {
+  const lastByQ = new Map();
+  for (const a of attempts) lastByQ.set(a.questionId, a);
+
+  const scored = questions.map(q => {
+    const meta = Data.publicMeta(q.id);
+    const reveal = Data.reveal(q.id);
+    const numOpts = meta.numOptions || 4;
+    const lastAttempt = lastByQ.get(q.id);
+    let score = 0;
+    const reasons = [];
+    if (numOpts >= 6) { score += 4; reasons.push(`${numOpts} אופציות`); }
+    if (numOpts >= 8) { score += 2; reasons.push('8 אופציות מקסימום'); }
+    if (lastAttempt && (!lastAttempt.isCorrect || lastAttempt.revealed)) {
+      score += 5; reasons.push('טעית בעבר');
+    }
+    // Tricky topic boost
+    const topic = reveal.topic || '';
+    if (/wildcard.*super|wildcard.*extends|equals.*hashcode|classcast|method overriding.*private|erasure/i.test(topic)) {
+      score += 3; reasons.push('נושא טריקי');
+    }
+    // Never attempted = mild boost (worth seeing)
+    if (!lastAttempt) { score += 1; }
+    return { q, score, reasons, topic, numOpts };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+// ===== Per-topic mastery for the Progress page =====
+function computeTopicMastery(questions, attempts) {
+  const analysis = analyzeQuestionBank(questions, attempts);
+  return analysis
+    .map(b => ({
+      ...b,
+      mastery: b.attemptCount === 0 ? null : (b.correct / b.attemptCount),
+      coverage: b.attemptCount / Math.max(1, b.count),
+    }))
+    .sort((a, b) => {
+      // Show known weaknesses first, then unknowns, then strengths
+      if (a.mastery == null && b.mastery == null) return b.count - a.count;
+      if (a.mastery == null) return 1;
+      if (b.mastery == null) return -1;
+      return a.mastery - b.mastery;
+    });
+}
+
+// ===== Streak / time / trend =====
+function computeStreak(attempts) {
+  if (!attempts.length) return { currentStreak: 0, longestStreak: 0, daysActive: 0 };
+  // Group by local-day strings
+  const days = new Set(attempts.map(a => new Date(a.ts).toDateString()));
+  const sorted = [...days].map(d => new Date(d).getTime()).sort((a, b) => b - a);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const oneDay = 24 * 60 * 60 * 1000;
+  let currentStreak = 0;
+  let cursor = today.getTime();
+  for (const dayTs of sorted) {
+    if (dayTs === cursor) { currentStreak++; cursor -= oneDay; }
+    else if (dayTs === cursor + oneDay) { currentStreak++; cursor = dayTs - oneDay; } // grace for first hit
+    else break;
+  }
+  // Longest streak
+  let longest = 0, run = 1;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i - 1] - sorted[i] === oneDay) run++;
+    else { longest = Math.max(longest, run); run = 1; }
+  }
+  longest = Math.max(longest, run);
+  return { currentStreak, longestStreak: longest, daysActive: days.size };
+}
+function computeTotalTime(attempts) {
+  const totalSec = attempts.reduce((sum, a) => sum + (a.timeSeconds || 0), 0);
+  return {
+    totalSeconds: totalSec,
+    avgPerQuestion: attempts.length ? Math.round(totalSec / attempts.length) : 0,
+  };
+}
+function computeAccuracyTrend(attempts, windowSize = 20) {
+  if (attempts.length < windowSize) return { trend: null, recentAcc: null, oldAcc: null };
+  const recent = attempts.slice(-windowSize);
+  const older = attempts.slice(-windowSize * 2, -windowSize);
+  const recAcc = recent.filter(a => a.isCorrect && !a.revealed).length / recent.length;
+  const oldAcc = older.length ? older.filter(a => a.isCorrect && !a.revealed).length / older.length : recAcc;
+  return {
+    recentAcc: recAcc,
+    oldAcc,
+    trend: recAcc - oldAcc, // positive = improving
+  };
+}
+
+// ===== Personalized tips engine =====
+function generateTips(questions, attempts, batches, mastery) {
+  const tips = [];
+  const total = attempts.length;
+
+  if (total === 0) {
+    tips.push({
+      icon: '🚀', tone: 'info', title: 'תתחיל מאיפשהו',
+      body: 'לא תרגלת אף שאלה עדיין. הצעד הראשון הוא הכי חשוב — תפתח מקבץ קצר של 10 שאלות אקראיות ופשוט תנסה.',
+      cta: 'התחל תרגול', ctaRoute: 'practice',
+    });
+    return tips;
+  }
+
+  // Topic-based tips
+  const weakest = mastery.find(m => m.mastery != null && m.mastery < 0.5 && m.attemptCount >= 3);
+  if (weakest) {
+    tips.push({
+      icon: '🎯', tone: 'warn', title: `החולשה הכי גדולה: ${weakest.name}`,
+      body: `מתוך ${weakest.attemptCount} ניסיונות בנושא הזה, ענית נכון רק ב-${Math.round(weakest.mastery * 100)}%. תקדיש מקבץ יעודי לנושא הזה — עדיף 10 שאלות ממוקדות מאשר 50 פזורות.`,
+      cta: 'סקור את הנושא', ctaRoute: 'insights',
+    });
+  }
+
+  const strongest = mastery.find(m => m.mastery != null && m.mastery >= 0.85 && m.attemptCount >= 3);
+  if (strongest) {
+    tips.push({
+      icon: '💪', tone: 'good', title: `אתה שולט ב-${strongest.name}`,
+      body: `${Math.round(strongest.mastery * 100)}% הצלחה ב-${strongest.attemptCount} ניסיונות. אתה יכול להפסיק לתרגל את זה לזמן ולהשקיע את הזמן בנושאים החלשים יותר.`,
+    });
+  }
+
+  // Coverage tip
+  const uncovered = mastery.filter(m => m.attemptCount === 0);
+  if (uncovered.length >= 2) {
+    tips.push({
+      icon: '🗺️', tone: 'info', title: `${uncovered.length} נושאים שעוד לא נגעת בהם`,
+      body: `יש בבנק נושאים שלא ניסית אף שאלה מתוכם: ${uncovered.slice(0, 3).map(u => u.name).join(', ')}${uncovered.length > 3 ? '...' : ''}. שים לב — מבחן אמיתי יכול לחבר שאלה מכל אחד מהם.`,
+      cta: 'הצג את כל הנושאים', ctaRoute: 'insights',
+    });
+  }
+
+  // Streak tip
+  const streak = computeStreak(attempts);
+  if (streak.currentStreak >= 3) {
+    tips.push({
+      icon: '🔥', tone: 'good', title: `רצף של ${streak.currentStreak} ימים — תמשיך!`,
+      body: 'מחקרי למידה מראים שתרגול יומי קצר טוב יותר מתרגול ארוך פעם בשבוע. המוח מקבע את החומר בזמן השינה. אל תשבור את הרצף.',
+    });
+  } else if (streak.daysActive >= 2 && streak.currentStreak === 0) {
+    tips.push({
+      icon: '⏰', tone: 'warn', title: 'הפסקה ארוכה מדי',
+      body: 'לא תרגלת היום. אפילו 5 שאלות עכשיו ישמרו על העקביות. הזיכרון מתחיל להיחלש כבר אחרי יומיים בלי חזרה.',
+    });
+  }
+
+  // Trend tip
+  const trend = computeAccuracyTrend(attempts);
+  if (trend.trend != null) {
+    if (trend.trend > 0.1) {
+      tips.push({
+        icon: '📈', tone: 'good', title: 'אתה משתפר!',
+        body: `הדיוק שלך ב-20 השאלות האחרונות (${Math.round(trend.recentAcc * 100)}%) גבוה ב-${Math.round(trend.trend * 100)}% מאשר ב-20 שלפניהן. אתה בכיוון הנכון.`,
+      });
+    } else if (trend.trend < -0.1) {
+      tips.push({
+        icon: '⚠️', tone: 'warn', title: 'הדיוק שלך יורד',
+        body: `ב-20 השאלות האחרונות ענית פחות טוב מאשר קודם. אולי כדאי לעצור, לעשות סקירת טעויות מהמקבצים האחרונים, ורק אז להמשיך.`,
+      });
+    }
+  }
+
+  // Difficulty tip
+  const wrongs = attempts.filter(a => !a.isCorrect || a.revealed);
+  if (wrongs.length >= 5) {
+    tips.push({
+      icon: '🔍', tone: 'info', title: 'יש לך בנק טעויות',
+      body: `${wrongs.length} שאלות שטעית או שראית את הפתרון. תפתח מקבץ "חזרה על שאלות שטעיתי בהן" — זו הדרך המהירה ביותר לכסות חורים.`,
+      cta: 'תרגל טעויות', ctaRoute: 'practice',
+    });
+  }
+
+  // Timing tip
+  const time = computeTotalTime(attempts);
+  if (time.avgPerQuestion > 0 && time.avgPerQuestion < 25) {
+    tips.push({
+      icon: '⏱', tone: 'info', title: 'אתה ממהר',
+      body: `ממוצע ${time.avgPerQuestion} שניות לשאלה זה מהיר מאוד. בבחינה אמיתית של 90 דקות ל-30 שאלות, יש לך 3 דקות לכל שאלה. תקדיש יותר זמן לקרוא את הקוד לעומק.`,
+    });
+  } else if (time.avgPerQuestion > 180) {
+    tips.push({
+      icon: '🐢', tone: 'warn', title: 'אתה איטי בשאלות',
+      body: `ממוצע ${Math.round(time.avgPerQuestion / 60)} דקות לשאלה זה הרבה. תתרגל עם טיימר אמיתי לפעם הבאה — זה יעזור לבנות אינסטינקט.`,
+    });
+  }
+
+  return tips.slice(0, 8);
 }
 
 // ===== Render: Landing =====
@@ -403,10 +870,15 @@ function renderAuth(signupMode = false) {
 
   // Admin quick-login button
   const adminBtn = document.getElementById('admin-quick-login');
-  if (adminBtn) adminBtn.addEventListener('click', () => {
+  if (adminBtn) adminBtn.addEventListener('click', async () => {
     const user = Auth.loginAdmin();
     state.user = user;
-    toast('ברוך הבא, אדמין!', 'success');
+    // Seed demo learning history so the new screens have content immediately.
+    await Data.ensureLoaded();
+    if (DemoSeed.shouldSeed(user.email)) {
+      DemoSeed.build(user.email);
+    }
+    toast('ברוך הבא, אדמין! 📊 נטענו נתוני דמו מ-10 ימי תרגול.', 'success');
     setTimeout(() => navigate('/dashboard'), 400);
   });
 }
@@ -417,29 +889,18 @@ async function renderDashboard() {
   if (!state.user) return navigate('/login');
 
   await Data.ensureLoaded();
+
+  // For the admin user, ensure demo data is seeded so the new screens have
+  // realistic content even on the very first dashboard visit.
+  if (state.user.isAdmin && DemoSeed.shouldSeed(state.user.email)) {
+    DemoSeed.build(state.user.email);
+  }
+
   $app.innerHTML = '';
   $app.appendChild(tmpl('tmpl-dash'));
 
-  document.querySelectorAll('[data-route]').forEach(link => {
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      navigate(link.getAttribute('data-route'));
-    });
-  });
-
-  // User info
-  document.getElementById('user-name').textContent = state.user.name;
-  document.getElementById('user-avatar').textContent = (state.user.name || 'U').slice(0, 1).toUpperCase();
-  const planEl = document.getElementById('user-plan');
-  planEl.textContent = state.user.plan;
-  if (state.user.plan === 'pro' || state.user.plan === 'education') planEl.classList.add('pro');
+  wireTopbar();
   document.getElementById('dash-greet-title').textContent = `שלום ${state.user.name}! 👋`;
-
-  document.getElementById('btn-logout').addEventListener('click', () => {
-    Auth.clear();
-    state.user = null;
-    navigate('/');
-  });
 
   // Stats
   const stats = Progress.stats(state.user.email);
@@ -476,7 +937,7 @@ async function renderDashboard() {
 
   document.querySelector('[data-course="tohna1"]').addEventListener('click', () => {
     state.course = { id: 'tohna1', name: 'תוכנה 1' };
-    showBatchModal();
+    showCourseActionsModal(state.course);
   });
   const addBtn = document.getElementById('btn-add-course-card');
   if (addBtn) addBtn.addEventListener('click', () => {
@@ -485,6 +946,28 @@ async function renderDashboard() {
   const topAddBtn = document.getElementById('btn-add-course');
   if (topAddBtn) topAddBtn.addEventListener('click', () => {
     toast('העלאת PDF — בקרוב! פיצ\'ר זה יופעל בשלב הבא.', '');
+  });
+}
+
+// ===== Course actions modal =====
+function showCourseActionsModal(course) {
+  const wrap = document.createElement('div');
+  wrap.appendChild(tmpl('tmpl-course-actions'));
+  document.body.appendChild(wrap.firstElementChild);
+  const modal = document.getElementById('course-actions-modal');
+  document.getElementById('ca-title').textContent = course.name;
+  const close = () => modal.remove();
+  document.getElementById('ca-close').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  modal.querySelectorAll('.action-tile').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const action = tile.dataset.action;
+      close();
+      if (action === 'practice') showBatchModal();
+      else if (action === 'lab') navigate('/lab');
+      else if (action === 'insights') navigate('/insights');
+      else if (action === 'progress') navigate('/progress');
+    });
   });
 }
 
@@ -593,8 +1076,24 @@ function renderQuiz() {
   document.getElementById('quiz-exam-label').textContent = exam ? exam.label : 'תוכנה 1';
   document.getElementById('quiz-q-num').innerHTML = `שאלה ${cur}<small>${exam ? ' · ' + escapeHtml(exam.label) : ''}</small>`;
 
-  // Image
-  document.getElementById('quiz-image').src = Data.imageUrl(q.image);
+  // Image — or AI text/code stem
+  const imgEl = document.getElementById('quiz-image');
+  const wrap = imgEl.parentElement;
+  if (q._isAi) {
+    // Replace image with a text/code panel
+    wrap.innerHTML = `
+      <div class="ai-q-stem-card">
+        <div class="ai-q-stem-text">${escapeHtml(q._stem || '')}</div>
+        ${q._code ? `<pre class="ai-q-code"><code>${escapeHtml(q._code)}</code></pre>` : ''}
+      </div>
+    `;
+  } else {
+    // Restore image element if it was previously replaced
+    if (!imgEl.isConnected) {
+      wrap.innerHTML = '<img id="quiz-image" src="" alt="שאלה" />';
+    }
+    document.getElementById('quiz-image').src = Data.imageUrl(q.image);
+  }
 
   // Flag button
   const flagBtn = document.getElementById('btn-flag');
@@ -1026,6 +1525,668 @@ function renderMistakeReview() {
   document.getElementById('review-back').addEventListener('click', () => navigate('/dashboard'));
 
   renderOne();
+}
+
+// ===== Synthetic mock-exam generator =====
+// Builds a weighted, realistic practice exam from the existing course bank.
+// Modes:
+//   balanced — distribute questions across topics by frequency
+//   hard     — only the hardest questions in the bank
+//   weak     — only topics where the user has struggled
+//   recent   — topics the user hasn't seen in a while
+function buildMockExam(courseId, opts) {
+  const { size = 20, style = 'balanced' } = opts || {};
+  const uid = state.user.email;
+  const questions = questionsForCourse(courseId);
+  const attempts = attemptsForCourse(uid, courseId);
+  const analysis = analyzeQuestionBank(questions, attempts);
+
+  if (!questions.length) return [];
+
+  if (style === 'hard') {
+    const hard = identifyHardQuestions(questions, attempts, size * 2);
+    return pickRandom(hard.map(h => h.q), size);
+  }
+
+  if (style === 'weak') {
+    const weakBuckets = analysis.filter(b => b.accuracy != null && b.accuracy < 0.6);
+    if (!weakBuckets.length) {
+      // Fallback to hard if user has no weak buckets yet
+      return buildMockExam(courseId, { size, style: 'hard' });
+    }
+    const pool = weakBuckets.flatMap(b => b.qids);
+    const poolQs = questions.filter(q => pool.includes(q.id));
+    return pickRandom(poolQs, size);
+  }
+
+  if (style === 'recent') {
+    // Topics the user hasn't attempted in 7+ days, or never
+    const lastSeenByQ = new Map();
+    for (const a of attempts) {
+      const prev = lastSeenByQ.get(a.questionId) || 0;
+      if (a.ts > prev) lastSeenByQ.set(a.questionId, a.ts);
+    }
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const stale = questions.filter(q => {
+      const t = lastSeenByQ.get(q.id);
+      return !t || t < sevenDaysAgo;
+    });
+    return pickRandom(stale.length ? stale : questions, size);
+  }
+
+  // BALANCED: distribute slots across topic buckets proportionally to frequency
+  const totalCount = analysis.reduce((s, b) => s + b.count, 0);
+  if (totalCount === 0) return pickRandom(questions, size);
+  const slots = analysis.map(b => ({
+    bucket: b,
+    target: Math.max(1, Math.round((b.count / totalCount) * size)),
+  }));
+  // Pick from each bucket
+  const used = new Set();
+  const picked = [];
+  for (const slot of slots) {
+    if (picked.length >= size) break;
+    const pool = slot.bucket.qids.filter(id => !used.has(id));
+    const take = pickRandom(pool, slot.target);
+    for (const qid of take) {
+      used.add(qid);
+      const q = questions.find(qq => qq.id === qid);
+      if (q) picked.push(q);
+      if (picked.length >= size) break;
+    }
+  }
+  // Fill remainder if rounding left gaps
+  if (picked.length < size) {
+    const remaining = questions.filter(q => !used.has(q.id));
+    picked.push(...pickRandom(remaining, size - picked.length));
+  }
+  // Shuffle final order so the user doesn't see all "Generics" in a row
+  return pickRandom(picked, picked.length);
+}
+
+// ===== Render: Insights =====
+async function renderInsights() {
+  if (!state.user) state.user = Auth.current();
+  if (!state.user) return navigate('/login');
+  if (!state.course) state.course = { id: 'tohna1', name: 'תוכנה 1' };
+
+  await Data.ensureLoaded();
+  $app.innerHTML = '';
+  $app.appendChild(tmpl('tmpl-insights'));
+  wireTopbar();
+
+  const uid = state.user.email;
+  const courseId = state.course.id;
+  const questions = questionsForCourse(courseId);
+  const exams = examsForCourse(courseId);
+  const attempts = attemptsForCourse(uid, courseId);
+  const analysis = analyzeQuestionBank(questions, attempts);
+  const hard = identifyHardQuestions(questions, attempts, 12);
+
+  // Banner
+  const minRecommended = 3;
+  const banner = document.getElementById('insights-banner');
+  const examCount = exams.length;
+  if (examCount < minRecommended) {
+    banner.className = 'insights-banner warn';
+    banner.innerHTML = `⚠️ <strong>הניתוח יעבוד טוב יותר עם יותר מבחנים.</strong> כרגע יש בקורס "${escapeHtml(state.course.name)}" רק <strong>${examCount}</strong> מבחנים. המלצה: לפחות <strong>${minRecommended}</strong> מבחנים שונים כדי שנוכל לזהות דפוסים אמיתיים של מה שחוזר.`;
+  } else {
+    banner.className = 'insights-banner ok';
+    banner.innerHTML = `✅ <strong>${examCount} מבחנים</strong> בקורס "${escapeHtml(state.course.name)}" — מספיק כדי לזהות דפוסים אמיתיים. ${questions.length} שאלות נותחו · ${analysis.length} נושאי ליבה זוהו.`;
+  }
+
+  // Topic map
+  const topicMap = document.getElementById('topic-map');
+  const maxCount = Math.max(...analysis.map(b => b.count), 1);
+  topicMap.innerHTML = analysis.map(b => {
+    const pct = Math.round((b.count / maxCount) * 100);
+    const accPct = b.accuracy != null ? Math.round(b.accuracy * 100) : null;
+    return `
+      <div class="topic-row" style="--bar-color:${b.color}">
+        <div class="topic-row-head">
+          <span class="topic-icon">${b.icon}</span>
+          <span class="topic-name">${escapeHtml(b.name)}</span>
+          <span class="topic-meta">${b.count} שאלות · ${b.examIds.length} מבחנים${accPct != null ? ` · דיוק שלך ${accPct}%` : ' · לא תרגלת'}</span>
+        </div>
+        <div class="topic-bar"><div class="topic-bar-fill" style="width:${pct}%"></div></div>
+      </div>
+    `;
+  }).join('');
+
+  // Focus areas — top 5 by focus score
+  const focusList = [...analysis].sort((a, b) => b.focusScore - a.focusScore).slice(0, 5);
+  const focusGrid = document.getElementById('focus-grid');
+  focusGrid.innerHTML = focusList.map((b, i) => {
+    const accPct = b.accuracy != null ? Math.round(b.accuracy * 100) : null;
+    let reason = '';
+    if (b.accuracy != null && b.accuracy < 0.6) reason = `אתה מסתבך כאן (${accPct}% הצלחה)`;
+    else if (b.count >= 5) reason = `מופיע ב-${b.count} שאלות שונות`;
+    else if (b.avgOptions >= 5) reason = `שאלות עם הרבה אופציות — קושי גבוה`;
+    else reason = 'נושא מרכזי בקורס';
+    return `
+      <div class="focus-card" style="--accent:${b.color}">
+        <div class="focus-rank">#${i + 1}</div>
+        <div class="focus-icon">${b.icon}</div>
+        <h3>${escapeHtml(b.name)}</h3>
+        <p class="focus-reason">${escapeHtml(reason)}</p>
+        <div class="focus-stats">
+          <span><strong>${b.count}</strong> שאלות</span>
+          <span><strong>${b.examIds.length}</strong> מבחנים</span>
+          ${accPct != null ? `<span><strong>${accPct}%</strong> דיוק</span>` : '<span class="muted">לא תרגלת</span>'}
+        </div>
+        <button class="btn btn-soft btn-sm focus-practice" data-bucket="${b.id}">תרגל נושא זה →</button>
+      </div>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.focus-practice').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const bucketId = btn.dataset.bucket;
+      const bucket = analysis.find(b => b.id === bucketId);
+      if (!bucket) return;
+      const qs = questions.filter(q => bucket.qids.includes(q.id));
+      const picked = pickRandom(qs, Math.min(qs.length, 15));
+      startQuiz({ questions: picked, timerSeconds: 0, examMode: false });
+    });
+  });
+
+  // Hard questions
+  const hardList = document.getElementById('hard-q-list');
+  hardList.innerHTML = hard.map((h, i) => {
+    const exam = exams.find(e => e.id === h.q.examId);
+    return `
+      <div class="hard-q-row" data-qid="${h.q.id}">
+        <div class="hard-q-num">${i + 1}</div>
+        <div class="hard-q-thumb"><img src="${Data.imageUrl(h.q.image)}" alt="thumbnail" loading="lazy" /></div>
+        <div class="hard-q-info">
+          <div class="hard-q-title">${escapeHtml(h.topic || 'שאלה')}</div>
+          <div class="hard-q-meta">
+            ${exam ? `<span>📍 ${escapeHtml(exam.label)}</span>` : ''}
+            <span>${h.numOpts} אופציות</span>
+            ${h.reasons.map(r => `<span class="reason-pill">${escapeHtml(r)}</span>`).join('')}
+          </div>
+        </div>
+        <button class="btn btn-soft btn-sm hard-q-practice">תרגל →</button>
+      </div>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.hard-q-practice').forEach((btn, i) => {
+    btn.addEventListener('click', () => {
+      const q = hard[i].q;
+      startQuiz({ questions: [q], timerSeconds: 0, examMode: false });
+    });
+  });
+
+  document.getElementById('btn-practice-hard').addEventListener('click', () => {
+    startQuiz({ questions: hard.map(h => h.q), timerSeconds: 0, examMode: false });
+  });
+}
+
+// ===== Render: Lab =====
+async function renderLab() {
+  if (!state.user) state.user = Auth.current();
+  if (!state.user) return navigate('/login');
+  if (!state.course) state.course = { id: 'tohna1', name: 'תוכנה 1' };
+
+  await Data.ensureLoaded();
+  $app.innerHTML = '';
+  $app.appendChild(tmpl('tmpl-lab'));
+  wireTopbar();
+
+  const uid = state.user.email;
+  const courseId = state.course.id;
+  const questions = questionsForCourse(courseId);
+  const exams = examsForCourse(courseId);
+  const attempts = attemptsForCourse(uid, courseId);
+  const analysis = analyzeQuestionBank(questions, attempts);
+
+  // Lab card 1: Mock exam
+  let mockMode = 'learn';
+  document.querySelectorAll('.mode-pill').forEach(p => {
+    p.addEventListener('click', () => {
+      mockMode = p.dataset.mode;
+      document.querySelectorAll('.mode-pill').forEach(x => x.classList.toggle('active', x === p));
+    });
+  });
+
+  function refreshMockPreview() {
+    const size = parseInt(document.getElementById('lab-mock-size').value, 10) || 20;
+    const style = document.getElementById('lab-mock-style').value;
+    const sample = buildMockExam(courseId, { size, style });
+    const preview = document.getElementById('lab-mock-preview');
+    if (!sample.length) {
+      preview.innerHTML = '<p class="muted">אין מספיק שאלות במצב הזה. נסה סגנון אחר.</p>';
+      return;
+    }
+    // Compose a quick "what's in the exam" summary
+    const bucketCounts = new Map();
+    for (const q of sample) {
+      const bs = bucketsForTopic(Data.reveal(q.id).topic || '');
+      for (const b of bs) bucketCounts.set(b.name, (bucketCounts.get(b.name) || 0) + 1);
+    }
+    const topBuckets = [...bucketCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    preview.innerHTML = `
+      <div class="lab-preview-title">📋 תצוגה מקדימה של המבחן (${sample.length} שאלות)</div>
+      <div class="lab-preview-buckets">
+        ${topBuckets.map(([name, n]) => `<span class="lab-preview-pill">${escapeHtml(name)} ×${n}</span>`).join('')}
+      </div>
+    `;
+  }
+  document.getElementById('lab-mock-size').addEventListener('change', refreshMockPreview);
+  document.getElementById('lab-mock-style').addEventListener('change', refreshMockPreview);
+  refreshMockPreview();
+
+  document.getElementById('btn-mock-start').addEventListener('click', () => {
+    const size = parseInt(document.getElementById('lab-mock-size').value, 10) || 20;
+    const style = document.getElementById('lab-mock-style').value;
+    const timer = parseInt(document.getElementById('lab-mock-timer').value, 10) || 0;
+    const sample = buildMockExam(courseId, { size, style });
+    if (!sample.length) {
+      toast('אין מספיק שאלות לבנייה. נסה סגנון אחר.', 'error');
+      return;
+    }
+    startQuiz({ questions: sample, timerSeconds: timer, examMode: mockMode === 'exam' });
+  });
+
+  // Lab card 2: AI generator
+  document.getElementById('ai-exam-count').textContent = exams.length;
+  const topicPicker = document.getElementById('lab-topic-picker');
+  // Default-select the top 3 by focus score
+  const sortedByFocus = [...analysis].sort((a, b) => b.focusScore - a.focusScore);
+  const defaultSelected = new Set(sortedByFocus.slice(0, 3).map(b => b.id));
+  topicPicker.innerHTML = sortedByFocus.map(b => `
+    <button type="button" class="topic-chip ${defaultSelected.has(b.id) ? 'selected' : ''}" data-bucket="${b.id}" style="--accent:${b.color}">
+      <span>${b.icon}</span> ${escapeHtml(b.name)}
+    </button>
+  `).join('');
+  topicPicker.querySelectorAll('.topic-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const selectedCount = topicPicker.querySelectorAll('.topic-chip.selected').length;
+      if (chip.classList.contains('selected')) {
+        chip.classList.remove('selected');
+      } else if (selectedCount < 5) {
+        chip.classList.add('selected');
+      } else {
+        toast('אפשר לבחור עד 5 נושאים.', '');
+      }
+    });
+  });
+
+  document.getElementById('btn-ai-generate').addEventListener('click', async () => {
+    const selected = [...topicPicker.querySelectorAll('.topic-chip.selected')].map(c => {
+      const id = c.dataset.bucket;
+      const b = analysis.find(x => x.id === id);
+      return b ? b.name : id;
+    });
+    if (!selected.length) {
+      toast('בחר לפחות נושא אחד.', 'error');
+      return;
+    }
+    const count = parseInt(document.getElementById('lab-ai-count').value, 10) || 5;
+    const difficulty = document.getElementById('lab-ai-difficulty').value;
+    const btn = document.getElementById('btn-ai-generate');
+    const result = document.getElementById('ai-result');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="ai-spinner"></span> Gemini עובד... זה לוקח 10-30 שניות';
+    result.innerHTML = '';
+    try {
+      const res = await fetch('/api/lab/generate-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topics: selected,
+          count,
+          difficulty,
+          courseName: state.course.name,
+          language: 'he',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data?.reason === 'no_api_key') {
+          result.innerHTML = `
+            <div class="ai-error">
+              <strong>🔧 מפתח ה-API של Gemini עוד לא מוגדר בשרת.</strong>
+              <p>כדי להפעיל את הפיצ'ר הזה, הוסף <code>GEMINI_API_KEY</code> לקובץ ה-.env של השרת ואז הפעל מחדש. אפשר לקבל מפתח חינמי ב-aistudio.google.com/apikey.</p>
+            </div>
+          `;
+        } else {
+          result.innerHTML = `<div class="ai-error">❌ ${escapeHtml(data?.error || 'שגיאה לא ידועה')}</div>`;
+        }
+        return;
+      }
+      // Render generated questions
+      result.innerHTML = `
+        <div class="ai-success">✨ נוצרו ${data.questions.length} שאלות חדשות לחלוטין!</div>
+        <div class="ai-questions">
+          ${data.questions.map((q, i) => renderAiQuestion(q, i)).join('')}
+        </div>
+        <div class="ai-actions">
+          <button class="btn btn-primary btn-lg" id="btn-practice-ai">🎯 תרגל את כל ה-${data.questions.length} עכשיו</button>
+        </div>
+      `;
+      document.getElementById('btn-practice-ai').addEventListener('click', () => {
+        startAiQuiz(data.questions);
+      });
+    } catch (err) {
+      result.innerHTML = `<div class="ai-error">❌ שגיאת רשת: ${escapeHtml(err.message || String(err))}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '✨ צור שאלות AI';
+    }
+  });
+}
+
+function renderAiQuestion(q, i) {
+  return `
+    <div class="ai-q-card">
+      <div class="ai-q-head">
+        <span class="ai-q-num">שאלה ${i + 1}</span>
+        <span class="ai-q-topic">${escapeHtml(q.topic)}</span>
+        <span class="ai-q-diff ai-q-diff-${q.difficulty}">${q.difficulty === 'hard' ? 'קשה' : q.difficulty === 'medium' ? 'בינוני' : 'קל'}</span>
+      </div>
+      ${q.code ? `<pre class="ai-q-code"><code>${escapeHtml(q.code)}</code></pre>` : ''}
+      <div class="ai-q-stem">${escapeHtml(q.stem)}</div>
+      <ol class="ai-q-options">
+        ${q.options.map((opt, j) => `
+          <li class="${j + 1 === q.correctIdx ? 'correct' : ''}">
+            <span class="opt-num">${j + 1}</span>
+            <span>${escapeHtml(opt)}</span>
+            ${j + 1 === q.correctIdx ? '<span class="opt-mark">✓</span>' : ''}
+          </li>
+        `).join('')}
+      </ol>
+      <details class="ai-q-explain">
+        <summary>הצג פתרון מלא</summary>
+        <div class="ai-q-explain-body">
+          ${q.explanationGeneral ? `<p><strong>הסבר כללי:</strong> ${escapeHtml(q.explanationGeneral)}</p>` : ''}
+          ${q.optionExplanations?.length ? `
+            <div class="ai-q-opt-exps">
+              ${q.optionExplanations.map((e, j) => `
+                <div class="${j + 1 === q.correctIdx ? 'correct' : 'wrong'}">
+                  <strong>${j + 1}.</strong> ${escapeHtml(e || '')}
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+// Wrap AI-generated questions into a quiz session
+function startAiQuiz(aiQuestions) {
+  // Inject into Data so the existing quiz UI can render them transparently
+  Data._aiInjected = Data._aiInjected || {};
+  const wrapped = aiQuestions.map((aq, i) => {
+    const qid = `ai_${Date.now()}_${i}`;
+    // Stash answers + explanation in the Data layer so reveal() works
+    Data.answers[qid] = {
+      numOptions: 4,
+      optionLabels: aq.options,
+      correctIdx: aq.correctIdx,
+      topic: aq.topic,
+    };
+    Data.explanations[qid] = {
+      general: aq.explanationGeneral,
+      options: aq.optionExplanations.map((e, j) => ({
+        idx: j + 1,
+        isCorrect: j + 1 === aq.correctIdx,
+        explanation: e,
+      })),
+    };
+    Data._aiInjected[qid] = { stem: aq.stem, code: aq.code };
+    return {
+      id: qid,
+      examId: '__ai__',
+      section: String(i + 1),
+      orderIdx: i + 1,
+      image: null,
+      _isAi: true,
+      _stem: aq.stem,
+      _code: aq.code,
+    };
+  });
+  startQuiz({ questions: wrapped, timerSeconds: 0, examMode: false });
+}
+
+// ===== Render: Progress =====
+async function renderProgress() {
+  if (!state.user) state.user = Auth.current();
+  if (!state.user) return navigate('/login');
+  if (!state.course) state.course = { id: 'tohna1', name: 'תוכנה 1' };
+
+  await Data.ensureLoaded();
+  $app.innerHTML = '';
+  $app.appendChild(tmpl('tmpl-progress'));
+  wireTopbar();
+
+  const uid = state.user.email;
+  const courseId = state.course.id;
+  const questions = questionsForCourse(courseId);
+  const attempts = attemptsForCourse(uid, courseId);
+  const batches = batchesForCourse(uid, courseId);
+  const mastery = computeTopicMastery(questions, attempts);
+  const streak = computeStreak(attempts);
+  const time = computeTotalTime(attempts);
+  const trend = computeAccuracyTrend(attempts);
+  const tips = generateTips(questions, attempts, batches, mastery);
+
+  // Header text
+  document.getElementById('progress-greet').textContent = `היי ${state.user.name}, הנה איפה אתה עומד`;
+  document.getElementById('progress-sub').textContent = `סקירה ריאליסטית של ההתקדמות שלך בקורס "${state.course.name}" — מה למדת, איפה אתה חזק, ומה צריך עבודה.`;
+
+  // Hero stats
+  const stats = Progress.stats(uid);
+  const overallAcc = stats.total > 0 ? Math.round((stats.correct / Math.max(1, stats.unique)) * 100) : 0;
+  const coverage = Math.round((stats.unique / Math.max(1, questions.length)) * 100);
+  const heroEl = document.getElementById('progress-hero');
+  heroEl.innerHTML = `
+    <div class="progress-hero-main">
+      <div class="ph-block">
+        <div class="ph-num">${overallAcc}%</div>
+        <div class="ph-label">דיוק כללי</div>
+        <div class="ph-sub">${stats.correct} מתוך ${stats.unique} שאלות שראית</div>
+      </div>
+      <div class="ph-block">
+        <div class="ph-num">${coverage}%</div>
+        <div class="ph-label">כיסוי הבנק</div>
+        <div class="ph-sub">${stats.unique} מתוך ${questions.length} שאלות בקורס</div>
+      </div>
+      <div class="ph-block">
+        <div class="ph-num">${stats.total}</div>
+        <div class="ph-label">סך תשובות</div>
+        <div class="ph-sub">${batches.length} מקבצים שביצעת</div>
+      </div>
+      <div class="ph-block">
+        <div class="ph-num">${stats.reviewCount}</div>
+        <div class="ph-label">בתור החזרה</div>
+        <div class="ph-sub">שאלות שכדאי לחזור עליהן</div>
+      </div>
+    </div>
+    <div class="progress-hero-bar">
+      <div class="phb-label">
+        <span>כיסוי הקורס</span>
+        <strong>${stats.unique} / ${questions.length}</strong>
+      </div>
+      <div class="phb-track"><div class="phb-fill" style="width:${coverage}%"></div></div>
+    </div>
+  `;
+
+  // Streak
+  document.getElementById('streak-block').innerHTML = `
+    <div class="big-num">${streak.currentStreak}<small>ימים</small></div>
+    <div class="meta-line">
+      <span>שיא: <strong>${streak.longestStreak}</strong> ימים</span>
+      <span>סה"כ פעיל: <strong>${streak.daysActive}</strong> ימים</span>
+    </div>
+    ${streak.currentStreak >= 1 ? '<div class="badge-good">🔥 רצף פעיל</div>' : '<div class="badge-warn">לא תרגלת היום</div>'}
+  `;
+
+  // Time
+  const totalMin = Math.round(time.totalSeconds / 60);
+  const totalH = Math.floor(totalMin / 60);
+  const remMin = totalMin % 60;
+  document.getElementById('time-block').innerHTML = `
+    <div class="big-num">${totalH > 0 ? `${totalH}<small>שע'</small> ${remMin}` : totalMin}<small>${totalH > 0 ? 'דק\'' : 'דקות'}</small></div>
+    <div class="meta-line">
+      <span>ממוצע: <strong>${time.avgPerQuestion}</strong> שניות לשאלה</span>
+    </div>
+  `;
+
+  // Trend
+  if (trend.trend == null) {
+    document.getElementById('trend-block').innerHTML = `
+      <div class="big-num muted">—</div>
+      <div class="meta-line muted">תרגל לפחות 40 שאלות כדי לראות מגמה.</div>
+    `;
+  } else {
+    const arrow = trend.trend > 0.05 ? '↗' : trend.trend < -0.05 ? '↘' : '→';
+    const cls = trend.trend > 0.05 ? 'good' : trend.trend < -0.05 ? 'bad' : '';
+    document.getElementById('trend-block').innerHTML = `
+      <div class="big-num ${cls}">${arrow} ${Math.round(trend.recentAcc * 100)}%</div>
+      <div class="meta-line">
+        <span>20 אחרונות לעומת ה-20 שלפניהן: ${trend.trend > 0 ? '+' : ''}${Math.round(trend.trend * 100)}%</span>
+      </div>
+      ${trend.trend > 0.1 ? '<div class="badge-good">📈 משתפר</div>' : trend.trend < -0.1 ? '<div class="badge-warn">📉 ירידה</div>' : '<div class="badge-info">יציב</div>'}
+    `;
+  }
+
+  // Mastery grid
+  const masteryEl = document.getElementById('mastery-grid');
+  masteryEl.innerHTML = mastery.map(m => {
+    const pct = m.mastery == null ? null : Math.round(m.mastery * 100);
+    const cov = Math.round(m.coverage * 100);
+    let level = 'unknown';
+    if (m.mastery == null) level = 'unknown';
+    else if (m.mastery >= 0.85) level = 'master';
+    else if (m.mastery >= 0.65) level = 'good';
+    else if (m.mastery >= 0.4) level = 'mid';
+    else level = 'weak';
+    const levelText = {
+      master: 'שולט', good: 'טוב', mid: 'בסדר', weak: 'חלש', unknown: 'לא תרגלת',
+    }[level];
+    return `
+      <div class="mastery-card ${level}" style="--accent:${m.color}">
+        <div class="mastery-head">
+          <span class="mastery-icon">${m.icon}</span>
+          <div class="mastery-title">
+            <h4>${escapeHtml(m.name)}</h4>
+            <small>${m.count} שאלות בבנק · ${m.attemptCount} ניסיונות</small>
+          </div>
+          <span class="mastery-level">${levelText}</span>
+        </div>
+        ${pct != null ? `
+          <div class="mastery-bar">
+            <div class="mastery-bar-fill" style="width:${pct}%"></div>
+            <span class="mastery-bar-label">${pct}% דיוק</span>
+          </div>
+        ` : `
+          <div class="mastery-empty">לא ניסית עדיין שאלה מהנושא הזה</div>
+        `}
+        <div class="mastery-foot">
+          <span>כיסוי: ${cov}%</span>
+          <button class="btn btn-soft btn-sm mastery-practice" data-bucket="${m.id}">תרגל →</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.mastery-practice').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const bucketId = btn.dataset.bucket;
+      const bucket = mastery.find(b => b.id === bucketId);
+      if (!bucket) return;
+      const qs = questions.filter(q => bucket.qids.includes(q.id));
+      const picked = pickRandom(qs, Math.min(qs.length, 12));
+      startQuiz({ questions: picked, timerSeconds: 0, examMode: false });
+    });
+  });
+
+  // Recent batches
+  const recent = [...batches].reverse().slice(0, 10);
+  const batchEl = document.getElementById('recent-batches');
+  if (!recent.length) {
+    batchEl.innerHTML = '<div class="empty-state">עוד לא ביצעת מקבצי תרגול. תתחיל מהדשבורד!</div>';
+  } else {
+    batchEl.innerHTML = recent.map(b => {
+      const score = Math.round((b.correct / Math.max(1, b.size)) * 100);
+      const dt = new Date(b.endedAt || b.startedAt || Date.now());
+      const dateStr = dt.toLocaleDateString('he-IL') + ' ' + dt.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+      const cls = score >= 80 ? 'good' : score >= 60 ? 'mid' : 'bad';
+      return `
+        <div class="batch-row ${cls}">
+          <div class="batch-score">${score}%</div>
+          <div class="batch-info">
+            <div class="batch-meta">${b.size} שאלות · ${b.correct} נכון · ${b.wrong} שגוי${b.examMode ? ' · 📝 מצב מבחן' : ''}</div>
+            <div class="batch-date">${dateStr}</div>
+          </div>
+          <div class="batch-bar"><div class="batch-bar-fill" style="width:${score}%"></div></div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Tips
+  const tipsEl = document.getElementById('tips-grid');
+  if (!tips.length) {
+    tipsEl.innerHTML = '<div class="empty-state">תרגל קצת ואחזור עם המלצות אישיות.</div>';
+  } else {
+    tipsEl.innerHTML = tips.map(t => `
+      <div class="tip-card tone-${t.tone}">
+        <div class="tip-icon">${t.icon}</div>
+        <div class="tip-body">
+          <h4>${escapeHtml(t.title)}</h4>
+          <p>${escapeHtml(t.body)}</p>
+          ${t.cta ? `<button class="btn btn-soft btn-sm tip-cta" data-route="${escapeHtml(t.ctaRoute || '')}">${escapeHtml(t.cta)} →</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+    document.querySelectorAll('.tip-cta').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const r = btn.dataset.route;
+        if (r === 'practice') showBatchModal();
+        else if (r === 'insights') navigate('/insights');
+        else if (r === 'progress') navigate('/progress');
+      });
+    });
+  }
+}
+
+// ===== Shared topbar wiring =====
+function wireTopbar() {
+  document.querySelectorAll('[data-route]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const r = link.getAttribute('data-route');
+      if (r) navigate(r);
+    });
+  });
+  // User info
+  const planEl = document.getElementById('user-plan');
+  const nameEl = document.getElementById('user-name');
+  const avatarEl = document.getElementById('user-avatar');
+  if (nameEl) nameEl.textContent = state.user.name;
+  if (avatarEl) avatarEl.textContent = (state.user.name || 'U').slice(0, 1).toUpperCase();
+  if (planEl) {
+    planEl.textContent = state.user.plan;
+    if (state.user.plan === 'pro' || state.user.plan === 'education') planEl.classList.add('pro');
+  }
+  const logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn) logoutBtn.addEventListener('click', () => {
+    Auth.clear();
+    state.user = null;
+    navigate('/');
+  });
+  // Mobile nav toggle
+  const toggle = document.getElementById('topbar-mobile-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      document.querySelector('.app-topbar').classList.toggle('mobile-open');
+    });
+  }
 }
 
 // ===== Keyboard shortcuts (during quiz) =====

@@ -269,6 +269,9 @@ app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/pricing', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/courses/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/insights', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/lab', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/progress', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ===== Health check =====
 app.get('/api/health', (req, res) => {
@@ -683,6 +686,157 @@ app.post('/api/ai/generate-similar', authMiddleware, rateLimitMiddleware(AI_RATE
   res.status(501).json({
     error: 'יצירת שאלות AI עדיין בפיתוח. תחזור בקרוב!',
   });
+});
+
+// ===== Lab: Gemini-powered practice question generation =====
+// Used by the AI Lab UI in admin/local-files mode. Doesn't go through
+// Supabase auth (the admin testing path uses a localStorage mock user)
+// — instead it's protected by rate-limit only and refuses to run unless
+// GEMINI_API_KEY is set in the environment.
+app.post('/api/lab/generate-questions', rateLimitMiddleware(4), async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+  if (!apiKey) {
+    return res.status(503).json({
+      error: 'AI generation unavailable: GEMINI_API_KEY is not configured on the server.',
+      reason: 'no_api_key',
+    });
+  }
+
+  // ---- Validate input ----
+  const { topics, count, difficulty, courseName, language } = req.body || {};
+  if (!Array.isArray(topics) || topics.length === 0 || topics.length > 8) {
+    return res.status(400).json({ error: 'topics must be an array of 1-8 strings' });
+  }
+  for (const t of topics) {
+    if (typeof t !== 'string' || t.length > 120) {
+      return res.status(400).json({ error: 'each topic must be a string ≤ 120 chars' });
+    }
+  }
+  const n = Math.min(Math.max(parseInt(count, 10) || 5, 1), 10);
+  const diff = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'hard';
+  const course = (typeof courseName === 'string' && courseName.length <= 80) ? courseName : 'תוכנה 1 (Java)';
+  const lang = language === 'en' ? 'English' : 'Hebrew';
+
+  // ---- Build the prompt ----
+  const difficultyHint = {
+    easy:   'תרגול בסיסי - שאלות מבוא ברורות',
+    medium: 'שאלות אמצעיות - דורשות הבנה אך לא טריקים',
+    hard:   'שאלות ברמת מבחן אוניברסיטאי - טריקיות, דרגת קושי גבוהה, חייבות הבנה עמוקה',
+  }[diff];
+
+  const prompt = `אתה מרצה בקורס "${course}" באוניברסיטה. עליך לחבר ${n} שאלות אמריקאיות חדשות לחלוטין ברמת ${difficultyHint}.
+
+הנושאים שעליהם להתמקד (לפי תדירות החזרה במבחנים אמיתיים מהשנים האחרונות):
+${topics.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+
+דרישות פורמט (חובה):
+- כל השאלות ב${lang === 'Hebrew' ? 'עברית' : 'English'} (חוץ מקטעי קוד שיהיו ב-Java).
+- כל שאלה חייבת לכלול קטע קוד Java קצר אך מציאותי, או תרחיש קוד אמיתי.
+- 4 אופציות בדיוק לכל שאלה.
+- אופציה נכונה אחת בלבד.
+- הסבר מפורט (3-6 משפטים) למה האופציה הנכונה נכונה ולמה כל אחת מהשגויות שגויה.
+- אסור לחזור על שאלה מוכרת מספר לימוד או מהאינטרנט - חבר חדשות.
+- אסור לחזור על אותה שאלה פעמיים בתוך הסט.
+
+החזר אך ורק JSON תקין בפורמט הבא, ללא שום טקסט נוסף, ללא markdown wrapper, ללא הסברים מחוץ ל-JSON:
+{
+  "questions": [
+    {
+      "topic": "Generics + Wildcards",
+      "difficulty": "hard",
+      "code": "List<? extends Number> nums = new ArrayList<Integer>();\\nnums.add(5);",
+      "stem": "מה יקרה כאשר מנסים להריץ את הקוד?",
+      "options": [
+        "מתקמפל ומדפיס 5",
+        "שגיאת קומפילציה: לא ניתן להוסיף איברים ל-? extends",
+        "ClassCastException בזמן ריצה",
+        "מתקמפל אך לא מדפיס דבר"
+      ],
+      "correctIdx": 2,
+      "explanationGeneral": "הסבר כללי...",
+      "optionExplanations": [
+        "הסבר אופציה 1...",
+        "הסבר אופציה 2...",
+        "הסבר אופציה 3...",
+        "הסבר אופציה 4..."
+      ]
+    }
+  ]
+}`;
+
+  // ---- Call Gemini ----
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+    const geminiRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.85,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+          responseMimeType: 'application/json',
+        },
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!geminiRes.ok) {
+      const txt = await geminiRes.text().catch(() => '');
+      console.error('[lab] Gemini HTTP', geminiRes.status, txt.slice(0, 400));
+      return res.status(502).json({ error: 'Gemini API error' });
+    }
+    const payload = await geminiRes.json();
+    const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!text) return res.status(502).json({ error: 'Empty Gemini response' });
+
+    // Strip any accidental markdown fence
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    let parsed;
+    try { parsed = JSON.parse(cleaned); }
+    catch (e) {
+      console.error('[lab] JSON parse failed:', e.message, 'text:', cleaned.slice(0, 400));
+      return res.status(502).json({ error: 'Gemini returned invalid JSON' });
+    }
+
+    // ---- Validate structure ----
+    if (!parsed?.questions || !Array.isArray(parsed.questions)) {
+      return res.status(502).json({ error: 'Malformed response from Gemini' });
+    }
+    const safe = parsed.questions
+      .filter(q => q && typeof q.stem === 'string' && Array.isArray(q.options) && q.options.length === 4)
+      .map((q, i) => ({
+        id: `gemini_${Date.now()}_${i}`,
+        topic: String(q.topic || topics[0] || '').slice(0, 120),
+        difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : diff,
+        code: typeof q.code === 'string' ? q.code.slice(0, 4000) : '',
+        stem: String(q.stem).slice(0, 1000),
+        options: q.options.map(o => String(o).slice(0, 500)),
+        correctIdx: Math.min(Math.max(parseInt(q.correctIdx, 10) || 1, 1), 4),
+        explanationGeneral: typeof q.explanationGeneral === 'string' ? q.explanationGeneral.slice(0, 4000) : '',
+        optionExplanations: Array.isArray(q.optionExplanations)
+          ? q.optionExplanations.slice(0, 4).map(e => String(e || '').slice(0, 2000))
+          : [],
+      }))
+      .slice(0, n);
+
+    if (!safe.length) {
+      return res.status(502).json({ error: 'No valid questions generated' });
+    }
+
+    res.json({ ok: true, questions: safe, model });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      return res.status(504).json({ error: 'Gemini request timed out' });
+    }
+    console.error('[lab] fatal:', err?.message || err);
+    res.status(500).json({ error: 'AI generation failed' });
+  }
 });
 
 // ===== Account deletion (GDPR + Israeli amendment 13 right-to-be-forgotten) =====

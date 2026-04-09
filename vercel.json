@@ -10,6 +10,9 @@
     { "source": "/quiz", "destination": "/public/index.html" },
     { "source": "/summary", "destination": "/public/index.html" },
     { "source": "/review", "destination": "/public/index.html" },
+    { "source": "/insights", "destination": "/public/index.html" },
+    { "source": "/lab", "destination": "/public/index.html" },
+    { "source": "/progress", "destination": "/public/index.html" },
     { "source": "/courses/(.*)", "destination": "/public/index.html" }
   ],
   "headers": [
