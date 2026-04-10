@@ -58,10 +58,12 @@ const Data = {
         if (!examMap[q.exam_id]) {
           examMap[q.exam_id] = { id: examId, label: `מבחן ${q.exam_id}`, questions: [] };
         }
+        const isTextOnly = q.image_path === 'text-only';
         examMap[q.exam_id].questions.push({
           id: qid, examId, image: q.image_path,
           section: String(q.question_number),
           _isCloud: true,
+          ...(isTextOnly && { _isAi: true, _stem: q.general_explanation || `שאלה ${q.question_number}` }),
         });
         answers[qid] = {
           numOptions: q.num_options || 4,
@@ -258,25 +260,29 @@ const Auth = {
       options: { data: { username: name } },
     });
     if (error) {
-      if (error.message.includes('already registered')) throw new Error('כתובת האימייל כבר רשומה במערכת');
+      if (error.message.includes('already registered')) throw new Error('שגיאה בהרשמה. אם כבר יש לך חשבון, נסה להתחבר.');
       throw new Error(error.message);
     }
     // Create profile row
     if (data.user) {
+      const trialExpiry = new Date(Date.now() + 14 * 86400000).toISOString();
       await sb.from('profiles').upsert({
         id: data.user.id,
         email,
         display_name: name,
-        plan: 'free',
+        plan: 'trial',
         is_admin: false,
+        trial_started_at: new Date().toISOString(),
+        plan_expires_at: trialExpiry,
       }, { onConflict: 'id' });
     }
     const u = {
       id: data.user?.id,
       email,
       name: name || email.split('@')[0],
-      plan: 'free',
+      plan: 'trial',
       isAdmin: false,
+      daysLeft: 14,
     };
     this.save(u);
     return u;
@@ -287,7 +293,7 @@ const Auth = {
     if (!sb) throw new Error('מערכת האימות לא זמינה כרגע');
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin + '/#/dashboard' },
+      options: { redirectTo: window.location.origin + '/' },
     });
     if (error) throw new Error(error.message);
   },
@@ -306,12 +312,18 @@ const Auth = {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { this.clear(); return null; }
     const profile = await this._fetchProfile(session.user.id);
+    let daysLeft = null;
+    if (profile?.plan === 'trial' && profile?.plan_expires_at) {
+      daysLeft = Math.max(0, Math.ceil((new Date(profile.plan_expires_at) - Date.now()) / 86400000));
+    }
     const u = {
       id: session.user.id,
       email: session.user.email,
       name: profile?.display_name || session.user.user_metadata?.username || session.user.email.split('@')[0],
       plan: profile?.plan || 'free',
       isAdmin: profile?.is_admin || false,
+      daysLeft,
+      trialUsed: profile?.trial_used || false,
     };
     this.save(u);
     return u;
@@ -560,7 +572,8 @@ const Progress = {
 
 // ===== Plans / quotas (mirrors server.mjs intent) =====
 const PLANS = {
-  free: { name: 'חינמי', canPractice: true, canAI: false, maxCourses: 1 },
+  trial: { name: 'Trial (14 ימים)', canPractice: true, canAI: true, maxCourses: 2 },
+  free: { name: 'חינמי (בטל)', canPractice: true, canAI: false, maxCourses: 0 },
   basic: { name: 'Basic', canPractice: true, canAI: true, maxCourses: 5 },
   pro: { name: 'Pro', canPractice: true, canAI: true, maxCourses: -1 },
   education: { name: 'Education', canPractice: true, canAI: true, maxCourses: -1 },
@@ -619,6 +632,53 @@ function renderExplanation(text) {
   return out;
 }
 
+// ===== Trial countdown banner =====
+function renderTrialBanner(container) {
+  if (!container || !state.user) return;
+  const plan = state.user.plan;
+  if (plan === 'trial') {
+    const daysLeft = state.user.daysLeft != null ? state.user.daysLeft : 14;
+    const pct = Math.round((daysLeft / 14) * 100);
+    const urgency = daysLeft <= 3 ? 'urgent' : (daysLeft <= 7 ? 'warning' : '');
+    const banner = document.createElement('div');
+    banner.className = `trial-banner ${urgency}`;
+    banner.innerHTML = `
+      <div class="trial-banner-content">
+        <div class="trial-banner-text">
+          <strong>Trial</strong> — נותרו ${daysLeft} ימים מתוך 14
+        </div>
+        <div class="trial-banner-bar">
+          <div class="trial-banner-fill" style="width:${pct}%"></div>
+        </div>
+        <a href="#pricing" class="btn btn-sm btn-primary trial-banner-cta" data-route="/">שדרג ל-Basic ₪19.90/חודש</a>
+      </div>
+    `;
+    container.prepend(banner);
+    banner.querySelector('.trial-banner-cta')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      location.hash = '#pricing';
+      navigate('/');
+    });
+  } else if (plan === 'free' && state.user.trialUsed) {
+    const banner = document.createElement('div');
+    banner.className = 'trial-banner urgent';
+    banner.innerHTML = `
+      <div class="trial-banner-content">
+        <div class="trial-banner-text">
+          <strong>ה-Trial נגמר</strong> — שדרג כדי להמשיך להעלות PDFs וליצור חומרי לימוד
+        </div>
+        <a href="#pricing" class="btn btn-sm btn-primary trial-banner-cta" data-route="/">שדרג עכשיו</a>
+      </div>
+    `;
+    container.prepend(banner);
+    banner.querySelector('.trial-banner-cta')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      location.hash = '#pricing';
+      navigate('/');
+    });
+  }
+}
+
 // ===== Router =====
 function getRoute() {
   const hash = location.hash || '#/';
@@ -628,6 +688,31 @@ function navigate(path) {
   location.hash = '#' + path;
 }
 window.addEventListener('hashchange', renderRoute);
+
+// Global event delegation for [data-route] links — always works regardless
+// of whether individual render functions attach their own handlers.
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('[data-route]');
+  if (!link) return;
+  const route = link.getAttribute('data-route');
+  if (route) {
+    e.preventDefault();
+    navigate(route);
+  }
+});
+
+// Global smooth-scroll for in-page anchors (href="#section")
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('a[href^="#"]');
+  if (!link || link.hasAttribute('data-route')) return;
+  const href = link.getAttribute('href');
+  if (!href || href.length < 2 || href.startsWith('#/')) return;
+  const target = document.getElementById(href.slice(1));
+  if (target) {
+    e.preventDefault();
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
 
 // Helper: set state.course from a courseId (used by the router)
 function setCourseContext(courseId) {
@@ -1061,6 +1146,14 @@ function renderLanding() {
     });
   }
 
+  // Contact form — float select label when option selected
+  const contactSubject = document.getElementById('contact-subject');
+  if (contactSubject) {
+    contactSubject.addEventListener('change', () => {
+      contactSubject.classList.toggle('has-value', contactSubject.value !== '');
+    });
+  }
+
   // Contact form
   const contactForm = document.getElementById('contact-form');
   if (contactForm) {
@@ -1084,13 +1177,14 @@ function renderLanding() {
         });
         if (!res.ok) throw new Error('send failed');
         contactForm.reset();
+        if (contactSubject) contactSubject.classList.remove('has-value');
         const success = document.getElementById('contact-success');
         if (success) {
           success.hidden = false;
           setTimeout(() => { success.hidden = true; }, 5000);
         }
       } catch {
-        alert('שגיאה בשליחה. אפשר לשלוח ישירות ל-hi@examprep.app');
+        alert('שגיאה בשליחה. אפשר לשלוח ישירות ל-support@try-examprep.com');
       } finally {
         btn.disabled = false;
         btn.innerHTML = orig;
@@ -1260,11 +1354,34 @@ function renderAuth(signupMode = false) {
     applyMode();
   }));
 
+  // Real-time email validation hint
+  const emailInput = document.getElementById('auth-email');
+  const emailHint  = document.getElementById('email-hint');
+  const EMAIL_RE   = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+  function validateEmailField() {
+    if (!emailInput || !emailHint) return;
+    const v = emailInput.value.trim();
+    if (!v) { emailHint.style.display = 'none'; return; }
+    const ok = EMAIL_RE.test(v) && !v.includes('..');
+    emailHint.style.display = 'flex';
+    emailHint.textContent  = ok ? '✓ כתובת נראית תקינה' : '✗ כתובת אימייל לא תקינה';
+    emailHint.className    = 'email-hint ' + (ok ? 'hint-ok' : 'hint-err');
+  }
+  if (emailInput) {
+    emailInput.addEventListener('input', validateEmailField);
+    emailInput.addEventListener('blur',  validateEmailField);
+  }
+
   // Password show/hide (works for both password fields)
+  const EYE_OPEN = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  const EYE_OFF  = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
   function bindEyeToggle(btn, input) {
     if (!btn || !input) return;
     btn.addEventListener('click', () => {
-      input.type = input.type === 'password' ? 'text' : 'password';
+      const nowShowing = input.type === 'password';
+      input.type = nowShowing ? 'text' : 'password';
+      btn.innerHTML = nowShowing ? EYE_OFF : EYE_OPEN;
+      btn.setAttribute('aria-label', nowShowing ? 'הסתר סיסמה' : 'הצג סיסמה');
     });
   }
   bindEyeToggle(togglePass, passInput);
@@ -1312,7 +1429,7 @@ function renderAuth(signupMode = false) {
   if (forgotLink) forgotLink.addEventListener('click', async (e) => {
     e.preventDefault();
     const email = document.getElementById('auth-email').value.trim();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!email || !/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email) || email.includes('..')) {
       toast('הזן כתובת אימייל תקינה בשדה למעלה ואז לחץ שוב.', '');
       return;
     }
@@ -1348,7 +1465,7 @@ function renderAuth(signupMode = false) {
     errEl.textContent = '';
     errEl.classList.remove('success');
     if (!email || !password) { errEl.textContent = 'חובה למלא אימייל וסיסמה'; return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'כתובת האימייל לא תקינה'; return; }
+    if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email) || email.includes('..')) { errEl.textContent = 'כתובת האימייל לא תקינה'; return; }
     if (mode === 'signup') {
       if (password.length < 8) { errEl.textContent = 'סיסמה חייבת להיות לפחות 8 תווים'; return; }
       if (!/[A-Za-z]/.test(password)) { errEl.textContent = 'סיסמה חייבת להכיל לפחות אות אחת'; return; }
@@ -1408,6 +1525,9 @@ async function renderDashboard() {
 
   wireTopbar();
   document.getElementById('dash-greet-title').textContent = `שלום ${state.user.name}`;
+
+  // Trial countdown banner
+  renderTrialBanner(document.querySelector('.app-content'));
 
   // Stats — aggregate from the built-in course for now
   const stats = Progress.stats(state.user.email, 'tohna1');
@@ -1535,6 +1655,9 @@ async function renderCourseDashboard() {
   $app.appendChild(tmpl('tmpl-course-dash'));
   wireTopbar();
 
+  // Trial countdown banner
+  renderTrialBanner(document.querySelector('.app-content'));
+
   // Header
   const headerEl = document.getElementById('cd-header');
   headerEl.style.setProperty('--course-color', state.course.color || '#3b82f6');
@@ -1584,7 +1707,14 @@ async function renderCourseDashboard() {
   `;
 
   // Quick actions
+  const isUserCourse = !state.course.isBuiltin;
   document.getElementById('cd-actions').innerHTML = `
+    ${isUserCourse ? `
+    <button class="action-tile action-tile-upload" data-action="upload">
+      <span class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+      <strong>העלאת מבחן PDF</strong>
+      <small>מבחן + פתרון או סיכום</small>
+    </button>` : ''}
     <button class="action-tile action-tile-featured" data-action="practice">
       <span class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>
       <strong>תרגול חופשי</strong>
@@ -1615,7 +1745,8 @@ async function renderCourseDashboard() {
   document.querySelectorAll('#cd-actions .action-tile').forEach(tile => {
     tile.addEventListener('click', () => {
       const action = tile.dataset.action;
-      if (action === 'practice') showBatchModal();
+      if (action === 'upload') showUploadPdfModal(cid);
+      else if (action === 'practice') showBatchModal();
       else if (action === 'lab') navigate(`/course/${cid}/lab`);
       else if (action === 'insights') navigate(`/course/${cid}/insights`);
       else if (action === 'progress') navigate(`/course/${cid}/progress`);
@@ -1632,19 +1763,27 @@ async function renderCourseDashboard() {
     batchesEl.innerHTML = '';
   } else {
     const recent = batches.slice(-5).reverse();
-    batchesEl.innerHTML = recent.map(b => {
+    batchesEl.innerHTML = recent.map((b, i) => {
       const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
       const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL') : '';
       return `
-        <div class="batch-row">
+        <div class="batch-row batch-clickable" data-batch-i="${i}" style="cursor:pointer">
           <div class="batch-score">${score}%</div>
           <div class="batch-info">
             <div class="batch-summary">${b.correct} מתוך ${b.size} נכון${b.examMode ? ' · מצב מבחן' : ''}</div>
             <div class="batch-date">${date}</div>
           </div>
+          <svg class="batch-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </div>
       `;
     }).join('');
+    batchesEl.querySelectorAll('.batch-clickable').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.batchI);
+        state.lastBatch = recent[idx];
+        navigate(`/course/${cid}/summary`);
+      });
+    });
   }
 
   // PDF & questions section — show for non-builtin courses
@@ -1654,9 +1793,7 @@ async function renderCourseDashboard() {
     // Load and display exams (PDFs) for this course
     loadCourseExams(cid);
 
-    document.getElementById('cd-upload-pdf').addEventListener('click', () => {
-      showUploadPdfModal(cid);
-    });
+    // Upload is now in the quick actions grid above
   }
 }
 
@@ -1678,21 +1815,162 @@ async function loadCourseExams(courseId) {
     pdfsEl.innerHTML = examsData.map(ex => {
       const statusLabel = { pending: 'ממתין', processing: 'מעבד...', ready: 'מוכן', failed: 'נכשל' }[ex.status] || ex.status;
       const statusCls = ex.status === 'ready' ? 'success' : (ex.status === 'failed' ? 'error' : '');
+      const canDelete = ex.status !== 'processing';
+      const canExpand = ex.status === 'ready' && (ex.question_count || 0) > 0;
       return `
-        <div class="batch-row">
-          <div class="batch-score" style="font-size:14px;">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <div class="exam-row" data-exam-id="${ex.id}">
+          <div class="batch-row">
+            <div class="batch-score" style="font-size:14px;">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+            <div class="batch-info" style="flex:1;">
+              <div class="batch-summary">${escapeHtml(ex.name)}</div>
+              <div class="batch-date">${ex.question_count || 0} שאלות · <span class="${statusCls}">${statusLabel}</span></div>
+            </div>
+            <div class="exam-actions">
+              ${canExpand ? `<button class="btn-icon exam-expand-btn" data-exam-id="${ex.id}" title="ניהול שאלות"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}
+              ${canDelete ? `<button class="btn-icon exam-delete-btn" data-exam-id="${ex.id}" data-exam-name="${escapeHtml(ex.name)}" data-q-count="${ex.question_count || 0}" title="מחיקת מבחן"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ''}
+            </div>
           </div>
-          <div class="batch-info">
-            <div class="batch-summary">${escapeHtml(ex.name)}</div>
-            <div class="batch-date">${ex.question_count || 0} שאלות · <span class="${statusCls}">${statusLabel}</span></div>
-          </div>
+          <div class="exam-questions-grid" id="exam-q-grid-${ex.id}" style="display:none;"></div>
         </div>
       `;
     }).join('');
+
+    // Wire delete buttons
+    pdfsEl.querySelectorAll('.exam-delete-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const examId = btn.dataset.examId;
+        const examName = btn.dataset.examName;
+        const qCount = btn.dataset.qCount;
+        showConfirmModal({
+          title: 'מחיקת מבחן',
+          body: `למחוק את "${examName}"? ${qCount} שאלות וכל הנתונים שלהן (ניסיונות, סטטיסטיקות) יימחקו לצמיתות.`,
+          confirmLabel: 'מחק לצמיתות',
+          danger: true,
+          onConfirm: async () => {
+            const tk = await Auth.getToken();
+            const r = await fetch(`/api/courses/${courseId}/exams/${examId}`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${tk}` },
+            });
+            if (r.ok) {
+              toast('המבחן נמחק בהצלחה', 'success');
+              loadCourseExams(courseId);
+            } else {
+              const d = await r.json().catch(() => ({}));
+              toast(d.error || 'שגיאה במחיקה', 'error');
+            }
+          },
+        });
+      });
+    });
+
+    // Wire expand buttons (question thumbnails)
+    pdfsEl.querySelectorAll('.exam-expand-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const examId = btn.dataset.examId;
+        const grid = document.getElementById(`exam-q-grid-${examId}`);
+        if (!grid) return;
+        // Toggle
+        if (grid.style.display !== 'none') {
+          grid.style.display = 'none';
+          btn.querySelector('svg').style.transform = '';
+          return;
+        }
+        btn.querySelector('svg').style.transform = 'rotate(180deg)';
+        grid.style.display = 'grid';
+        grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">טוען שאלות...</p>';
+        try {
+          const tk = await Auth.getToken();
+          const qRes = await fetch(`/api/courses/${courseId}/questions`, {
+            headers: { Authorization: `Bearer ${tk}` },
+          });
+          const allQs = await qRes.json();
+          const examQs = allQs.filter(q => String(q.exam_id) === String(examId));
+          if (!examQs.length) {
+            grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">אין שאלות במבחן זה.</p>';
+            return;
+          }
+          grid.innerHTML = examQs.map(q => `
+            <div class="exam-q-thumb" data-q-id="${q.id}">
+              ${q.image_path === 'text-only'
+                ? `<div class="exam-q-thumb-text">${(q.general_explanation || 'שאלה ' + q.question_number).slice(0, 60)}...</div>`
+                : `<img src="${Data.imageUrl(q.image_path)}" alt="שאלה ${q.question_number}" loading="lazy" />`}
+              <div class="exam-q-thumb-info">
+                <span>#${q.question_number}</span>
+                <button class="btn-icon-sm q-delete-btn" data-q-id="${q.id}" data-q-num="${q.question_number}" title="מחק שאלה">✕</button>
+              </div>
+            </div>
+          `).join('');
+          // Wire question delete buttons
+          grid.querySelectorAll('.q-delete-btn').forEach(qBtn => {
+            qBtn.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              const qId = qBtn.dataset.qId;
+              const qNum = qBtn.dataset.qNum;
+              showConfirmModal({
+                title: 'מחיקת שאלה',
+                body: `למחוק את שאלה #${qNum}? לא ניתן לשחזר.`,
+                confirmLabel: 'מחק',
+                danger: true,
+                onConfirm: async () => {
+                  const tk2 = await Auth.getToken();
+                  const dr = await fetch(`/api/courses/${courseId}/questions/${qId}`, {
+                    method: 'DELETE',
+                    headers: { Authorization: `Bearer ${tk2}` },
+                  });
+                  if (dr.ok) {
+                    const thumb = grid.querySelector(`[data-q-id="${qId}"]`);
+                    if (thumb) thumb.remove();
+                    toast('שאלה נמחקה', 'success');
+                  } else {
+                    toast('שגיאה במחיקת שאלה', 'error');
+                  }
+                },
+              });
+            });
+          });
+        } catch {
+          grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">שגיאה בטעינת שאלות.</p>';
+        }
+      });
+    });
   } catch (e) {
     pdfsEl.innerHTML = '<p class="muted">שגיאה בטעינת מבחנים.</p>';
   }
+}
+
+// Generic confirmation modal
+function showConfirmModal({ title, body, confirmLabel, danger, onConfirm }) {
+  const html = `
+    <div class="modal-backdrop" id="confirm-modal">
+      <div class="modal" style="max-width:420px;">
+        <h2 style="margin-bottom:12px;">${title}</h2>
+        <p style="line-height:1.7; color:var(--text-2); margin-bottom:20px;">${body}</p>
+        <div style="display:flex; gap:10px;">
+          <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="confirm-yes">${confirmLabel || 'אישור'}</button>
+          <button class="btn btn-ghost" id="confirm-no">ביטול</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  document.body.appendChild(container.firstElementChild);
+  const modal = document.getElementById('confirm-modal');
+  const close = () => modal.remove();
+  document.getElementById('confirm-no').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  document.getElementById('confirm-yes').addEventListener('click', async () => {
+    const btn = document.getElementById('confirm-yes');
+    btn.disabled = true;
+    btn.textContent = 'מוחק...';
+    try { await onConfirm(); } catch {}
+    close();
+  });
 }
 
 // Upload PDF modal
@@ -1744,6 +2022,21 @@ function showUploadPdfModal(courseId) {
     if (!name || name.length < 2) { errEl.textContent = 'שם המבחן חייב להיות לפחות 2 תווים'; return; }
     if (!examFile) { errEl.textContent = 'חסר קובץ PDF של המבחן'; return; }
 
+    // Client-side file size check
+    const plan = state.user?.plan || 'free';
+    const maxMb = { trial: 15, free: 10, basic: 20, pro: 30, education: 50 }[plan] || 10;
+    if (examFile.size > maxMb * 1024 * 1024) {
+      errEl.textContent = `הקובץ גדול מדי (מקסימום ${maxMb}MB לחבילת ${plan})`; return;
+    }
+    if (solFile && solFile.size > maxMb * 1024 * 1024) {
+      errEl.textContent = `קובץ הפתרון גדול מדי (מקסימום ${maxMb}MB)`; return;
+    }
+
+    // Free plan block
+    if (plan === 'free') {
+      showPaywallModal('pdf_upload'); return;
+    }
+
     const btn = document.getElementById('up-submit');
     btn.disabled = true;
     btn.textContent = 'מעלה...';
@@ -1765,12 +2058,24 @@ function showUploadPdfModal(courseId) {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 422 && err.guidance) {
+          errEl.textContent = err.error;
+          const guide = document.createElement('p');
+          guide.className = 'upload-guidance';
+          guide.textContent = err.guidance;
+          errEl.insertAdjacentElement('afterend', guide);
+          throw new Error(err.error);
+        }
         throw new Error(err.error || 'שגיאה בהעלאה');
       }
 
+      const result = await res.json().catch(() => ({}));
       document.getElementById('up-status').textContent = 'הושלם!';
       document.getElementById('up-progress-fill').style.width = '100%';
       toast('המבחן הועלה בהצלחה! עיבוד השאלות מתחיל...', 'success');
+      if (result.warning) {
+        setTimeout(() => toast(result.warning, 'warning'), 1500);
+      }
       close();
 
       // Reload course data to show the new exam
@@ -1788,6 +2093,14 @@ function showUploadPdfModal(courseId) {
 
 // ===== Add Course Modal =====
 function showAddCourseModal() {
+  // Client-side course quota check
+  const plan = state.user?.plan || 'free';
+  const planDef = PLANS[plan] || PLANS.free;
+  if (planDef.maxCourses !== -1 && state.courses.length >= planDef.maxCourses) {
+    showPaywallModal('course_limit');
+    return;
+  }
+
   const wrap = document.createElement('div');
   wrap.appendChild(tmpl('tmpl-add-course'));
   document.body.appendChild(wrap.firstElementChild);
@@ -3357,7 +3670,8 @@ function closeUserMenuOnEsc(e) {
 
 // ===== Settings page =====
 const PLAN_INFO = {
-  free:      { label: 'FREE',      desc: '2 חבילות לימוד · 5 קבצי PDF · ללא AI' },
+  trial:     { label: 'TRIAL',     desc: '14 ימים · 20 PDFs · 5 חבילות · 15 שאלות AI' },
+  free:      { label: 'FREE',      desc: 'גישת קריאה בלבד — שדרג כדי ליצור תכנים חדשים' },
   basic:     { label: 'BASIC',     desc: '30 חבילות · 30 PDFs · 100 שאלות AI · 5 קורסים' },
   pro:       { label: 'PRO',       desc: '150 PDFs · 500 שאלות AI · קורסים ללא הגבלה' },
   education: { label: 'EDUCATION', desc: 'הכל מ-Pro + 50 משתמשי משנה + לוח בקרה למורה' },
@@ -3409,16 +3723,59 @@ function renderSettings(initialTab) {
   const planInfo = PLAN_INFO[u.plan] || PLAN_INFO.free;
   document.getElementById('settings-plan-name').textContent = planInfo.label;
   document.getElementById('settings-plan-meta').textContent = planInfo.desc;
-  document.querySelectorAll('.settings-plan-tile').forEach(tile => {
-    if (tile.dataset.plan === u.plan) tile.classList.add('is-current');
-    tile.addEventListener('click', () => {
-      const newPlan = tile.dataset.plan;
-      if (newPlan === u.plan) return;
-      if (!confirm(`האם להחליף תוכנית ל-${(PLAN_INFO[newPlan] || {label: newPlan}).label}?\n\n(זהו שינוי מקומי בלבד — חיוב אמיתי יחובר ב-Phase 2)`)) return;
-      state.user = Auth.update({ plan: newPlan });
-      renderSettings('plan');
+
+  if (u.isAdmin) {
+    // Admin: show all plans with real DB switching
+    const planGrid = document.querySelector('.settings-plan-grid');
+    if (planGrid) {
+      const allPlans = ['trial', 'free', 'basic', 'pro', 'education'];
+      planGrid.innerHTML = allPlans.map(p => {
+        const info = PLAN_INFO[p] || { label: p, desc: '' };
+        const isCurrent = p === u.plan;
+        return `<button class="settings-plan-tile ${isCurrent ? 'is-current' : ''}" data-plan="${p}">
+          <strong>${info.label}</strong>
+          <small>${info.desc}</small>
+          ${isCurrent ? '<span class="admin-current-badge">נוכחי</span>' : ''}
+        </button>`;
+      }).join('');
+    }
+    document.querySelectorAll('.settings-plan-tile').forEach(tile => {
+      tile.addEventListener('click', async () => {
+        const newPlan = tile.dataset.plan;
+        if (newPlan === u.plan) return;
+        const label = (PLAN_INFO[newPlan] || { label: newPlan }).label;
+        if (!confirm(`[Admin] להחליף ל-${label}?\n\nזהו שינוי אמיתי ב-DB — כל הקוטות יתאפסו.`)) return;
+        try {
+          const token = await Auth.getToken();
+          const res = await fetch('/api/admin/switch-plan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ plan: newPlan }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'שגיאה');
+          state.user = Auth.update({ plan: newPlan, daysLeft: newPlan === 'trial' ? 14 : null, trialUsed: newPlan === 'free' });
+          toast(`Plan switched to ${label}`, 'success');
+          renderSettings('plan');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
     });
-  });
+  } else {
+    // Regular user: show available plans (upgrade only)
+    document.querySelectorAll('.settings-plan-tile').forEach(tile => {
+      if (tile.dataset.plan === u.plan) tile.classList.add('is-current');
+      tile.addEventListener('click', () => {
+        const newPlan = tile.dataset.plan;
+        if (newPlan === u.plan) return;
+        // Redirect to pricing page for real upgrade
+        location.hash = '#pricing';
+        navigate('/');
+      });
+    });
+  }
+
   document.getElementById('settings-upgrade-btn').addEventListener('click', (e) => {
     e.preventDefault();
     location.hash = '#pricing';
@@ -3551,25 +3908,56 @@ const StudyStore = {
   resetUsed() {
     localStorage.removeItem(this.USED_KEY);
   },
-  // Free plan quota: 2 lifetime packs. Admins/paid users get unlimited in
-  // local mode (we use the mock plan field).
+  // Plan-based quota: free=2 lifetime, trial=5 lifetime, paid=unlimited.
   quotaForUser(user) {
     const plan = (user && user.plan) || 'free';
-    if (plan === 'free') return { lifetime: 2, used: this.usedTotal(), unlimited: false };
+    if (plan === 'free') return { lifetime: 0, used: this.usedTotal(), unlimited: false };
+    if (plan === 'trial') return { lifetime: 5, used: this.usedTotal(), unlimited: false };
     return { lifetime: -1, used: this.usedTotal(), unlimited: true };
   },
 };
 
-function showPaywallModal() {
-  const wrap = document.createElement('div');
-  wrap.appendChild(tmpl('tmpl-paywall-modal'));
-  document.body.appendChild(wrap.firstElementChild);
+function showPaywallModal(context) {
+  const messages = {
+    pdf_upload:   { title: 'העלאת PDFs זמינה למנויים', body: 'שדרג ל-Basic כדי להעלות עד 30 קבצי PDF בחודש ולתרגל שאלות אמיתיות ממבחנים.' },
+    ai_quota:     { title: 'הגעת למגבלת שאלות ה-AI', body: 'שדרג ל-Basic וקבל 100 שאלות AI בחודש, או ל-Pro וקבל 500.' },
+    study_pack:   { title: 'סיימת את חבילות הלימוד שלך', body: 'שדרג ל-Basic וקבל 30 חבילות לימוד מסיכום בחודש. לומדים חכם, לא קשה.' },
+    course_limit: { title: 'הגעת למגבלת הקורסים', body: 'שדרג ל-Basic ותקבל עד 5 קורסים פעילים, או ל-Pro ללא הגבלה.' },
+    trial_ended:  { title: 'ה-Trial נגמר', body: 'ה-14 ימים נגמרו, אבל הנתונים שלך נשמרים. שדרג כדי להמשיך ליצור ולתרגל.' },
+  };
+  const msg = messages[context] || { title: 'שדרג לחבילת Basic', body: 'קבל גישה מלאה לכל הפיצ\'רים: העלאת PDFs, שאלות AI, חבילות לימוד ועוד.' };
+
+  const html = `
+    <div class="modal-backdrop" id="paywall-modal">
+      <div class="modal paywall-modal">
+        <button class="modal-close" id="paywall-close">✕</button>
+        <h2>${msg.title}</h2>
+        <p class="modal-sub">${msg.body}</p>
+        <div class="paywall-plan-highlight">
+          <div class="price-name">Basic</div>
+          <div class="price-amount">19.90<span class="currency">₪</span><span class="period">/חודש</span></div>
+          <ul class="price-features">
+            <li>30 קבצי PDF בחודש</li>
+            <li>30 חבילות לימוד מסיכום</li>
+            <li>100 שאלות AI בחודש</li>
+            <li>5 קורסים פעילים</li>
+            <li>תובנות + מעקב התקדמות מלאים</li>
+          </ul>
+        </div>
+        <button class="btn btn-primary btn-block" id="paywall-upgrade">שדרג ל-Basic</button>
+        <button class="btn btn-ghost btn-block btn-sm" id="paywall-cancel" style="margin-top:8px">אולי אחר כך</button>
+      </div>
+    </div>
+  `;
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  document.body.appendChild(container.firstElementChild);
   const modal = document.getElementById('paywall-modal');
   const close = () => modal.remove();
   document.getElementById('paywall-close').addEventListener('click', close);
   document.getElementById('paywall-cancel').addEventListener('click', close);
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-  document.getElementById('paywall-upgrade').addEventListener('click', (e) => {
+  document.getElementById('paywall-upgrade').addEventListener('click', () => {
     close();
     setTimeout(() => { location.hash = '#pricing'; navigate('/'); }, 0);
   });
@@ -3741,7 +4129,7 @@ async function renderStudyCreate() {
     // Re-check quota right before submit
     const q = StudyStore.quotaForUser(state.user);
     if (!q.unlimited && q.used >= q.lifetime) {
-      showPaywallModal();
+      showPaywallModal('study_pack');
       return;
     }
 
@@ -3824,7 +4212,7 @@ async function renderStudyCreate() {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 402 && data.needs_upgrade) {
-          showPaywallModal();
+          showPaywallModal('study_pack');
           return;
         }
         errBox.textContent = data.error || 'שגיאה ביצירת חבילת הלימוד.';
@@ -4184,15 +4572,21 @@ function updateSelfTestResult(answers) {
         };
         Auth.save(u);
         state.user = u;
-        // Create profile if it doesn't exist (first Google login)
+        // Create profile if it doesn't exist (first Google login → start trial)
         if (!profile) {
+          const now = new Date();
+          const expires = new Date(now); expires.setDate(expires.getDate() + 14);
           await getSbClient().from('profiles').upsert({
             id: session.user.id,
             email: session.user.email,
             display_name: u.name,
-            plan: 'free',
+            plan: 'trial',
+            plan_expires_at: expires.toISOString(),
+            trial_started_at: now.toISOString(),
+            trial_used: false,
             is_admin: false,
           }, { onConflict: 'id' });
+          u.plan = 'trial';
         }
         if (getRoute() === '/' || getRoute().startsWith('/login')) {
           navigate('/dashboard');

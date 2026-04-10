@@ -28,6 +28,9 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS monthly_reset_at TIMESTAMPTZ NOT N
 -- Smart Study (summary → AI study materials) usage counters
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS study_packs_used_total INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS study_packs_used_this_month INTEGER NOT NULL DEFAULT 0;
+-- Trial tracking
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS trial_used BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Make sure RLS is on
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
@@ -39,7 +42,21 @@ DROP POLICY IF EXISTS "profiles_insert_own" ON profiles;
 CREATE POLICY "profiles_insert_own" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
 DROP POLICY IF EXISTS "profiles_update_own" ON profiles;
-CREATE POLICY "profiles_update_own" ON profiles FOR UPDATE USING (auth.uid() = id);
+-- Allow users to update their own profile, but BLOCK changes to privileged
+-- columns (plan, is_admin, stripe, trial). Only supabaseAdmin (service_role)
+-- can change those — the client SDK uses anon/authenticated role.
+CREATE POLICY "profiles_update_own" ON profiles FOR UPDATE
+  USING (auth.uid() = id)
+  WITH CHECK (
+    auth.uid() = id
+    AND plan = (SELECT plan FROM profiles WHERE id = auth.uid())
+    AND is_admin = (SELECT is_admin FROM profiles WHERE id = auth.uid())
+    AND plan_expires_at IS NOT DISTINCT FROM (SELECT plan_expires_at FROM profiles WHERE id = auth.uid())
+    AND trial_started_at IS NOT DISTINCT FROM (SELECT trial_started_at FROM profiles WHERE id = auth.uid())
+    AND trial_used = (SELECT trial_used FROM profiles WHERE id = auth.uid())
+    AND stripe_customer_id IS NOT DISTINCT FROM (SELECT stripe_customer_id FROM profiles WHERE id = auth.uid())
+    AND stripe_subscription_id IS NOT DISTINCT FROM (SELECT stripe_subscription_id FROM profiles WHERE id = auth.uid())
+  );
 
 -- ====== EP_COURSES ======
 CREATE TABLE IF NOT EXISTS ep_courses (
@@ -135,6 +152,8 @@ ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS source_question_id BIGINT REFE
 ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS general_explanation TEXT;
 ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS option_explanations JSONB;
 ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS question_text TEXT;
+ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS options_text JSONB;
 
 ALTER TABLE ep_questions ENABLE ROW LEVEL SECURITY;
 

@@ -91,15 +91,28 @@ function dbError(res, tag, error, status = 500) {
 // the free trial is "Smart Study from Summary": 2 lifetime AI-generated study
 // packs. Real PDF practice is gated behind Basic+. See plan: free trial change.
 const QUOTAS = {
+  trial: {
+    pdfs_total: -1,           // ✅ trial: limited by day/month caps below
+    pdfs_per_day: 5,
+    pdfs_per_month: 20,
+    ai_questions_per_day: 5,
+    ai_questions_per_month: 15,
+    study_packs_total: 5,     // 5 lifetime during 14-day trial
+    study_packs_per_month: 5,
+    courses: 2,
+    storage_mb: 200,
+    max_pdf_size_mb: 15,
+    max_pages_per_pdf: 30,
+  },
   free: {
-    pdfs_total: 0,            // ❌ no exam PDF uploads on free
+    pdfs_total: 0,            // ❌ view-only after trial — no new uploads
     pdfs_per_day: 0,
     pdfs_per_month: 0,
     ai_questions_per_day: 0,
     ai_questions_per_month: 0,
-    study_packs_total: 2,     // ✅ free trial: 2 lifetime Smart Study packs
-    study_packs_per_month: 2,
-    courses: 1,
+    study_packs_total: 0,     // ❌ no new study packs
+    study_packs_per_month: 0,
+    courses: 0,               // ❌ no new courses
     storage_mb: 50,
     max_pdf_size_mb: 10,
     max_pages_per_pdf: 25,
@@ -245,10 +258,13 @@ const IP_THROTTLE_BUCKETS = {
   // Smart Study from summary → Gemini call. Free quota is 2/account; this
   // caps a single IP at 4/day, 8/week regardless of how many accounts they
   // make. Trip → 24h cooldown.
-  study_gen: { day: 4, week: 8, blockHours: 24 },
+  study_gen:     { day: 4, week: 8, blockHours: 24 },
   // Lab AI generation → Gemini call. More tolerant since paid users use it
   // heavily; still caps obvious abuse.
-  lab_gen:   { day: 20, week: 60, blockHours: 24 },
+  lab_gen:       { day: 20, week: 60, blockHours: 24 },
+  // Trial account creation → prevents sock-puppet trial farming.
+  // Max 2 trials/day, 3/week per IP. Trip → 7-day block.
+  trial_create:  { day: 2, week: 3, blockHours: 168 },
 };
 
 function ipAbuseGuard(bucket) {
@@ -328,18 +344,36 @@ async function getUserProfile(userId) {
     .eq('id', userId)
     .single();
   if (error) return null;
+
+  // Auto-downgrade expired trials to free plan
+  if (data.plan === 'trial' && data.plan_expires_at && new Date(data.plan_expires_at) < new Date()) {
+    await supabaseAdmin.from('profiles')
+      .update({ plan: 'free', trial_used: true })
+      .eq('id', userId);
+    data.plan = 'free';
+    data.trial_used = true;
+  }
+
   return data;
 }
 
 // Strip internal-only fields before sending profile to the client.
 function publicProfile(profile) {
   if (!profile) return null;
+  // Calculate trial days remaining
+  let daysLeft = null;
+  if (profile.plan === 'trial' && profile.plan_expires_at) {
+    daysLeft = Math.max(0, Math.ceil((new Date(profile.plan_expires_at) - Date.now()) / 86400000));
+  }
   return {
     email: profile.email,
     display_name: profile.display_name,
     username: profile.username,
     plan: profile.plan,
     plan_expires_at: profile.plan_expires_at,
+    trial_started_at: profile.trial_started_at || null,
+    trial_used: profile.trial_used || false,
+    days_left: daysLeft,
     pdfs_uploaded_today: profile.pdfs_uploaded_today,
     pdfs_uploaded_this_month: profile.pdfs_uploaded_this_month,
     ai_questions_used_today: profile.ai_questions_used_today,
@@ -410,7 +444,7 @@ app.post('/api/contact', rateLimitMiddleware(3), async (req, res) => {
     };
     const subjectLabel = subjectMap[safeSubject] || safeSubject;
     resend.emails.send({
-      from: 'ExamPrep <notifications@examprep.app>',
+      from: 'ExamPrep <support@try-examprep.com>',
       to: CONTACT_NOTIFY_EMAIL,
       subject: `[ExamPrep] הודעה חדשה: ${subjectLabel}`,
       html: `
@@ -651,6 +685,30 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
         fs.writeFileSync(solPath, solFile.buffer);
       }
 
+      // ===== Validate exam ↔ solution page count match =====
+      if (solPath) {
+        try {
+          const { extractPositions } = await import('./scripts/process-pdf.mjs');
+          const [examPos, solPos] = await Promise.all([
+            extractPositions(examPath),
+            extractPositions(solPath),
+          ]);
+          const examPages = examPos.length;
+          const solPages = solPos.length;
+          if (Math.abs(examPages - solPages) > 3) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            tempDir = null;
+            return res.status(422).json({
+              error: 'קובץ הפתרון לא מתאים למבחן',
+              detail: `המבחן מכיל ${examPages} עמודים אבל הפתרון מכיל ${solPages} עמודים.`,
+              guidance: 'ודא שאתה מעלה את הפתרון של אותו מבחן. אם הפתרון מוטמע בקובץ המבחן, העלה רק קובץ אחד.',
+            });
+          }
+        } catch (valErr) {
+          console.warn('[upload] page-count validation skipped:', valErr.message);
+        }
+      }
+
       // ===== Deduplication: check hash =====
       const hash = fileHash(examPath);
       const { data: existing } = await req.db
@@ -734,11 +792,23 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
         fs.rmSync(tempDir, { recursive: true, force: true });
         tempDir = null;
 
+        // Check if solution was provided but answers weren't detected
+        let warning = null;
+        if (solFile && result.questions.length > 0) {
+          const answeredCount = result.questions.filter(q => q.correctIdx != null).length;
+          if (answeredCount === 0) {
+            warning = 'לא זוהו תשובות מסומנות בקובץ הפתרון. ודא שהתשובות הנכונות מסומנות בצהוב.';
+          } else if (answeredCount / result.questions.length < 0.3) {
+            warning = `זוהו תשובות רק ל-${answeredCount} מתוך ${result.questions.length} שאלות. ייתכן שקובץ הפתרון חלקי.`;
+          }
+        }
+
         res.json({
           ok: true,
           exam_id: exam.id,
           question_count: result.questionCount,
           mode: result.mode,
+          ...(warning && { warning }),
         });
       } catch (procErr) {
         console.error('[upload] process error:', procErr?.message || procErr);
@@ -759,7 +829,7 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
   });
 
 // ===== List exams in a course =====
-app.get('/api/courses/:courseId/exams', authMiddleware, async (req, res) => {
+app.get('/api/courses/:courseId/exams', authMiddleware, rateLimitMiddleware(30), async (req, res) => {
   const { data, error } = await req.db
     .from('ep_exams')
     .select('*')
@@ -770,7 +840,7 @@ app.get('/api/courses/:courseId/exams', authMiddleware, async (req, res) => {
 });
 
 // ===== List questions in a course (for the practice UI) =====
-app.get('/api/courses/:courseId/questions', authMiddleware, async (req, res) => {
+app.get('/api/courses/:courseId/questions', authMiddleware, rateLimitMiddleware(30), async (req, res) => {
   const { data, error } = await req.db
     .from('ep_questions')
     .select('*')
@@ -822,7 +892,7 @@ app.post('/api/attempt', authMiddleware, rateLimitMiddleware(60), async (req, re
 });
 
 // ===== Get review queue for a course =====
-app.get('/api/courses/:courseId/review-queue', authMiddleware, async (req, res) => {
+app.get('/api/courses/:courseId/review-queue', authMiddleware, rateLimitMiddleware(30), async (req, res) => {
   const { data, error } = await req.db
     .from('ep_review_queue')
     .select('question_id')
@@ -840,7 +910,72 @@ app.delete('/api/courses/:courseId/questions/:questionId', authMiddleware, rateL
     .eq('id', questionId)
     .eq('course_id', courseId);
   if (error) return dbError(res, 'delete question', error);
+  // Update course question counter
+  const { count } = await req.db
+    .from('ep_questions').select('id', { count: 'exact', head: true })
+    .eq('course_id', courseId).is('deleted_at', null);
+  await req.db.from('ep_courses').update({ total_questions: count }).eq('id', courseId);
   res.json({ ok: true });
+});
+
+// ===== Delete an exam (hard-delete + file cleanup) =====
+app.delete('/api/courses/:courseId/exams/:examId', authMiddleware, rateLimitMiddleware(5), async (req, res) => {
+  const { courseId, examId } = req.params;
+  try {
+    // Fetch exam (RLS ensures ownership)
+    const { data: exam, error: fetchErr } = await req.db
+      .from('ep_exams').select('*').eq('id', examId).eq('course_id', courseId).maybeSingle();
+    if (fetchErr) return dbError(res, 'fetch exam', fetchErr);
+    if (!exam) return res.status(404).json({ error: 'מבחן לא נמצא' });
+    if (exam.status === 'processing') {
+      return res.status(409).json({ error: 'לא ניתן למחוק מבחן בזמן עיבוד' });
+    }
+
+    // Calculate storage to release from image files
+    const imgDir = path.join(__dirname, 'data', 'storage', String(req.userId), String(examId));
+    let freedBytes = 0;
+    if (fs.existsSync(imgDir)) {
+      const walk = (dir) => {
+        for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, f.name);
+          if (f.isDirectory()) walk(full); else freedBytes += fs.statSync(full).size;
+        }
+      };
+      walk(imgDir);
+      fs.rmSync(imgDir, { recursive: true, force: true });
+    }
+
+    // Delete exam record (CASCADE removes questions, attempts, review_queue)
+    const { error: delErr } = await req.db
+      .from('ep_exams').delete().eq('id', examId).eq('course_id', courseId);
+    if (delErr) return dbError(res, 'delete exam', delErr);
+
+    // Update course counters
+    const [{ count: qCount }, { count: pdfCount }] = await Promise.all([
+      req.db.from('ep_questions').select('id', { count: 'exact', head: true })
+        .eq('course_id', courseId).is('deleted_at', null),
+      req.db.from('ep_exams').select('id', { count: 'exact', head: true })
+        .eq('course_id', courseId),
+    ]);
+    await req.db.from('ep_courses').update({
+      total_questions: qCount,
+      total_pdfs: pdfCount,
+    }).eq('id', courseId);
+
+    // Release storage
+    if (freedBytes > 0) {
+      const profile = await getUserProfile(req.userId);
+      if (profile) {
+        const newBytes = Math.max(0, (profile.storage_bytes_used || 0) - freedBytes);
+        await supabaseAdmin.from('profiles').update({ storage_bytes_used: newBytes }).eq('id', req.userId);
+      }
+    }
+
+    res.json({ ok: true, deleted_questions: exam.question_count || 0 });
+  } catch (err) {
+    console.error('[delete exam] error:', err?.message || err);
+    res.status(500).json({ error: 'שגיאה במחיקת המבחן' });
+  }
 });
 
 // ===== AI similar question generation (Premium feature) =====
@@ -889,13 +1024,21 @@ app.post('/api/ai/generate-similar', authMiddleware, rateLimitMiddleware(AI_RATE
 });
 
 // ===== Lab: AI-powered practice question generation =====
-// Used by the AI Lab UI in admin/local-files mode. Doesn't go through
-// Supabase auth (the admin testing path uses a localStorage mock user)
-// — instead it's protected by rate-limit only and refuses to run unless
-// the AI provider key is set in the environment.
-// (Internal: currently uses Gemini Flash via GEMINI_API_KEY env, but this
-// is intentionally not exposed in the API responses or client UI.)
-app.post('/api/lab/generate-questions', rateLimitMiddleware(4), ipAbuseGuard('lab_gen'), async (req, res) => {
+// Requires authentication + enforces per-user AI quota. Protected by
+// rate-limit, IP throttle, and plan-based quota checks.
+app.post('/api/lab/generate-questions', authMiddleware, rateLimitMiddleware(4), ipAbuseGuard('lab_gen'), async (req, res) => {
+  // Enforce AI quota from user's plan
+  const profile = await getUserProfile(req.userId);
+  const plan = profile?.plan || 'free';
+  const quota = QUOTAS[plan] || QUOTAS.free;
+  if (quota.ai_questions_per_month === 0) {
+    return res.status(402).json({
+      error: 'יצירת שאלות AI זמינה למנויים בלבד. שדרג ל-Basic כדי להתחיל.',
+      needs_upgrade: true,
+      upgrade_to: 'basic',
+    });
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   if (!apiKey) {
@@ -1271,26 +1414,26 @@ async function generateStudyPackWithAI(summaryText, title) {
   return safe;
 }
 
-// Soft auth: only verifies JWT if present. Sets req.userId/req.db when valid,
-// otherwise lets the request through anonymously. Used by /api/study/generate
-// during the local-testing phase, where a localStorage mock user has no JWT.
+// Auth middleware for /api/study/generate. Requires a valid JWT — anonymous
+// requests are rejected with 401. This prevents unauthenticated Gemini token
+// burning.
 async function softAuthMiddleware(req, res, next) {
   const auth = req.headers['authorization'];
   if (!auth || !auth.startsWith('Bearer ')) {
-    req.userId = null;
-    req.db = null;
-    return next();
+    return res.status(401).json({ error: 'נדרשת הרשמה כדי להשתמש בפיצ\'ר הזה' });
   }
   const token = auth.substring(7);
-  if (!supabaseAdmin) { req.userId = null; req.db = null; return next(); }
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'מערכת האימות לא זמינה כרגע' });
+  }
   const { data } = await supabaseAdmin.auth.getUser(token);
   if (data?.user) {
     req.userId = data.user.id;
+    req.userEmail = data.user.email;
     req.userJwt = token;
     req.db = userClient(token);
   } else {
-    req.userId = null;
-    req.db = null;
+    return res.status(401).json({ error: 'טוקן לא תקין — התחבר מחדש' });
   }
   next();
 }
@@ -1363,21 +1506,7 @@ app.post('/api/study/generate', rateLimitMiddleware(3), ipAbuseGuard('study_gen'
         return res.status(400).json({ error: 'הסיכום ארוך מדי (מקסימום 60,000 תווים). חתוך אותו לחלקים.' });
       }
 
-      // ===== Stateless dev mode (no auth header) =====
-      // Skip the DB entirely. Quota is enforced client-side via localStorage
-      // for the local-testing phase. Just call the AI and return materials.
-      if (!req.userId) {
-        try {
-          const materials = await generateStudyPackWithAI(summaryText, title);
-          return res.json({ ok: true, pack_id: null, materials, title, source_kind: kind });
-        } catch (aiErr) {
-          const code = aiErr?.http || 502;
-          console.error('[study/dev] ai error:', aiErr?.message || aiErr);
-          return res.status(code).json({ error: 'יצירת חומרי הלימוד נכשלה. נסה שוב.' });
-        }
-      }
-
-      // ===== Authenticated path: enforce quota + persist =====
+      // ===== Enforce quota + persist =====
       const { data: granted, error: rpcErr } = await supabaseAdmin.rpc('ep_reserve_study_pack_slot', {
         p_user_id: req.userId,
         p_max_total: quota.study_packs_total,
@@ -1392,11 +1521,12 @@ app.post('/api/study/generate', rateLimitMiddleware(3), ipAbuseGuard('study_gen'
         return res.status(500).json({ error: 'שגיאה פנימית' });
       }
       if (granted !== true) {
+        const isFreeOrTrial = plan === 'free' || plan === 'trial';
         return res.status(402).json({
-          error: plan === 'free'
-            ? 'סיימת את 2 הניסיונות החינמיים שלך. שדרג ל-Basic כדי להמשיך ליצור חומרי לימוד.'
+          error: isFreeOrTrial
+            ? `סיימת את ${quota.study_packs_total} חבילות הלימוד שלך. שדרג ל-Basic כדי להמשיך.`
             : 'הגעת למכסה החודשית של חומרי לימוד.',
-          needs_upgrade: plan === 'free',
+          needs_upgrade: isFreeOrTrial,
           upgrade_to: 'basic',
         });
       }
@@ -1447,7 +1577,7 @@ app.post('/api/study/generate', rateLimitMiddleware(3), ipAbuseGuard('study_gen'
 function clampString(s, n) { return String(s || '').slice(0, n); }
 
 // GET /api/study/packs — list current user's study packs
-app.get('/api/study/packs', authMiddleware, async (req, res) => {
+app.get('/api/study/packs', authMiddleware, rateLimitMiddleware(30), async (req, res) => {
   const { data, error } = await req.db
     .from('ep_study_packs')
     .select('id, title, source_kind, source_char_count, status, created_at, processed_at')
@@ -1457,7 +1587,7 @@ app.get('/api/study/packs', authMiddleware, async (req, res) => {
 });
 
 // GET /api/study/packs/:id — fetch one study pack with full materials
-app.get('/api/study/packs/:id', authMiddleware, async (req, res) => {
+app.get('/api/study/packs/:id', authMiddleware, rateLimitMiddleware(30), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
   const { data, error } = await req.db
@@ -1477,6 +1607,56 @@ app.delete('/api/study/packs/:id', authMiddleware, rateLimitMiddleware(10), asyn
   const { error } = await req.db.from('ep_study_packs').delete().eq('id', id);
   if (error) return dbError(res, 'delete study pack', error);
   res.json({ ok: true });
+});
+
+// ===== Admin: switch plan (for testing different tiers) =====
+app.post('/api/admin/switch-plan', authMiddleware, rateLimitMiddleware(10), async (req, res) => {
+  // Verify admin via supabaseAdmin (not RLS — is_admin is a privileged field)
+  const profile = await getUserProfile(req.userId);
+  if (!profile || !profile.is_admin) {
+    return res.status(403).json({ error: 'אין הרשאות מנהל' });
+  }
+
+  const { plan: newPlan } = req.body || {};
+  const validPlans = Object.keys(QUOTAS);
+  if (!validPlans.includes(newPlan)) {
+    return res.status(400).json({ error: `תוכנית לא תקינה. אפשרויות: ${validPlans.join(', ')}` });
+  }
+
+  // Build update object
+  const update = {
+    plan: newPlan,
+    // Reset all quota counters so admin starts fresh with new plan
+    pdfs_uploaded_today: 0,
+    pdfs_uploaded_this_month: 0,
+    ai_questions_used_today: 0,
+    ai_questions_used_this_month: 0,
+    study_packs_used_total: 0,
+    study_packs_used_this_month: 0,
+    daily_reset_at: new Date().toISOString(),
+    monthly_reset_at: new Date().toISOString(),
+  };
+
+  // Set trial fields based on the plan
+  if (newPlan === 'trial') {
+    update.plan_expires_at = new Date(Date.now() + 14 * 86400000).toISOString();
+    update.trial_started_at = new Date().toISOString();
+    update.trial_used = false;
+  } else if (newPlan === 'free') {
+    update.plan_expires_at = null;
+    update.trial_used = true;
+  } else {
+    // Paid plans: no expiry
+    update.plan_expires_at = null;
+  }
+
+  const { error } = await supabaseAdmin
+    .from('profiles')
+    .update(update)
+    .eq('id', req.userId);
+  if (error) return dbError(res, 'admin switch plan', error);
+
+  res.json({ ok: true, plan: newPlan, quotas: QUOTAS[newPlan] });
 });
 
 // ===== Account deletion (GDPR + Israeli amendment 13 right-to-be-forgotten) =====

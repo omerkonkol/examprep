@@ -9,6 +9,7 @@
     "start": "node server.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.103.0",
     "resend": "^6.10.0",
     "unpdf": "^0.12.0"
   },
