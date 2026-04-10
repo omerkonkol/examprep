@@ -1213,6 +1213,13 @@
 
             <div class="lab-form">
               <div class="field">
+                <label>מקור שאלות</label>
+                <div class="lab-mode-pills">
+                  <button type="button" class="source-pill active" data-source="existing">מהמבחנים שהעלית</button>
+                  <button type="button" class="source-pill" data-source="ai">שאלות חדשות מ-AI <span class="lab-badge">חדש</span></button>
+                </div>
+              </div>
+              <div class="field">
                 <label>אורך מבחן הדמה</label>
                 <select id="lab-mock-size">
                   <option value="10">10 שאלות (תרגול מהיר)</option>
@@ -1227,7 +1234,6 @@
                   <option value="balanced">מאוזן — מערבב הכל לפי תדירות</option>
                   <option value="hard">קשה — רק ברמה גבוהה</option>
                   <option value="weak">החולשות שלי — מתמקד בנושאים שטעיתי בהם</option>
-                  <option value="recent">חזרה — נושאים שלא ראית מזמן</option>
                 </select>
               </div>
               <div class="field">
@@ -1250,6 +1256,7 @@
             </div>
 
             <div class="lab-preview" id="lab-mock-preview"></div>
+            <div class="ai-result" id="mock-ai-result"></div>
 
             <button class="btn btn-primary btn-block btn-lg" id="btn-mock-start"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>התחל מבחן דמה</button>
           </section>

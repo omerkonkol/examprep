@@ -2005,23 +2005,51 @@ async function renderLab() {
 
   // Lab card 1: Mock exam
   let mockMode = 'learn';
+  let mockSource = 'existing';
   document.querySelectorAll('.mode-pill').forEach(p => {
     p.addEventListener('click', () => {
       mockMode = p.dataset.mode;
-      document.querySelectorAll('.mode-pill').forEach(x => x.classList.toggle('active', x === p));
+      const parent = p.closest('.lab-mode-pills');
+      parent.querySelectorAll('.mode-pill').forEach(x => x.classList.toggle('active', x === p));
+    });
+  });
+  document.querySelectorAll('.source-pill').forEach(p => {
+    p.addEventListener('click', () => {
+      mockSource = p.dataset.source;
+      document.querySelectorAll('.source-pill').forEach(x => x.classList.toggle('active', x === p));
+      refreshMockPreview();
     });
   });
 
   function refreshMockPreview() {
     const size = parseInt(document.getElementById('lab-mock-size').value, 10) || 20;
     const style = document.getElementById('lab-mock-style').value;
-    const sample = buildMockExam(courseId, { size, style });
     const preview = document.getElementById('lab-mock-preview');
+    const mockResult = document.getElementById('mock-ai-result');
+    mockResult.innerHTML = '';
+
+    if (mockSource === 'ai') {
+      // Build topic distribution for AI preview
+      const totalCount = analysis.reduce((s, b) => s + b.count, 0);
+      const topBuckets = analysis.slice(0, 8).map(b => ({
+        name: b.name,
+        count: b.count,
+        percentage: totalCount > 0 ? Math.round((b.count / totalCount) * 100) : 0,
+      }));
+      preview.innerHTML = `
+        <div class="lab-preview-title">AI ייצור ${size} שאלות חדשות לפי התפלגות הנושאים:</div>
+        <div class="lab-preview-buckets">
+          ${topBuckets.map(b => `<span class="lab-preview-pill">${escapeHtml(b.name)} ${b.percentage}%</span>`).join('')}
+        </div>
+      `;
+      return;
+    }
+
+    const sample = buildMockExam(courseId, { size, style });
     if (!sample.length) {
       preview.innerHTML = '<p class="muted">אין מספיק שאלות במצב הזה. נסה סגנון אחר.</p>';
       return;
     }
-    // Compose a quick "what's in the exam" summary
     const bucketCounts = new Map();
     for (const q of sample) {
       const bs = bucketsForTopic(Data.reveal(q.id).topic || '');
@@ -2029,9 +2057,9 @@ async function renderLab() {
     }
     const topBuckets = [...bucketCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
     preview.innerHTML = `
-      <div class="lab-preview-title">📋 תצוגה מקדימה של המבחן (${sample.length} שאלות)</div>
+      <div class="lab-preview-title">תצוגה מקדימה של המבחן (${sample.length} שאלות)</div>
       <div class="lab-preview-buckets">
-        ${topBuckets.map(([name, n]) => `<span class="lab-preview-pill">${escapeHtml(name)} ×${n}</span>`).join('')}
+        ${topBuckets.map(([name, n]) => `<span class="lab-preview-pill">${escapeHtml(name)} x${n}</span>`).join('')}
       </div>
     `;
   }
@@ -2039,16 +2067,90 @@ async function renderLab() {
   document.getElementById('lab-mock-style').addEventListener('change', refreshMockPreview);
   refreshMockPreview();
 
-  document.getElementById('btn-mock-start').addEventListener('click', () => {
+  document.getElementById('btn-mock-start').addEventListener('click', async () => {
     const size = parseInt(document.getElementById('lab-mock-size').value, 10) || 20;
     const style = document.getElementById('lab-mock-style').value;
     const timer = parseInt(document.getElementById('lab-mock-timer').value, 10) || 0;
-    const sample = buildMockExam(courseId, { size, style });
-    if (!sample.length) {
-      toast('אין מספיק שאלות לבנייה. נסה סגנון אחר.', 'error');
+
+    // Existing questions mode
+    if (mockSource === 'existing') {
+      const sample = buildMockExam(courseId, { size, style });
+      if (!sample.length) {
+        toast('אין מספיק שאלות לבנייה. נסה סגנון אחר.', 'error');
+        return;
+      }
+      startQuiz({ questions: sample, timerSeconds: timer, examMode: mockMode === 'exam' });
       return;
     }
-    startQuiz({ questions: sample, timerSeconds: timer, examMode: mockMode === 'exam' });
+
+    // AI generation mode
+    const btn = document.getElementById('btn-mock-start');
+    const mockResult = document.getElementById('mock-ai-result');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="ai-spinner"></span> AI בונה מבחן דמה... 20-40 שניות';
+    mockResult.innerHTML = '';
+
+    // Build topic distribution from analysis
+    const totalCount = analysis.reduce((s, b) => s + b.count, 0);
+    const topicDistribution = analysis.slice(0, 10).map(b => ({
+      name: b.name,
+      count: b.count,
+      percentage: totalCount > 0 ? Math.round((b.count / totalCount) * 100) : 0,
+    }));
+
+    // Build sample questions for style reference
+    const sampleQuestions = questions.slice(0, 8).map(q => {
+      const r = Data.reveal(q.id);
+      const m = Data.publicMeta(q.id);
+      return {
+        topic: r.topic || '',
+        stem: m.optionLabels ? `שאלה עם ${m.numOptions || 4} אופציות` : 'שאלה אמריקאית',
+        options: m.optionLabels || [],
+      };
+    });
+
+    try {
+      const res = await fetch('/api/lab/generate-mock-exam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          size,
+          courseName: state.course.name,
+          topicDistribution,
+          sampleQuestions,
+          style,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data?.reason === 'no_api_key') {
+          mockResult.innerHTML = `<div class="ai-error"><strong>מפתח ה-API של הבינה המלאכותית עוד לא מוגדר.</strong><p>הוסף GEMINI_API_KEY לסביבת הייצור.</p></div>`;
+        } else {
+          mockResult.innerHTML = `<div class="ai-error">${escapeHtml(data?.error || 'שגיאה לא ידועה')}</div>`;
+        }
+        return;
+      }
+
+      // Show preview of generated questions, then let user start
+      const aiQuestions = data.questions;
+      mockResult.innerHTML = `
+        <div class="ai-success">${escapeHtml(data.examTitle || 'מבחן דמה')} — ${aiQuestions.length} שאלות מוכנות</div>
+        <div class="ai-questions">
+          ${aiQuestions.map((q, i) => renderAiQuestion(q, i)).join('')}
+        </div>
+        <div class="ai-actions">
+          <button class="btn btn-primary btn-lg" id="btn-start-ai-mock">התחל מבחן דמה (${aiQuestions.length} שאלות)</button>
+        </div>
+      `;
+      document.getElementById('btn-start-ai-mock').addEventListener('click', () => {
+        startAiQuiz(aiQuestions, timer, mockMode === 'exam');
+      });
+    } catch (err) {
+      mockResult.innerHTML = `<div class="ai-error">שגיאת רשת: ${escapeHtml(err.message || String(err))}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>התחל מבחן דמה';
+    }
   });
 
   // Lab card 2: AI generator
@@ -2196,7 +2298,7 @@ function renderAiQuestion(q, i) {
 }
 
 // Wrap AI-generated questions into a quiz session
-function startAiQuiz(aiQuestions) {
+function startAiQuiz(aiQuestions, timerSeconds = 0, examMode = false) {
   // Inject into Data so the existing quiz UI can render them transparently
   Data._aiInjected = Data._aiInjected || {};
   const wrapped = aiQuestions.map((aq, i) => {
@@ -2228,7 +2330,7 @@ function startAiQuiz(aiQuestions) {
       _code: aq.code,
     };
   });
-  startQuiz({ questions: wrapped, timerSeconds: 0, examMode: false });
+  startQuiz({ questions: wrapped, timerSeconds, examMode });
 }
 
 // ===== Render: Progress =====
