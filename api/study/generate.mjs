@@ -152,8 +152,8 @@ ${safe}
 
 async function callGemini(summaryText, title) {
   const apiKey = process.env.GEMINI_API_KEY;
-  // Try models in order of preference: 2.5-flash > 2.0-flash > flash-lite
-  const models = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-2.0-flash,gemini-2.0-flash-lite').split(',');
+  // Try models in order of preference; each has a separate daily quota pool
+  const models = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-flash-latest').split(',');
   if (!apiKey) {
     throw Object.assign(new Error('GEMINI_API_KEY not configured'), { http: 503, code: 'no_api_key' });
   }
