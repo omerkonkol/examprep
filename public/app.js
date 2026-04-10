@@ -833,7 +833,10 @@ function renderLanding() {
         if (!res.ok) throw new Error('send failed');
         contactForm.reset();
         const success = document.getElementById('contact-success');
-        if (success) success.hidden = false;
+        if (success) {
+          success.hidden = false;
+          setTimeout(() => { success.hidden = true; }, 5000);
+        }
       } catch {
         alert('שגיאה בשליחה. אפשר לשלוח ישירות ל-hi@examprep.app');
       } finally {
@@ -1648,14 +1651,13 @@ function renderSummary() {
   const score = Math.round((b.correct / b.size) * 100);
   document.getElementById('summary-score-num').textContent = score + '%';
 
-  // Emoji + title based on score
-  let emoji = '🎉', title = 'מצוין!';
-  if (score >= 90) { emoji = '🏆'; title = 'מושלם!'; }
-  else if (score >= 75) { emoji = '🎯'; title = 'מצוין!'; }
-  else if (score >= 60) { emoji = '👍'; title = 'יפה מאוד!'; }
-  else if (score >= 40) { emoji = '💪'; title = 'יש מה לתרגל'; }
-  else { emoji = '📚'; title = 'בוא נלמד מהטעויות'; }
-  document.getElementById('summary-emoji').textContent = emoji;
+  // Title based on score
+  let title = 'מצוין!';
+  if (score >= 90) title = 'מושלם!';
+  else if (score >= 75) title = 'מצוין!';
+  else if (score >= 60) title = 'יפה מאוד!';
+  else if (score >= 40) title = 'יש מה לתרגל';
+  else title = 'בוא נלמד מהטעויות';
   document.getElementById('summary-title').textContent = title;
   document.getElementById('summary-sub').textContent = `${b.correct} מתוך ${b.size} שאלות נכונות${b.examMode ? ' · מצב מבחן' : ''}`;
 
