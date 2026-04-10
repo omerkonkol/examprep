@@ -596,12 +596,12 @@ function pickRandom(arr, n) {
   }
   return a.slice(0, Math.min(n, a.length));
 }
-function toast(msg, type = '') {
+function toast(msg, type = '', duration = 3000) {
   const el = document.createElement('div');
   el.className = 'toast ' + type;
   el.textContent = msg;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3000);
+  setTimeout(() => el.remove(), duration);
 }
 
 // Render explanation text with inline `code` and **bold** support
@@ -2140,8 +2140,9 @@ function showUploadPdfModal(courseId) {
       statusEl.textContent = 'הושלם!';
       fill.style.width = '100%';
       toast(result.question_count ? `המבחן הועלה בהצלחה! ${result.question_count} שאלות זוהו.` : 'המבחן הועלה בהצלחה!', 'success');
-      if (result.warning) {
-        setTimeout(() => toast(result.warning, 'warning'), 1500);
+      // Show file validation warnings
+      if (result.warnings && result.warnings.length) {
+        result.warnings.forEach((w, i) => setTimeout(() => toast(w, 'warning', 8000), 1500 + i * 2000));
       }
       close();
 

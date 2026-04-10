@@ -105,6 +105,104 @@ async function callGemini(prompt) {
   return null;
 }
 
+// ===== File validation helpers =====
+function extractYears(text) {
+  const matches = text.match(/\b(20[1-3]\d)\b/g);
+  return [...new Set(matches || [])];
+}
+
+function extractSemester(text) {
+  if (/סמסטר\s*[אa'׳]/i.test(text)) return 'א';
+  if (/סמסטר\s*[בb'׳]/i.test(text)) return 'ב';
+  if (/סמסטר\s*(?:קיץ|ג|c)/i.test(text)) return 'קיץ';
+  return null;
+}
+
+function extractMoed(text) {
+  if (/מועד\s*[אa'׳]/i.test(text)) return 'א';
+  if (/מועד\s*[בb'׳]/i.test(text)) return 'ב';
+  if (/מועד\s*(?:מיוחד|ג|c)/i.test(text)) return 'מיוחד';
+  return null;
+}
+
+function extractCourseName(text) {
+  const patterns = [
+    /(?:קורס|מקצוע|נושא)[:\s]+([^\n,]{3,40})/,
+    /(?:בחינה|מבחן)\s+ב([^\n,]{3,40})/,
+    /(?:course|subject)[:\s]+([^\n,]{3,40})/i,
+  ];
+  for (const p of patterns) { const m = text.match(p); if (m) return m[1].trim(); }
+  return null;
+}
+
+function extractQuestionCount(text) {
+  const m = text.match(/(\d+)\s*(?:שאלות|questions)/i);
+  return m ? parseInt(m[1]) : null;
+}
+
+function commonWords(a, b) {
+  const wordsA = new Set(a.split(/\s+/).filter(w => w.length > 2));
+  const wordsB = new Set(b.split(/\s+/).filter(w => w.length > 2));
+  let common = 0;
+  for (const w of wordsA) if (wordsB.has(w)) common++;
+  return wordsA.size > 0 ? common / wordsA.size : 0;
+}
+
+function validateFiles(name, examHeader, solHeader) {
+  const warnings = [];
+
+  const pdfYears = extractYears(examHeader);
+  const nameYears = extractYears(name);
+  const pdfMoed = extractMoed(examHeader);
+  const nameMoed = extractMoed(name);
+  const pdfCourse = extractCourseName(examHeader);
+
+  // 1. Year mismatch: name vs PDF
+  if (nameYears.length && pdfYears.length && !pdfYears.includes(nameYears[0])) {
+    warnings.push(`שים לב: רשמת "${nameYears[0]}" בשם, אבל בקובץ מופיעה השנה ${pdfYears.join('/')}.`);
+  }
+
+  // 2. Moed mismatch: name vs PDF
+  if (nameMoed && pdfMoed && nameMoed !== pdfMoed) {
+    warnings.push(`שים לב: רשמת "מועד ${nameMoed}" בשם, אבל בקובץ כתוב "מועד ${pdfMoed}".`);
+  }
+
+  // 3. Solution vs exam validation
+  if (solHeader) {
+    const solYears = extractYears(solHeader);
+    const solMoed = extractMoed(solHeader);
+    const solSem = extractSemester(solHeader);
+    const examSem = extractSemester(examHeader);
+    const solCourse = extractCourseName(solHeader);
+
+    // Year mismatch
+    if (pdfYears.length && solYears.length && !pdfYears.some(y => solYears.includes(y))) {
+      warnings.push(`שים לב: המבחן משנת ${pdfYears[0]} אבל הפתרון משנת ${solYears[0]}. ודא שהעלית את הפתרון הנכון.`);
+    }
+    // Moed mismatch
+    if (pdfMoed && solMoed && pdfMoed !== solMoed) {
+      warnings.push(`שים לב: המבחן ממועד ${pdfMoed} אבל הפתרון ממועד ${solMoed}.`);
+    }
+    // Semester mismatch
+    if (examSem && solSem && examSem !== solSem) {
+      warnings.push(`שים לב: המבחן מסמסטר ${examSem} אבל הפתרון מסמסטר ${solSem}.`);
+    }
+    // Course name mismatch
+    if (pdfCourse && solCourse && commonWords(pdfCourse, solCourse) < 0.3) {
+      warnings.push(`שים לב: נראה שהמבחן בנושא "${pdfCourse}" אבל הפתרון בנושא "${solCourse}".`);
+    }
+    // Very low text similarity — likely unrelated files
+    if (examHeader.length > 100 && solHeader.length > 100) {
+      const sim = commonWords(examHeader, solHeader);
+      if (sim < 0.1) {
+        warnings.push('שים לב: הקבצים נראים שונים מאוד — ודא שהפתרון מתאים למבחן.');
+      }
+    }
+  }
+
+  return warnings;
+}
+
 function buildExtractionPrompt(text, hasSolution) {
   return `אתה מומחה בחילוץ שאלות אמריקאיות ממבחנים. חלץ את כל השאלות מהטקסט הבא.
 
@@ -176,6 +274,13 @@ export default async function handler(req, res) {
     } catch (e) {
       console.error('[upload] text extraction failed:', e.message);
     }
+
+    // Validate files match what user claimed
+    const fileWarnings = validateFiles(
+      name,
+      examText.slice(0, 1000),
+      solText ? solText.slice(0, 1000) : null
+    );
 
     const combinedText = solText ? `=== מבחן ===\n${examText}\n\n=== פתרון ===\n${solText}` : examText;
 
@@ -251,6 +356,7 @@ export default async function handler(req, res) {
       exam_id: exam.id,
       question_count: questions.length,
       mode: questions.length > 0 ? 'text' : 'pending',
+      ...(fileWarnings.length && { warnings: fileWarnings }),
     });
   } catch (err) {
     console.error('[upload] fatal:', err?.message || err);
