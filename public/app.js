@@ -1005,7 +1005,7 @@ async function renderDashboard() {
         סך ניסיונות
       </div>
       <div class="metric-value">${stats.total}</div>
-      <div class="metric-sub"><strong>${stats.unique}</strong> שאלות ייחודיות</div>
+      <div class="metric-sub">${stats.unique} שאלות ייחודיות</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">
@@ -1042,8 +1042,8 @@ async function renderDashboard() {
       <h3>תוכנה 1</h3>
       <div class="desc">בנק שאלות אמריקאיות מבחינות עבר של תוכנה 1 — אונ' תל אביב. כולל הסברים מפורטים בעברית לכל שאלה.</div>
       <div class="meta">
-        <span><strong>${totalQuestions}</strong> שאלות</span>
-        <span><strong>${totalExams}</strong> מבחנים</span>
+        <span>${totalQuestions} שאלות</span>
+        <span>${totalExams} מבחנים</span>
         <span class="ready-pill">מוכן לתרגול</span>
       </div>
     </div>

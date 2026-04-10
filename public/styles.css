@@ -1130,7 +1130,11 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
 .course-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-md); }
 .course-card h3 { font-size: 20px; margin-bottom: 6px; color: var(--gray-900); }
 .course-card .desc { font-size: 14px; color: var(--text-muted); margin-bottom: 18px; line-height: 1.5; min-height: 42px; }
-.course-card .meta { display: flex; gap: 18px; font-size: 13px; color: var(--text-soft); }
+.course-card .meta {
+  display: flex; gap: 18px; font-size: 13px; color: var(--text-soft);
+  direction: rtl; unicode-bidi: plaintext;
+}
+.course-card .meta span { unicode-bidi: isolate; }
 .course-card .meta strong { color: var(--gray-900); font-weight: 700; }
 .course-card.add { border-style: dashed; background: var(--bg-soft); }
 .course-card.add:hover { border-color: var(--brand-400); background: var(--brand-50); }
@@ -3882,10 +3886,13 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
   font-variant-numeric: tabular-nums;
   letter-spacing: -.02em;
   margin-bottom: 6px;
+  direction: ltr; unicode-bidi: isolate;
+  text-align: right;
 }
 .metric-card .metric-sub {
   font-size: 12px; color: var(--text-muted);
   line-height: 1.4;
+  unicode-bidi: plaintext;
 }
 .metric-card .metric-sub strong {
   color: var(--gray-700); font-weight: 700;
@@ -3932,6 +3939,7 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   color: var(--gray-900);
+  direction: ltr; unicode-bidi: isolate;
 }
 .data-table .col-action { text-align: left; width: 1%; }
 .data-table .row-title {
