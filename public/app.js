@@ -688,7 +688,7 @@ function generateTips(questions, attempts, batches, mastery) {
   if (uncovered.length >= 2) {
     tips.push({
       icon: '🗺️', tone: 'info', title: `${uncovered.length} נושאים שעוד לא נגעת בהם`,
-      body: `יש בבנק נושאים שלא ניסית אף שאלה מתוכם: ${uncovered.slice(0, 3).map(u => u.name).join(', ')}${uncovered.length > 3 ? '...' : ''}. שים לב — מבחן אמיתי יכול לחבר שאלה מכל אחד מהם.`,
+      body: `יש בקורס נושאים שלא ניסית אף שאלה מתוכם: ${uncovered.slice(0, 3).map(u => u.name).join(', ')}${uncovered.length > 3 ? '...' : ''}. שים לב — מבחן אמיתי יכול לחבר שאלה מכל אחד מהם.`,
       cta: 'הצג את כל הנושאים', ctaRoute: 'insights',
     });
   }
@@ -1563,7 +1563,7 @@ function renderMistakeReview() {
   });
 
   if (!wrongQs.length) {
-    $app.innerHTML = '<div class="loader-screen"><div><h2>אין טעויות לסקור! 🎉</h2><p style="margin-top:14px"><a href="#/dashboard" class="btn btn-primary" data-route="/dashboard">חזרה לדשבורד</a></p></div></div>';
+    $app.innerHTML = '<div class="loader-screen"><div><h2>אין טעויות לסקור! 🎉</h2><p style="margin-top:14px"><a href="#/dashboard" class="btn btn-primary" data-route="/dashboard">חזרה למסך הבית</a></p></div></div>';
     document.querySelectorAll('[data-route]').forEach(link => {
       link.addEventListener('click', (e) => { e.preventDefault(); navigate(link.getAttribute('data-route')); });
     });
@@ -2217,7 +2217,7 @@ async function renderProgress() {
             <span class="color-dot" style="--dot-color:${m.color}"></span>
             ${escapeHtml(m.name)}
           </div>
-          <div class="row-sub">${m.count} שאלות בבנק · ${m.attemptCount} ניסיונות</div>
+          <div class="row-sub">${m.count} שאלות בקורס · ${m.attemptCount} ניסיונות</div>
         </td>
         <td class="num">${cov}%</td>
         <td>
@@ -2266,7 +2266,7 @@ async function renderProgress() {
   const batchEl = document.getElementById('recent-batches');
   if (!recent.length) {
     batchEl.className = '';
-    batchEl.innerHTML = '<div class="empty-state">עוד לא ביצעת מקבצי תרגול. תתחיל מהדשבורד.</div>';
+    batchEl.innerHTML = '<div class="empty-state">עוד לא ביצעת מקבצי תרגול. תתחיל ממסך הבית.</div>';
   } else {
     batchEl.className = 'data-table-wrap';
     const rows = recent.map(b => {
@@ -2503,7 +2503,7 @@ const PLAN_INFO = {
   free:      { label: 'FREE',      desc: '2 חבילות לימוד · 5 קבצי PDF · ללא AI' },
   basic:     { label: 'BASIC',     desc: '30 חבילות · 30 PDFs · 100 שאלות AI · 5 קורסים' },
   pro:       { label: 'PRO',       desc: '150 PDFs · 500 שאלות AI · קורסים ללא הגבלה' },
-  education: { label: 'EDUCATION', desc: 'הכל מ-Pro + 50 משתמשי משנה + דשבורד מורה' },
+  education: { label: 'EDUCATION', desc: 'הכל מ-Pro + 50 משתמשי משנה + לוח בקרה למורה' },
 };
 
 function renderSettings(initialTab) {
@@ -2975,11 +2975,13 @@ async function renderStudyCreate() {
       }
 
       // Persist locally and bump quota
+      const packTitle = data.title || (activeTab === 'paste'
+        ? (document.getElementById('study-title-paste').value.trim() || 'סיכום ללא שם')
+        : (fileInput.files[0].name.replace(/\.pdf$/i, '') || 'סיכום ללא שם'));
       const pack = {
         id: 'local_' + Date.now(),
-        title: data.title || (activeTab === 'paste'
-          ? (document.getElementById('study-title-paste').value.trim() || 'סיכום ללא שם')
-          : (fileInput.files[0].name.replace(/\.pdf$/i, '') || 'סיכום ללא שם')),
+        title: packTitle,
+        courseName: state.course?.name || packTitle,
         source_kind: data.source_kind || activeTab,
         materials: data.materials || {},
         created_at: new Date().toISOString(),
