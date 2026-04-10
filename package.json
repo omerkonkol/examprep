@@ -9,6 +9,7 @@
     "start": "node server.mjs"
   },
   "dependencies": {
+    "resend": "^6.10.0",
     "unpdf": "^0.12.0"
   },
   "engines": {

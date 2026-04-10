@@ -876,60 +876,6 @@ function initReviewsCarousel() {
   });
 }
 
-// ===== PWA Install =====
-function initPwaInstall() {
-  const banner = document.getElementById('pwa-install-banner');
-  if (!banner) return;
-
-  // Only show on mobile
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  const dismissed = localStorage.getItem('pwa-install-dismissed');
-
-  if (!isMobile || isStandalone || dismissed) return;
-  banner.hidden = false;
-
-  const installBtn = document.getElementById('pwa-install-btn');
-  const dismissBtn = document.getElementById('pwa-install-dismiss');
-
-  installBtn.addEventListener('click', () => {
-    // If browser supports native prompt (Chrome/Edge Android)
-    if (window.__pwaPrompt) {
-      window.__pwaPrompt.prompt();
-      window.__pwaPrompt.userChoice.then((r) => {
-        if (r.outcome === 'accepted') banner.hidden = true;
-        window.__pwaPrompt = null;
-      });
-    } else {
-      // Show manual install guide (iOS Safari or other browsers)
-      showPwaGuide();
-    }
-  });
-
-  dismissBtn.addEventListener('click', () => {
-    banner.hidden = true;
-    localStorage.setItem('pwa-install-dismissed', '1');
-  });
-}
-
-function showPwaGuide() {
-  const modal = document.getElementById('pwa-guide-modal');
-  if (!modal) return;
-  modal.hidden = false;
-
-  // Show the right section based on platform
-  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const iosSection = document.getElementById('pwa-guide-ios');
-  const androidSection = document.getElementById('pwa-guide-android');
-  if (iosSection) iosSection.style.display = isIOS ? 'block' : 'none';
-  if (androidSection) androidSection.style.display = isIOS ? 'none' : 'block';
-
-  const closeBtn = document.getElementById('pwa-guide-close');
-  const handleClose = () => { modal.hidden = true; closeBtn.removeEventListener('click', handleClose); };
-  closeBtn.addEventListener('click', handleClose);
-  modal.addEventListener('click', (e) => { if (e.target === modal) handleClose(); });
-}
-
 // ===== Render: Auth (split-screen, with all auth UX features) =====
 function renderAuth(signupMode = false) {
   $app.innerHTML = '';
@@ -1128,9 +1074,6 @@ async function renderDashboard() {
 
   wireTopbar();
   document.getElementById('dash-greet-title').textContent = `שלום ${state.user.name}`;
-
-  // PWA install banner — mobile only
-  initPwaInstall();
 
   // Stats — clean monochrome metric cards with subtle SVG label icons
   const stats = Progress.stats(state.user.email);

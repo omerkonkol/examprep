@@ -27,6 +27,7 @@ import crypto from 'node:crypto';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
 import { processExamPair, fileHash } from './scripts/process-pdf.mjs';
+import { Resend } from 'resend';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -66,6 +67,10 @@ const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, { auth: { persistSession: false } })
   : null;
+
+// Resend email client — only active when RESEND_API_KEY is set.
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const CONTACT_NOTIFY_EMAIL = process.env.CONTACT_NOTIFY_EMAIL || '';
 
 // Build a per-request user-scoped client. RLS enforces own-rows-only.
 function userClient(jwt) {
@@ -382,16 +387,50 @@ app.post('/api/contact', rateLimitMiddleware(3), async (req, res) => {
   const { name, email, subject, message } = req.body || {};
   if (!name || !email || !message) return res.status(400).json({ error: 'missing fields' });
   if (message.length > 5000) return res.status(400).json({ error: 'message too long' });
+
+  const safeName = name.slice(0, 200);
+  const safeEmail = email.slice(0, 320);
+  const safeSubject = (subject || 'general').slice(0, 100);
+  const safeMessage = message.slice(0, 5000);
+
   // Store in DB for later review
   if (supabaseAdmin) {
     await supabaseAdmin.from('ep_contact_messages').insert({
-      name: name.slice(0, 200),
-      email: email.slice(0, 320),
-      subject: (subject || 'general').slice(0, 100),
-      message: message.slice(0, 5000),
+      name: safeName, email: safeEmail, subject: safeSubject, message: safeMessage,
     });
   }
-  console.log(`[CONTACT] from=${email} subject=${subject} name=${name}`);
+
+  // Send email notification to site owner
+  if (resend && CONTACT_NOTIFY_EMAIL) {
+    const subjectMap = {
+      general: 'שאלה כללית', support: 'תמיכה טכנית', billing: 'חיוב ומנויים',
+      education: 'תוכנית Education', partnership: 'שיתוף פעולה',
+      accessibility: 'נגישות', other: 'אחר',
+    };
+    const subjectLabel = subjectMap[safeSubject] || safeSubject;
+    resend.emails.send({
+      from: 'ExamPrep <notifications@examprep.app>',
+      to: CONTACT_NOTIFY_EMAIL,
+      subject: `[ExamPrep] הודעה חדשה: ${subjectLabel}`,
+      html: `
+        <div dir="rtl" style="font-family:Arial,sans-serif;max-width:600px;">
+          <h2 style="color:#1d4ed8;">הודעה חדשה מטופס יצירת קשר</h2>
+          <table style="width:100%;border-collapse:collapse;">
+            <tr><td style="padding:8px;font-weight:bold;color:#666;">שם:</td><td style="padding:8px;">${safeName}</td></tr>
+            <tr><td style="padding:8px;font-weight:bold;color:#666;">אימייל:</td><td style="padding:8px;"><a href="mailto:${safeEmail}">${safeEmail}</a></td></tr>
+            <tr><td style="padding:8px;font-weight:bold;color:#666;">נושא:</td><td style="padding:8px;">${subjectLabel}</td></tr>
+          </table>
+          <div style="margin-top:16px;padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
+            <p style="margin:0;white-space:pre-wrap;">${safeMessage}</p>
+          </div>
+          <p style="margin-top:16px;font-size:12px;color:#94a3b8;">ניתן להשיב ישירות ל-${safeEmail}</p>
+        </div>
+      `,
+      replyTo: safeEmail,
+    }).catch(err => console.error('[CONTACT] email send failed:', err));
+  }
+
+  console.log(`[CONTACT] from=${safeEmail} subject=${safeSubject} name=${safeName}`);
   res.json({ ok: true });
 });
 

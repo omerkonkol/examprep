@@ -484,6 +484,25 @@ BEGIN
 END;
 $$;
 
+-- ====== EP_CONTACT_MESSAGES ======
+-- Stores contact form submissions. No user_id FK because anonymous visitors
+-- can submit. Only service-role may insert/read (no public RLS policies).
+CREATE TABLE IF NOT EXISTS ep_contact_messages (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT 'general',
+  message TEXT NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ep_contact_messages_created_idx
+  ON ep_contact_messages(created_at DESC);
+
+-- RLS on with no policies = only service_role can read/write.
+ALTER TABLE ep_contact_messages ENABLE ROW LEVEL SECURITY;
+
 -- Lock these RPCs so only the service role + the owner can call them.
 REVOKE ALL ON FUNCTION reset_user_quotas_if_needed(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ep_reserve_pdf_slot(UUID, INTEGER, INTEGER, INTEGER, BIGINT) FROM PUBLIC;

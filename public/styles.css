@@ -883,65 +883,75 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
   .footer-grid { grid-template-columns: 1fr 1fr; }
 }
 
-/* ===== PWA Install Banner ===== */
-.pwa-install-banner {
-  margin-bottom: 20px; border-radius: 14px;
-  background: linear-gradient(135deg, var(--primary-50, #eef2ff), var(--primary-100, #e0e7ff));
-  border: 1px solid var(--primary-200, #c7d2fe);
-  overflow: hidden;
+/* ===== PWA Install Section (landing page, mobile only) ===== */
+/* Hidden on desktop */
+@media (min-width: 769px) { .pwa-section { display: none !important; } }
+.pwa-guide-cards {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 640px; margin: 0 auto;
 }
-[data-theme="dark"] .pwa-install-banner {
-  background: linear-gradient(135deg, rgba(99,102,241,.1), rgba(99,102,241,.05));
-  border-color: rgba(99,102,241,.25);
+@media (max-width: 600px) { .pwa-guide-cards { grid-template-columns: 1fr; } }
+.pwa-guide-card {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px;
+  padding: 20px 16px; text-align: center;
 }
-.pwa-install-inner {
-  display: flex; align-items: center; gap: 14px; padding: 16px 18px;
+.pwa-guide-card-title {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 16px; font-weight: 700; color: var(--text-1); margin-bottom: 16px;
 }
-.pwa-install-icon img { border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
-.pwa-install-text { flex: 1; }
-.pwa-install-text strong { font-size: 15px; display: block; color: var(--text-1); }
-.pwa-install-text p { font-size: 13px; color: var(--text-muted); margin: 2px 0 0; }
-.pwa-install-dismiss {
-  background: none; border: none; color: var(--text-muted); font-size: 18px;
-  cursor: pointer; padding: 4px; line-height: 1;
-}
-/* Hide PWA banner on desktop */
-@media (min-width: 769px) { .pwa-install-banner { display: none !important; } }
+.pwa-guide-steps { display: flex; flex-direction: column; gap: 18px; }
+.pwa-guide-step { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 
-/* ===== PWA Guide Modal ===== */
-.pwa-guide-modal { z-index: 10000; }
-.pwa-guide {
-  max-width: 500px; width: 92vw; max-height: 90vh; overflow-y: auto;
-  padding: 28px 24px;
+/* Mini phone mockups */
+.pwa-phone-frame {
+  width: 130px; height: 180px; border: 2px solid var(--border); border-radius: 16px;
+  background: var(--bg); overflow: hidden; display: flex; flex-direction: column;
+  font-size: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.08);
 }
-.pwa-guide-header { text-align: center; margin-bottom: 24px; }
-.pwa-guide-header h2 { font-size: 22px; margin: 12px 0 6px; }
-.pwa-guide-header p { font-size: 14px; color: var(--text-muted); }
-.pwa-guide-section { margin-bottom: 24px; }
-.pwa-guide-section h3 {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 16px; font-weight: 700; color: var(--text-1);
-  margin-bottom: 14px; padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+.pwa-phone-bar, .pwa-phone-top-bar {
+  background: var(--bg-subtle); padding: 6px 8px; font-size: 8px; color: var(--text-muted);
+  border-bottom: 1px solid var(--border); text-align: center;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
 }
-.pwa-steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 16px; }
-.pwa-steps li { display: flex; gap: 14px; align-items: flex-start; }
-.pwa-step-num {
-  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
-  background: var(--primary); color: #fff; font-weight: 700; font-size: 14px;
-  display: flex; align-items: center; justify-content: center;
+.pwa-phone-top-bar { justify-content: space-between; padding: 6px 10px; }
+.pwa-phone-content { flex: 1; display: flex; align-items: center; justify-content: center; }
+.pwa-phone-logo { font-weight: 800; font-size: 13px; color: var(--primary); }
+.pwa-phone-bottom-bar {
+  background: var(--bg-subtle); padding: 8px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-around;
 }
-.pwa-step-content strong { font-size: 15px; display: block; margin-bottom: 2px; }
-.pwa-step-content p { font-size: 13px; color: var(--text-muted); margin: 0; line-height: 1.5; }
-.pwa-step-visual {
-  margin-top: 8px; padding: 10px 16px;
-  background: var(--bg-subtle); border-radius: 10px;
+.pwa-highlight-icon {
+  color: var(--primary); background: rgba(var(--primary-rgb, 99,102,241), .12);
+  border-radius: 6px; padding: 3px; display: inline-flex;
+  animation: pwa-pulse 1.5s ease-in-out infinite;
+}
+@keyframes pwa-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+.pwa-phone-menu {
+  padding: 10px; display: flex; flex-direction: column; gap: 1px; height: 100%;
+  justify-content: center;
+}
+.pwa-menu-item {
+  padding: 8px 10px; border-radius: 6px; font-size: 10px; color: var(--text-2);
+  display: flex; align-items: center; gap: 6px;
+}
+.pwa-menu-highlight {
+  background: rgba(var(--primary-rgb, 99,102,241), .1); color: var(--primary); font-weight: 600;
+  border: 1px solid rgba(var(--primary-rgb, 99,102,241), .2);
+}
+.pwa-phone-dialog {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 20px 16px; height: 100%; justify-content: center;
+}
+.pwa-phone-dialog div:first-of-type { font-weight: 700; font-size: 12px; color: var(--text-1); }
+.pwa-dialog-btn {
+  background: var(--primary); color: #fff; border-radius: 8px;
+  padding: 6px 20px; font-size: 11px; font-weight: 600;
+}
+.pwa-guide-step-label { font-size: 13px; font-weight: 500; color: var(--text-2); }
+.pwa-step-badge {
   display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; background: var(--primary);
+  color: #fff; font-size: 11px; font-weight: 700; margin-inline-end: 4px;
 }
-.pwa-guide-footer {
-  text-align: center; padding-top: 16px; border-top: 1px solid var(--border);
-}
-.pwa-guide-footer p { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 
 /* ===== Cookie Consent Banner ===== */
 .cookie-banner {
