@@ -472,82 +472,160 @@
       <section class="section pwa-section" id="pwa-install">
         <div class="container">
           <span class="section-eyebrow">אפליקציה לטלפון</span>
-          <h2 class="section-title">הוסף את ExamPrep למסך הבית</h2>
-          <p class="section-sub">בלי App Store. 3 צעדים וזה עובד כמו אפליקציה רגילה.</p>
+          <h2 class="section-title">התקן את ExamPrep בטלפון</h2>
+          <p class="section-sub">בלי App Store. בצע 3 צעדים פשוטים והאפליקציה תופיע במסך הבית שלך.</p>
 
-          <!-- iOS Guide -->
-          <div class="pwa-platform" id="pwa-ios-guide">
-            <div class="pwa-platform-badge">iPhone / iPad (Safari)</div>
-            <div class="pwa-steps-strip">
-              <div class="pwa-step-card">
-                <div class="pwa-step-num-lg">1</div>
-                <div class="pwa-step-icon-box">
-                  <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="var(--primary)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          <div class="pwa-tabs">
+            <button class="pwa-tab is-active" data-pwa-tab="ios">iPhone / iPad</button>
+            <button class="pwa-tab" data-pwa-tab="android">Android</button>
+          </div>
+
+          <!-- iOS Steps -->
+          <div class="pwa-steps-grid" id="pwa-panel-ios">
+            <div class="pwa-step-block">
+              <span class="pwa-badge">1</span>
+              <div class="pwa-device">
+                <div class="pwa-device-notch"></div>
+                <div class="pwa-device-screen">
+                  <div class="pwa-screen-header">
+                    <img src="/public/images/logo.png?v=20260410-8" alt="" class="pwa-screen-logo" />
+                    <span>ExamPrep</span>
+                  </div>
+                  <div class="pwa-screen-body">
+                    <div class="pwa-screen-text">הסיכום שלך הופך לכלי תרגול...</div>
+                  </div>
+                  <div class="pwa-screen-safari-bar">
+                    <div class="pwa-safari-icons">
+                      <span class="pwa-bar-icon">◁</span>
+                      <span class="pwa-bar-icon">▷</span>
+                      <span class="pwa-bar-icon pwa-share-btn">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                      </span>
+                      <span class="pwa-bar-icon">☰</span>
+                    </div>
+                  </div>
+                  <div class="pwa-arrow-pointer pwa-arrow-bottom">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="#ef4444" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14l-4-4h3V8h2v4h3l-4 4z"/></svg>
+                  </div>
                 </div>
-                <strong>לחץ על כפתור השיתוף</strong>
-                <p>בסרגל התחתון של Safari</p>
               </div>
-              <div class="pwa-step-arrow" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--text-muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-              </div>
-              <div class="pwa-step-card">
-                <div class="pwa-step-num-lg">2</div>
-                <div class="pwa-step-icon-box">
-                  <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="var(--primary)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              <strong>לחץ על כפתור השיתוף</strong>
+              <p>בתחתית מסך Safari</p>
+            </div>
+
+            <div class="pwa-step-block">
+              <span class="pwa-badge">2</span>
+              <div class="pwa-device">
+                <div class="pwa-device-notch"></div>
+                <div class="pwa-device-screen">
+                  <div class="pwa-screen-menu">
+                    <div class="pwa-menu-row">העתק</div>
+                    <div class="pwa-menu-row">הוסף לרשימת קריאה</div>
+                    <div class="pwa-menu-row pwa-menu-active">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                      הוסף למסך הבית
+                    </div>
+                    <div class="pwa-menu-row">הוסף למועדפים</div>
+                    <div class="pwa-menu-row">חפש בדף</div>
+                  </div>
+                  <div class="pwa-arrow-pointer pwa-arrow-menu">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="#ef4444" stroke="none"><path d="M12 2l4 4h-3v4h-2V6H8l4-4z"/><circle cx="12" cy="12" r="10" fill="none" stroke="#ef4444" stroke-width="2"/></svg>
+                  </div>
                 </div>
-                <strong>הוסף למסך הבית</strong>
-                <p>גלול למטה בתפריט ובחר</p>
               </div>
-              <div class="pwa-step-arrow" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--text-muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-              </div>
-              <div class="pwa-step-card">
-                <div class="pwa-step-num-lg">3</div>
-                <div class="pwa-step-icon-box pwa-step-done">
-                  <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <strong>בחר "הוסף למסך הבית"</strong>
+              <p>מהתפריט שנפתח</p>
+            </div>
+
+            <div class="pwa-step-block">
+              <span class="pwa-badge pwa-badge-done">✓</span>
+              <div class="pwa-device">
+                <div class="pwa-device-notch"></div>
+                <div class="pwa-device-screen pwa-screen-final">
+                  <div class="pwa-final-dialog">
+                    <img src="/public/images/logo.png?v=20260410-8" alt="ExamPrep" class="pwa-final-icon" />
+                    <div class="pwa-final-name">ExamPrep</div>
+                    <div class="pwa-final-url">examprep-pi.vercel.app</div>
+                    <div class="pwa-final-actions">
+                      <span class="pwa-final-cancel">ביטול</span>
+                      <span class="pwa-final-add">הוסף</span>
+                    </div>
+                  </div>
                 </div>
-                <strong>לחץ "הוסף"</strong>
-                <p>ExamPrep במסך הבית!</p>
               </div>
+              <strong>לחץ "הוסף" — סיימת!</strong>
+              <p>ExamPrep תופיע במסך הבית</p>
             </div>
           </div>
 
-          <!-- Android Guide -->
-          <div class="pwa-platform" id="pwa-android-guide">
-            <div class="pwa-platform-badge">Android (Chrome)</div>
-            <div class="pwa-steps-strip">
-              <div class="pwa-step-card">
-                <div class="pwa-step-num-lg">1</div>
-                <div class="pwa-step-icon-box">
-                  <svg viewBox="0 0 24 24" width="40" height="40" fill="var(--primary)" stroke="none"><circle cx="12" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="19" r="2.5"/></svg>
+          <!-- Android Steps -->
+          <div class="pwa-steps-grid" id="pwa-panel-android" hidden>
+            <div class="pwa-step-block">
+              <span class="pwa-badge">1</span>
+              <div class="pwa-device pwa-device-android">
+                <div class="pwa-device-screen">
+                  <div class="pwa-screen-chrome-bar">
+                    <span class="pwa-chrome-url">examprep-pi.vercel.app</span>
+                    <span class="pwa-chrome-dots">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                    </span>
+                  </div>
+                  <div class="pwa-screen-body">
+                    <img src="/public/images/logo.png?v=20260410-8" alt="" class="pwa-screen-logo" />
+                    <div class="pwa-screen-text">ExamPrep</div>
+                  </div>
+                  <div class="pwa-arrow-pointer pwa-arrow-top-left">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="#ef4444" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14l-4-4h3V8h2v4h3l-4 4z"/></svg>
+                  </div>
                 </div>
-                <strong>לחץ על ⋮</strong>
-                <p>בפינה הימנית העליונה</p>
               </div>
-              <div class="pwa-step-arrow" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--text-muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-              </div>
-              <div class="pwa-step-card">
-                <div class="pwa-step-num-lg">2</div>
-                <div class="pwa-step-icon-box">
-                  <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="var(--primary)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <strong>לחץ על ⋮</strong>
+              <p>בפינה הימנית העליונה של Chrome</p>
+            </div>
+
+            <div class="pwa-step-block">
+              <span class="pwa-badge">2</span>
+              <div class="pwa-device pwa-device-android">
+                <div class="pwa-device-screen">
+                  <div class="pwa-screen-menu">
+                    <div class="pwa-menu-row">כרטיסייה חדשה</div>
+                    <div class="pwa-menu-row">היסטוריה</div>
+                    <div class="pwa-menu-row pwa-menu-active">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      התקן אפליקציה
+                    </div>
+                    <div class="pwa-menu-row">הוסף למסך הבית</div>
+                    <div class="pwa-menu-row">הגדרות</div>
+                  </div>
+                  <div class="pwa-arrow-pointer pwa-arrow-menu">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="#ef4444" stroke="none"><path d="M12 2l4 4h-3v4h-2V6H8l4-4z"/><circle cx="12" cy="12" r="10" fill="none" stroke="#ef4444" stroke-width="2"/></svg>
+                  </div>
                 </div>
-                <strong>התקן אפליקציה</strong>
-                <p>בחר מהתפריט שנפתח</p>
               </div>
-              <div class="pwa-step-arrow" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--text-muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-              </div>
-              <div class="pwa-step-card">
-                <div class="pwa-step-num-lg">3</div>
-                <div class="pwa-step-icon-box pwa-step-done">
-                  <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <strong>בחר "התקן אפליקציה"</strong>
+              <p>מהתפריט שנפתח</p>
+            </div>
+
+            <div class="pwa-step-block">
+              <span class="pwa-badge pwa-badge-done">✓</span>
+              <div class="pwa-device pwa-device-android">
+                <div class="pwa-device-screen pwa-screen-final">
+                  <div class="pwa-final-dialog">
+                    <img src="/public/images/logo.png?v=20260410-8" alt="ExamPrep" class="pwa-final-icon" />
+                    <div class="pwa-final-name">ExamPrep</div>
+                    <div class="pwa-final-url">examprep-pi.vercel.app</div>
+                    <div class="pwa-final-actions">
+                      <span class="pwa-final-cancel">ביטול</span>
+                      <span class="pwa-final-add">התקן</span>
+                    </div>
+                  </div>
                 </div>
-                <strong>לחץ "התקן"</strong>
-                <p>ExamPrep במסך הבית!</p>
               </div>
+              <strong>לחץ "התקן" — סיימת!</strong>
+              <p>ExamPrep תופיע במסך הבית</p>
             </div>
           </div>
+
         </div>
       </section>
 
