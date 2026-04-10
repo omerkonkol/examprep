@@ -792,6 +792,54 @@ function renderLanding() {
       }
     });
   });
+
+  // Mobile reviews carousel — must run AFTER template is in the DOM
+  initReviewsCarousel();
+}
+
+function initReviewsCarousel() {
+  const grid = document.querySelector('.reviews-grid');
+  const stage = document.querySelector('[data-rm-stage]');
+  const dotsWrap = document.querySelector('[data-rm-dots]');
+  if (!grid || !stage || !dotsWrap) return;
+
+  const cards = [...grid.querySelectorAll('[data-review]')];
+  if (!cards.length) return;
+
+  const snapshots = cards.map(c => c.outerHTML);
+  let idx = 0;
+  let timer = null;
+  const INTERVAL = 6000;
+
+  // Build dots
+  snapshots.forEach((_, i) => {
+    const d = document.createElement('button');
+    d.type = 'button';
+    d.className = 'rm-dot' + (i === 0 ? ' is-active' : '');
+    d.setAttribute('aria-label', 'ביקורת ' + (i + 1));
+    d.addEventListener('click', () => goTo(i, true));
+    dotsWrap.appendChild(d);
+  });
+
+  const dots = [...dotsWrap.querySelectorAll('.rm-dot')];
+
+  function render(i) {
+    stage.innerHTML = snapshots[i];
+    void stage.offsetWidth;
+    dots.forEach((d, di) => d.classList.toggle('is-active', di === i));
+  }
+
+  function next() { idx = (idx + 1) % snapshots.length; render(idx); }
+  function goTo(i, user) { idx = i; render(idx); if (user) startTimer(); }
+  function startTimer() { stopTimer(); timer = setInterval(next, INTERVAL); }
+  function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+
+  render(0);
+  startTimer();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopTimer(); else startTimer();
+  });
 }
 
 // ===== Render: Auth (split-screen, with all auth UX features) =====
