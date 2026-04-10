@@ -9,7 +9,6 @@
     "start": "node server.mjs"
   },
   "dependencies": {
-    "busboy": "^1.6.0",
     "pdfjs-dist": "^4.10.38"
   },
   "engines": {

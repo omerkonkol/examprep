@@ -1977,19 +1977,35 @@ async function renderLab() {
         }
         return;
       }
-      // Render generated questions
-      result.innerHTML = `
-        <div class="ai-success">✨ נוצרו ${data.questions.length} שאלות חדשות לחלוטין!</div>
-        <div class="ai-questions">
-          ${data.questions.map((q, i) => renderAiQuestion(q, i)).join('')}
-        </div>
-        <div class="ai-actions">
-          <button class="btn btn-primary btn-lg" id="btn-practice-ai">🎯 תרגל את כל ה-${data.questions.length} עכשיו</button>
-        </div>
-      `;
-      document.getElementById('btn-practice-ai').addEventListener('click', () => {
-        startAiQuiz(data.questions);
-      });
+      // Render generated questions with delete buttons
+      let aiPool = [...data.questions];
+      function renderAiPool() {
+        if (!aiPool.length) {
+          result.innerHTML = '<div class="ai-error">הסרת את כל השאלות. צור שאלות חדשות.</div>';
+          return;
+        }
+        result.innerHTML = `
+          <div class="ai-success">✨ ${aiPool.length} שאלות מוכנות לתרגול</div>
+          <div class="ai-questions">
+            ${aiPool.map((q, i) => renderAiQuestion(q, i)).join('')}
+          </div>
+          <div class="ai-actions">
+            <button class="btn btn-primary btn-lg" id="btn-practice-ai">🎯 תרגל ${aiPool.length} שאלות</button>
+          </div>
+        `;
+        document.getElementById('btn-practice-ai').addEventListener('click', () => {
+          startAiQuiz(aiPool);
+        });
+        // Wire delete buttons
+        result.querySelectorAll('[data-remove-ai-q]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.dataset.removeAiQ, 10);
+            aiPool.splice(idx, 1);
+            renderAiPool();
+          });
+        });
+      }
+      renderAiPool();
     } catch (err) {
       result.innerHTML = `<div class="ai-error">❌ שגיאת רשת: ${escapeHtml(err.message || String(err))}</div>`;
     } finally {
@@ -2006,6 +2022,7 @@ function renderAiQuestion(q, i) {
         <span class="ai-q-num">שאלה ${i + 1}</span>
         <span class="ai-q-topic">${escapeHtml(q.topic)}</span>
         <span class="ai-q-diff ai-q-diff-${q.difficulty}">${q.difficulty === 'hard' ? 'קשה' : q.difficulty === 'medium' ? 'בינוני' : 'קל'}</span>
+        <button class="ai-q-remove" data-remove-ai-q="${i}" title="הסר שאלה">✕</button>
       </div>
       ${q.code ? `<pre class="ai-q-code"><code>${escapeHtml(q.code)}</code></pre>` : ''}
       <div class="ai-q-stem">${escapeHtml(q.stem)}</div>
@@ -2988,6 +3005,39 @@ async function renderStudyPack(packId) {
     });
   });
 
+  // Wire up study question removal
+  document.querySelectorAll('[data-remove-sq]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.removeSq, 10);
+      const questions = pack.materials?.questions;
+      if (questions && idx >= 0 && idx < questions.length) {
+        questions.splice(idx, 1);
+        StudyStore.save(pack); // persist to localStorage
+        const panel = document.getElementById('pack-panel-questions');
+        panel.innerHTML = renderStudyQuestions(questions);
+        // Re-wire show-answer + remove buttons
+        panel.querySelectorAll('[data-show-answer]').forEach(b => {
+          b.addEventListener('click', () => b.closest('.study-question').classList.add('revealed'));
+        });
+        panel.querySelectorAll('[data-remove-sq]').forEach(b => {
+          b.addEventListener('click', () => {
+            const i2 = parseInt(b.dataset.removeSq, 10);
+            if (questions[i2] !== undefined) {
+              questions.splice(i2, 1);
+              StudyStore.save(pack);
+              panel.innerHTML = renderStudyQuestions(questions);
+              // Recursive re-wire is fine since it rebuilds the DOM
+              panel.querySelectorAll('[data-show-answer]').forEach(bb => {
+                bb.addEventListener('click', () => bb.closest('.study-question').classList.add('revealed'));
+              });
+            }
+          });
+        });
+        toast('השאלה הוסרה', 'info');
+      }
+    });
+  });
+
   // Wire up open-question "show model answer"
   document.querySelectorAll('[data-show-model]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3003,8 +3053,11 @@ async function renderStudyPack(packId) {
 function renderStudyQuestions(questions) {
   if (!questions.length) return '<div class="empty-state">אין שאלות בחבילה זו.</div>';
   return questions.map((q, i) => `
-    <div class="study-question">
-      <div class="study-question-num">שאלה ${i + 1}</div>
+    <div class="study-question" data-sq-idx="${i}">
+      <div class="study-question-head">
+        <div class="study-question-num">שאלה ${i + 1}</div>
+        <button type="button" class="study-q-remove" data-remove-sq="${i}" title="הסר שאלה">✕</button>
+      </div>
       <div class="study-question-stem">${escapeHtml(q.stem)}</div>
       <ol class="study-question-options">
         ${q.options.map((opt, idx) => `
