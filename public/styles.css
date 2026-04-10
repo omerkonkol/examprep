@@ -4142,3 +4142,156 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
 }
 .insights-banner.warn { border-left-color: var(--amber-500); }
 .insights-banner.ok   { border-left-color: var(--emerald-500); }
+
+/* =====================================================
+   MOBILE EXPERIENCE OVERHAUL
+   Comprehensive phone optimization: reduce clutter,
+   hide heavy marketing panels, tighten spacing, improve
+   readability and navigation on small screens.
+   ===================================================== */
+
+/* ── Auth page: hide the blue marketing panel entirely on phones ── */
+@media (max-width: 920px) {
+  .auth-left {
+    display: none !important;
+  }
+  .auth-split {
+    grid-template-columns: 1fr !important;
+    min-height: 100vh;
+  }
+  .auth-right {
+    padding: 32px 20px 40px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+
+/* ── Hero: tighter on phone, smaller badge ── */
+@media (max-width: 640px) {
+  .hero { padding: 32px 0 40px; }
+  .hero h1 { font-size: clamp(26px, 7vw, 34px); }
+  .hero-sub { font-size: 14.5px; line-height: 1.6; margin-bottom: 20px; }
+  .hero-ctas { flex-direction: column; gap: 10px; }
+  .hero-ctas .btn { width: 100%; text-align: center; }
+  .badge { font-size: 12px; padding: 8px 14px; line-height: 1.4; }
+  .hero-trust { gap: 10px; font-size: 12px; flex-wrap: wrap; }
+  .hero-visual { margin-top: 10px; }
+  .hero-image { border-radius: var(--radius-lg); }
+}
+
+/* ── Sections: less vertical padding on phone ── */
+@media (max-width: 640px) {
+  .section { padding: 50px 0; }
+  .section-title { font-size: clamp(24px, 6vw, 32px); margin-bottom: 10px; }
+  .section-sub { font-size: 14.5px; margin-bottom: 36px; }
+  .section-eyebrow { font-size: 10px; padding: 5px 11px; }
+}
+
+/* ── Feature cards: 2-column compact grid on phone, not single column ── */
+@media (max-width: 920px) and (min-width: 481px) {
+  .features-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 14px;
+  }
+  .feature-card {
+    padding: 20px 16px;
+  }
+  .feature-card h3 { font-size: 15px; margin-bottom: 6px; }
+  .feature-card p { font-size: 13px; line-height: 1.55; }
+  .feature-icon { width: 42px; height: 42px; border-radius: 12px; margin-bottom: 12px; }
+  .feature-icon svg { width: 20px; height: 20px; }
+  .feature-pill { font-size: 8px; padding: 3px 8px; top: 10px; left: 10px; }
+}
+@media (max-width: 480px) {
+  .features-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px;
+  }
+  .feature-card {
+    padding: 16px 14px;
+  }
+  .feature-card h3 { font-size: 14px; margin-bottom: 4px; }
+  .feature-card p { font-size: 12px; line-height: 1.5; }
+  .feature-icon { width: 36px; height: 36px; border-radius: 10px; margin-bottom: 10px; }
+  .feature-icon svg { width: 18px; height: 18px; }
+  .feature-pill { font-size: 7px; padding: 2px 7px; top: 8px; left: 8px; }
+}
+
+/* ── Showcase sections: compact on phone ── */
+@media (max-width: 640px) {
+  .showcase { padding: 40px 0; }
+  .showcase-grid { gap: 24px !important; }
+  .showcase-text h2 { font-size: clamp(22px, 5.5vw, 28px); margin-bottom: 12px; }
+  .showcase-text p { font-size: 14px; margin-bottom: 16px; }
+  .showcase-points li { font-size: 13px; gap: 8px; }
+  .showcase-points .point-icon { width: 24px; height: 24px; padding: 5px; }
+  .showcase-visual img {
+    border-radius: var(--radius-lg);
+    max-height: 260px;
+    object-fit: cover;
+    object-position: center top;
+  }
+}
+
+/* ── Pain points: 2-column on phone instead of stacked ── */
+@media (max-width: 640px) {
+  .pain-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px;
+  }
+  .pain-card {
+    padding: 14px 12px !important;
+    gap: 10px !important;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .pain-card .pain-icon { width: 34px !important; height: 34px !important; }
+  .pain-card h3 { font-size: 13px; }
+  .pain-card p { font-size: 11.5px; line-height: 1.5; }
+}
+
+/* ── How it works: smaller image ── */
+@media (max-width: 640px) {
+  .how .how-image-wrap { padding: 10px 0; }
+  .how .how-image { max-height: 220px; object-fit: contain; }
+}
+
+/* ── Reviews: already handled by carousel ── */
+
+/* ── Pricing: tighter cards on phone ── */
+@media (max-width: 600px) {
+  .price-card { padding: 24px 18px; }
+  .price-amount { font-size: 34px; }
+  .price-desc { font-size: 13px; min-height: auto; }
+  .price-features li { font-size: 13px; }
+}
+
+/* ── FAQ: tighter on phone ── */
+@media (max-width: 640px) {
+  .faq-q { font-size: 14px; padding: 14px 16px; }
+  .faq-a-inner { font-size: 13px; padding: 12px 16px 16px; }
+}
+
+/* ── Final CTA: tighter ── */
+@media (max-width: 640px) {
+  .final-cta h2 { font-size: clamp(22px, 6vw, 28px); }
+  .final-cta p { font-size: 14px; }
+  .cta-trust { gap: 8px; font-size: 12px; flex-wrap: wrap; justify-content: center; }
+}
+
+/* ── Footer: compact ── */
+@media (max-width: 640px) {
+  .footer { padding: 40px 0 24px; }
+  .footer-grid { grid-template-columns: 1fr !important; gap: 28px; text-align: center; }
+  .footer-brand p { font-size: 13px; }
+  .footer-links { justify-content: center; }
+}
+
+/* ── Nav: tighter mobile hamburger ── */
+@media (max-width: 640px) {
+  .nav-brand .logo-img { height: 28px; }
+  .topbar { padding: 10px 16px; }
+  .topbar .logo-img { height: 26px; }
+}
