@@ -4155,12 +4155,19 @@ function updateSelfTestResult(answers) {
 }
 
 // ===== Boot =====
-(async function boot() {
+(function boot() {
   Theme.init();
-  // Try to restore Supabase session, fall back to localStorage cache
-  state.user = await Auth.restoreSession().catch(() => Auth.current());
+  // Render immediately from localStorage — no waiting for network
+  state.user = Auth.current();
   if (!location.hash) location.hash = '#/';
   renderRoute();
+
+  // Then silently refresh session from Supabase in background
+  Auth.restoreSession().then(u => {
+    if (u && (!state.user || state.user.email !== u.email || state.user.plan !== u.plan)) {
+      state.user = u;
+    }
+  }).catch(() => {});
 
   // Listen for Supabase auth state changes (e.g., OAuth redirect back)
   const _sbBoot = getSbClient();
