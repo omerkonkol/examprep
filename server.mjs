@@ -367,6 +367,7 @@ app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/pricing', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/courses/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/course/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/insights', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/lab', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/progress', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -774,6 +775,7 @@ app.get('/api/courses/:courseId/questions', authMiddleware, async (req, res) => 
     .from('ep_questions')
     .select('*')
     .eq('course_id', req.params.courseId)
+    .is('deleted_at', null)
     .order('exam_id', { ascending: true })
     .order('question_number', { ascending: true });
   if (error) return dbError(res, 'list questions', error);
@@ -816,6 +818,28 @@ app.post('/api/attempt', authMiddleware, rateLimitMiddleware(60), async (req, re
   } else {
     await req.db.from('ep_review_queue').delete().eq('question_id', questionId);
   }
+  res.json({ ok: true });
+});
+
+// ===== Get review queue for a course =====
+app.get('/api/courses/:courseId/review-queue', authMiddleware, async (req, res) => {
+  const { data, error } = await req.db
+    .from('ep_review_queue')
+    .select('question_id')
+    .eq('course_id', req.params.courseId);
+  if (error) return dbError(res, 'list review queue', error);
+  res.json((data || []).map(r => r.question_id));
+});
+
+// ===== Delete a question (soft-delete via deleted_at) =====
+app.delete('/api/courses/:courseId/questions/:questionId', authMiddleware, rateLimitMiddleware(10), async (req, res) => {
+  const { courseId, questionId } = req.params;
+  const { error } = await req.db
+    .from('ep_questions')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', questionId)
+    .eq('course_id', courseId);
+  if (error) return dbError(res, 'delete question', error);
   res.json({ ok: true });
 });
 

@@ -453,6 +453,88 @@
         </div>
       </section>
 
+      <!-- PWA INSTALL GUIDE (mobile only) -->
+      <section class="section pwa-section" id="pwa-install">
+        <div class="container">
+          <span class="section-eyebrow">אפליקציה לטלפון</span>
+          <h2 class="section-title">התקן את ExamPrep בטלפון</h2>
+          <p class="section-sub">בלי App Store. 3 צעדים וזה עובד כמו אפליקציה רגילה.</p>
+
+          <div class="pwa-tabs">
+            <button type="button" class="pwa-tab is-active" id="pwa-tab-ios">iPhone / iPad</button>
+            <button type="button" class="pwa-tab" id="pwa-tab-android">Android</button>
+          </div>
+
+          <!-- iOS Guide -->
+          <div class="pwa-guide-list" id="pwa-panel-ios">
+            <div class="pwa-step">
+              <div class="pwa-step-number">1</div>
+              <div class="pwa-step-info">
+                <strong>לחץ על כפתור השיתוף</strong>
+                <p>הכפתור נמצא בתחתית המסך בדפדפן Safari — ריבוע עם חץ למעלה.</p>
+              </div>
+              <div class="pwa-step-icon">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--primary)" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+              </div>
+            </div>
+            <div class="pwa-step">
+              <div class="pwa-step-number">2</div>
+              <div class="pwa-step-info">
+                <strong>בחר "הוסף למסך הבית"</strong>
+                <p>גלול למטה בתפריט שנפתח ולחץ על הכפתור עם סימן +.</p>
+              </div>
+              <div class="pwa-step-icon">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--primary)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              </div>
+            </div>
+            <div class="pwa-step">
+              <div class="pwa-step-number done">3</div>
+              <div class="pwa-step-info">
+                <strong>לחץ "הוסף" — סיימת!</strong>
+                <p>ExamPrep תופיע במסך הבית שלך בדיוק כמו אפליקציה רגילה.</p>
+              </div>
+              <div class="pwa-step-icon green">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Android Guide -->
+          <div class="pwa-guide-list" id="pwa-panel-android" hidden>
+            <div class="pwa-step">
+              <div class="pwa-step-number">1</div>
+              <div class="pwa-step-info">
+                <strong>לחץ על שלוש הנקודות</strong>
+                <p>הכפתור ⋮ נמצא בפינה הימנית העליונה של דפדפן Chrome.</p>
+              </div>
+              <div class="pwa-step-icon">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="var(--primary)" stroke="none"><circle cx="12" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="19" r="2.5"/></svg>
+              </div>
+            </div>
+            <div class="pwa-step">
+              <div class="pwa-step-number">2</div>
+              <div class="pwa-step-info">
+                <strong>בחר "התקן אפליקציה"</strong>
+                <p>בתפריט שנפתח, לחץ על "התקן אפליקציה" או "הוסף למסך הבית".</p>
+              </div>
+              <div class="pwa-step-icon">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--primary)" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </div>
+            </div>
+            <div class="pwa-step">
+              <div class="pwa-step-number done">3</div>
+              <div class="pwa-step-info">
+                <strong>לחץ "התקן" — סיימת!</strong>
+                <p>ExamPrep תופיע במסך הבית שלך בדיוק כמו אפליקציה רגילה.</p>
+              </div>
+              <div class="pwa-step-icon green">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- FOOTER -->
       <footer class="footer">
         <div class="container">
@@ -727,6 +809,101 @@
             <strong>ההתקדמות שלי</strong>
             <small>סטטיסטיקה, רצף וטיפים</small>
           </button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ============================ -->
+  <!--     COURSE DASHBOARD        -->
+  <!-- ============================ -->
+  <template id="tmpl-course-dash">
+    <div class="app-screen">
+      <header class="app-topbar">
+        <div class="app-topbar-inner">
+          <a href="#/dashboard" class="logo" data-route="/dashboard">
+            <img src="/public/images/logo.png?v=20260410-8" alt="ExamPrep" class="logo-img" />
+          </a>
+          <nav class="topbar-nav">
+            <a href="#/dashboard" data-route="/dashboard">מסך הבית</a>
+            <a href="#/study" data-route="/study">לימוד מסיכום</a>
+            <a href="#/progress" data-route="/progress">ההתקדמות שלי</a>
+            <a href="#/insights" data-route="/insights">תובנות</a>
+            <a href="#/lab" data-route="/lab">מעבדה חכמה</a>
+          </nav>
+          <div class="app-user">
+            <span class="app-user-plan" id="user-plan">free</span>
+            <span class="app-user-name" id="user-name"></span>
+            <div class="app-user-avatar" id="user-avatar">U</div>
+            <button class="btn btn-ghost btn-sm" id="btn-logout">יציאה</button>
+          </div>
+          <button class="topbar-mobile-toggle" id="topbar-mobile-toggle" aria-label="תפריט">☰</button>
+        </div>
+      </header>
+      <main class="app-content">
+        <div class="course-dash-header" id="cd-header">
+          <a href="#/dashboard" class="cd-back" data-route="/dashboard">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            חזרה לכל הקורסים
+          </a>
+          <h1 id="cd-title">קורס</h1>
+          <p id="cd-desc"></p>
+        </div>
+
+        <div class="metric-grid" id="cd-stats"></div>
+
+        <div class="section-h">
+          <h2>פעולות מהירות</h2>
+        </div>
+        <div class="course-actions-grid cd-actions" id="cd-actions"></div>
+
+        <div class="section-h" id="cd-batches-header">
+          <h2>מקבצים אחרונים</h2>
+        </div>
+        <div id="cd-batches"></div>
+
+        <div class="section-h" id="cd-pdfs-header" style="display:none">
+          <h2>מבחנים שהעליתי</h2>
+          <button class="btn btn-soft btn-sm" id="cd-upload-pdf">+ העלאת PDF</button>
+        </div>
+        <div id="cd-pdfs"></div>
+      </main>
+    </div>
+  </template>
+
+  <!-- ============================ -->
+  <!--    ADD COURSE MODAL          -->
+  <!-- ============================ -->
+  <template id="tmpl-add-course">
+    <div class="modal-backdrop" id="add-course-modal">
+      <div class="modal">
+        <button class="modal-close" id="ac-close">✕</button>
+        <h2>הוסף קורס חדש</h2>
+        <p class="modal-sub">הגדר שם, תיאור וצבע לקורס שלך</p>
+        <div class="auth-form">
+          <div class="field">
+            <label for="ac-name">שם הקורס *</label>
+            <input type="text" id="ac-name" placeholder="למשל: מבוא למדעי המחשב" maxlength="100" required />
+          </div>
+          <div class="field">
+            <label for="ac-desc">תיאור (אופציונלי)</label>
+            <textarea id="ac-desc" rows="2" placeholder="תיאור קצר של הקורס" maxlength="1000"></textarea>
+          </div>
+          <div class="field">
+            <label>צבע</label>
+            <div class="color-picker" id="ac-colors">
+              <button class="color-swatch active" data-color="#3b82f6" style="background:#3b82f6" title="כחול"></button>
+              <button class="color-swatch" data-color="#10b981" style="background:#10b981" title="ירוק"></button>
+              <button class="color-swatch" data-color="#f59e0b" style="background:#f59e0b" title="כתום"></button>
+              <button class="color-swatch" data-color="#ef4444" style="background:#ef4444" title="אדום"></button>
+              <button class="color-swatch" data-color="#8b5cf6" style="background:#8b5cf6" title="סגול"></button>
+              <button class="color-swatch" data-color="#ec4899" style="background:#ec4899" title="ורוד"></button>
+              <button class="color-swatch" data-color="#06b6d4" style="background:#06b6d4" title="תכלת"></button>
+              <button class="color-swatch" data-color="#84cc16" style="background:#84cc16" title="ליים"></button>
+            </div>
+          </div>
+          <p class="auth-error" id="ac-error"></p>
+          <button class="btn btn-primary btn-block" id="ac-submit">צור קורס</button>
         </div>
       </div>
     </div>

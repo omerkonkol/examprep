@@ -134,6 +134,7 @@ ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS is_ai_generated BOOLEAN NOT NU
 ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS source_question_id BIGINT REFERENCES ep_questions(id) ON DELETE SET NULL;
 ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS general_explanation TEXT;
 ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS option_explanations JSONB;
+ALTER TABLE ep_questions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 ALTER TABLE ep_questions ENABLE ROW LEVEL SECURITY;
 

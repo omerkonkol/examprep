@@ -11,22 +11,78 @@
 const $app = document.getElementById('app');
 
 const Data = {
-  metadata: null,
-  answers: null,
-  explanations: null,
-  loaded: false,
-  async ensureLoaded() {
-    if (this.loaded) return;
-    const [meta, ans, exp] = await Promise.all([
-      fetch('/public/data/metadata.json').then(r => r.json()),
-      fetch('/public/data/answers.json').then(r => r.json()),
-      fetch('/public/data/explanations.json').then(r => r.json()).catch(() => ({})),
-    ]);
-    this.metadata = meta;
-    this.answers = ans.answers || {};
-    this.explanations = exp || {};
-    this.loaded = true;
+  // Per-course data cache. Each entry: { metadata, answers, explanations }
+  _cache: {},
+
+  // Compatibility getters — return the currently-active course's data so that
+  // existing code like Data.metadata.exams keeps working unchanged.
+  get metadata() { return (this._cache[state.course?.id || 'tohna1'] || {}).metadata || null; },
+  get answers() { return (this._cache[state.course?.id || 'tohna1'] || {}).answers || {}; },
+  get explanations() { return (this._cache[state.course?.id || 'tohna1'] || {}).explanations || {}; },
+
+  _loadedSet: new Set(),
+
+  async ensureLoaded(courseId) {
+    const cid = courseId || state.course?.id || 'tohna1';
+    if (this._loadedSet.has(cid)) return;
+
+    if (cid === 'tohna1') {
+      // Built-in course: load from static JSON files
+      const [meta, ans, exp] = await Promise.all([
+        fetch('/public/data/metadata.json').then(r => r.json()),
+        fetch('/public/data/answers.json').then(r => r.json()),
+        fetch('/public/data/explanations.json').then(r => r.json()).catch(() => ({})),
+      ]);
+      this._cache[cid] = { metadata: meta, answers: ans.answers || {}, explanations: exp || {} };
+    } else {
+      // Cloud course: fetch questions + exams from API
+      const token = await Auth.getToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const [examsRes, questionsRes] = await Promise.all([
+        fetch(`/api/courses/${cid}/exams`, { headers }),
+        fetch(`/api/courses/${cid}/questions`, { headers }),
+      ]);
+      const examsRaw = examsRes.ok ? await examsRes.json() : [];
+      const questionsRaw = questionsRes.ok ? await questionsRes.json() : [];
+
+      // Normalize into the same shape as the static JSON data
+      const examMap = {};
+      for (const ex of examsRaw) {
+        examMap[ex.id] = { id: String(ex.id), label: ex.name, questions: [] };
+      }
+      const answers = {};
+      const explanations = {};
+      for (const q of questionsRaw) {
+        const qid = String(q.id);
+        const examId = String(q.exam_id);
+        if (!examMap[q.exam_id]) {
+          examMap[q.exam_id] = { id: examId, label: `מבחן ${q.exam_id}`, questions: [] };
+        }
+        examMap[q.exam_id].questions.push({
+          id: qid, examId, image: q.image_path,
+          section: String(q.question_number),
+          _isCloud: true,
+        });
+        answers[qid] = {
+          numOptions: q.num_options || 4,
+          optionLabels: q.option_labels || null,
+          correctIdx: q.correct_idx,
+          topic: q.topic || null,
+          groupId: null,
+        };
+        if (q.general_explanation || q.option_explanations) {
+          explanations[qid] = {
+            general: q.general_explanation || null,
+            options: q.option_explanations || [],
+          };
+        }
+      }
+      const metadata = { exams: Object.values(examMap) };
+      this._cache[cid] = { metadata, answers, explanations };
+    }
+    this._loadedSet.add(cid);
   },
+
   publicMeta(qid) {
     const a = this.answers[qid] || {};
     return {
@@ -44,8 +100,12 @@ const Data = {
       topic: a.topic || null,
     };
   },
-  imageUrl(relImage) {
-    return `https://tohna1-quiz.vercel.app/images/${encodeURI(relImage)}`;
+  imageUrl(relImage, courseId) {
+    const cid = courseId || state.course?.id || 'tohna1';
+    if (cid === 'tohna1') return `https://tohna1-quiz.vercel.app/images/${encodeURI(relImage)}`;
+    // Cloud courses: images stored in Supabase storage, path is already a full URL or relative
+    if (relImage.startsWith('http')) return relImage;
+    return `/storage/${encodeURI(relImage)}`;
   },
   allQuestions() {
     if (!this.metadata) return [];
@@ -56,9 +116,60 @@ const Data = {
 // ===== State =====
 const state = {
   user: null, // { email, name, plan, isAdmin }
-  course: null, // currently selected course (for admin: hardcoded "תוכנה 1")
+  course: null, // currently selected course { id, name, color, ... }
+  courses: [], // all user courses (cached from API)
   quiz: null, // current quiz session
   lastBatch: null, // for the mistake review screen
+};
+
+// ===== Course Registry =====
+// Manages the list of user courses. "tohna1" is a virtual built-in course
+// backed by static JSON; all other courses live in Supabase via the API.
+const CourseRegistry = {
+  _loaded: false,
+
+  // The built-in course that ships with the app (admin testing phase).
+  BUILTIN: { id: 'tohna1', name: 'תוכנה 1', description: 'בנק שאלות אמריקאיות מבחינות עבר של תוכנה 1 — אונ\' תל אביב. כולל הסברים מפורטים בעברית לכל שאלה.', color: '#3b82f6', isBuiltin: true },
+
+  async ensureLoaded() {
+    if (this._loaded) return;
+    try {
+      const token = await Auth.getToken();
+      if (token) {
+        const res = await fetch('/api/courses', { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) state.courses = await res.json();
+      }
+    } catch (e) { console.warn('[CourseRegistry] fetch failed:', e.message); }
+    this._loaded = true;
+  },
+
+  list() {
+    // Always include the built-in course first, then user-created ones
+    return [this.BUILTIN, ...state.courses];
+  },
+
+  get(courseId) {
+    if (courseId === 'tohna1') return this.BUILTIN;
+    return state.courses.find(c => String(c.id) === String(courseId)) || null;
+  },
+
+  async create(name, description, color) {
+    const token = await Auth.getToken();
+    const res = await fetch('/api/courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name, description, color }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'שגיאה ביצירת קורס');
+    }
+    const course = await res.json();
+    state.courses.unshift(course);
+    return course;
+  },
+
+  invalidate() { this._loaded = false; },
 };
 
 // ===== Theme (light / dark / auto) =====
@@ -194,6 +305,12 @@ const Auth = {
     };
     this.save(u);
     return u;
+  },
+
+  async getToken() {
+    if (!_sbClient) return null;
+    const { data: { session } } = await _sbClient.auth.getSession();
+    return session?.access_token || null;
   },
 
   update(patch) {
@@ -338,26 +455,45 @@ const DemoSeed = {
     // Sort attempts chronologically
     attempts.sort((a, b) => a.ts - b.ts);
 
-    // Persist
+    // Persist (demo seed is always for the built-in tohna1 course)
     Progress.save(uid, {
       attempts,
       batches,
       reviewQueue,
-    });
+    }, 'tohna1');
     DemoSeed.markSeeded(uid);
   },
 };
 
-// ===== Local progress storage =====
+// ===== Local progress storage (per-course) =====
 const Progress = {
-  KEY(uid) { return `ep_progress_${uid}`; },
-  load(uid) {
-    try { return JSON.parse(localStorage.getItem(this.KEY(uid))) || {}; }
+  KEY(uid, courseId) { return `ep_progress_${uid}_${courseId || state.course?.id || 'tohna1'}`; },
+  _migrated: new Set(),
+
+  // One-time migration: move data from the old single-course key to the new per-course key.
+  _migrate(uid) {
+    if (this._migrated.has(uid)) return;
+    this._migrated.add(uid);
+    const oldKey = `ep_progress_${uid}`;
+    try {
+      const old = localStorage.getItem(oldKey);
+      if (old && !localStorage.getItem(this.KEY(uid, 'tohna1'))) {
+        localStorage.setItem(this.KEY(uid, 'tohna1'), old);
+        localStorage.removeItem(oldKey);
+      }
+    } catch {}
+  },
+
+  load(uid, courseId) {
+    this._migrate(uid);
+    const key = this.KEY(uid, courseId);
+    try { return JSON.parse(localStorage.getItem(key)) || {}; }
     catch { return { attempts: [], reviewQueue: [], batches: [] }; }
   },
-  save(uid, data) { localStorage.setItem(this.KEY(uid), JSON.stringify(data)); },
-  recordAttempt(uid, attempt) {
-    const p = this.load(uid);
+  save(uid, data, courseId) { localStorage.setItem(this.KEY(uid, courseId), JSON.stringify(data)); },
+  recordAttempt(uid, attempt, courseId) {
+    const cid = courseId || state.course?.id || 'tohna1';
+    const p = this.load(uid, cid);
     p.attempts = p.attempts || [];
     p.attempts.push({ ...attempt, ts: Date.now() });
     if (!attempt.isCorrect || attempt.revealed) {
@@ -366,16 +502,36 @@ const Progress = {
     } else {
       p.reviewQueue = (p.reviewQueue || []).filter(id => id !== attempt.questionId);
     }
-    this.save(uid, p);
+    this.save(uid, p, cid);
+
+    // Dual-write to Supabase (fire-and-forget, non-blocking)
+    if (cid !== 'tohna1') {
+      Auth.getToken().then(token => {
+        if (!token) return;
+        fetch('/api/attempt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            questionId: attempt.questionId,
+            courseId: cid,
+            selectedIdx: attempt.selectedIdx,
+            isCorrect: attempt.isCorrect,
+            revealed: attempt.revealed,
+            timeSeconds: attempt.timeSeconds,
+            batchId: attempt.batchId,
+          }),
+        }).catch(() => {}); // silently fail — localStorage is the fallback
+      });
+    }
   },
-  saveBatch(uid, batch) {
-    const p = this.load(uid);
+  saveBatch(uid, batch, courseId) {
+    const p = this.load(uid, courseId);
     p.batches = p.batches || [];
     p.batches.push(batch);
-    this.save(uid, p);
+    this.save(uid, p, courseId);
   },
-  stats(uid) {
-    const p = this.load(uid);
+  stats(uid, courseId) {
+    const p = this.load(uid, courseId);
     const attempts = p.attempts || [];
     const seen = new Set(attempts.map(a => a.questionId));
     const correctIds = new Set(attempts.filter(a => a.isCorrect && !a.revealed).map(a => a.questionId));
@@ -388,7 +544,7 @@ const Progress = {
       reviewCount: (p.reviewQueue || []).length,
     };
   },
-  history(uid) { return (this.load(uid).attempts || []); },
+  history(uid, courseId) { return (this.load(uid, courseId).attempts || []); },
 };
 
 // ===== Plans / quotas (mirrors server.mjs intent) =====
@@ -462,6 +618,15 @@ function navigate(path) {
 }
 window.addEventListener('hashchange', renderRoute);
 
+// Helper: set state.course from a courseId (used by the router)
+function setCourseContext(courseId) {
+  const course = CourseRegistry.get(courseId);
+  if (course) { state.course = course; return true; }
+  // Fallback for unknown courseId — try to treat as numeric Supabase id
+  state.course = { id: courseId, name: `קורס ${courseId}`, color: '#3b82f6' };
+  return true;
+}
+
 function renderRoute() {
   const route = getRoute();
   const path = route.split('?')[0];
@@ -470,16 +635,35 @@ function renderRoute() {
   if (path === '/' || path === '') return renderLanding();
   if (path === '/login') return renderAuth(params.get('signup') === '1');
   if (path === '/dashboard') return renderDashboard();
-  if (path === '/quiz') return state.quiz ? renderQuiz() : navigate('/dashboard');
-  if (path === '/summary') return renderSummary();
-  if (path === '/review') return renderMistakeReview();
-  if (path === '/insights') return renderInsights(params.get('course'));
-  if (path === '/lab') return renderLab(params.get('course'));
-  if (path === '/progress') return renderProgress(params.get('course'));
+  if (path === '/settings') return renderSettings(params.get('tab') || 'profile');
   if (path === '/study') return renderStudyList();
   if (path === '/study/new') return renderStudyCreate();
   if (path.startsWith('/study/')) return renderStudyPack(path.split('/')[2]);
-  if (path === '/settings') return renderSettings(params.get('tab') || 'profile');
+
+  // Course-scoped routes: /course/{courseId}/{page}
+  const courseMatch = path.match(/^\/course\/([^/]+)(?:\/(.*))?$/);
+  if (courseMatch) {
+    const courseId = courseMatch[1];
+    const page = courseMatch[2] || '';
+    setCourseContext(courseId);
+    if (page === '' || page === 'dashboard') return renderCourseDashboard();
+    if (page === 'quiz') return state.quiz ? renderQuiz() : navigate(`/course/${courseId}`);
+    if (page === 'summary') return renderSummary();
+    if (page === 'review') return renderMistakeReview();
+    if (page === 'insights') return renderInsights();
+    if (page === 'lab') return renderLab();
+    if (page === 'progress') return renderProgress();
+    return renderCourseDashboard();
+  }
+
+  // Backward compat: old routes redirect to /course/tohna1/{page}
+  if (path === '/quiz') { setCourseContext('tohna1'); return state.quiz ? renderQuiz() : navigate('/course/tohna1'); }
+  if (path === '/summary') { setCourseContext('tohna1'); return renderSummary(); }
+  if (path === '/review') { setCourseContext('tohna1'); return renderMistakeReview(); }
+  if (path === '/insights') return navigate('/course/tohna1/insights');
+  if (path === '/lab') return navigate('/course/tohna1/lab');
+  if (path === '/progress') return navigate('/course/tohna1/progress');
+
   return renderLanding();
 }
 
@@ -499,18 +683,14 @@ function examsForCourse(courseId) {
   return Data.metadata.exams;
 }
 function attemptsForCourse(uid, courseId) {
-  const all = Progress.history(uid);
-  // Local mode: every attempt belongs to the single course, so no filtering
-  // is required. Cloud mode will tag attempts with course_id and we'll filter
-  // here. Same for the helpers below.
-  return all;
+  return Progress.history(uid, courseId);
 }
 function batchesForCourse(uid, courseId) {
-  const p = Progress.load(uid);
+  const p = Progress.load(uid, courseId);
   return p.batches || [];
 }
 function reviewQueueForCourse(uid, courseId) {
-  const p = Progress.load(uid);
+  const p = Progress.load(uid, courseId);
   return p.reviewQueue || [];
 }
 
@@ -850,6 +1030,26 @@ function renderLanding() {
   // Mobile reviews carousel — must run AFTER template is in the DOM
   initReviewsCarousel();
 
+  // PWA guide tabs
+  const pwaTabIos = document.getElementById('pwa-tab-ios');
+  const pwaTabAndroid = document.getElementById('pwa-tab-android');
+  const pwaPanelIos = document.getElementById('pwa-panel-ios');
+  const pwaPanelAndroid = document.getElementById('pwa-panel-android');
+  if (pwaTabIos && pwaTabAndroid) {
+    pwaTabIos.addEventListener('click', () => {
+      pwaTabIos.classList.add('is-active');
+      pwaTabAndroid.classList.remove('is-active');
+      if (pwaPanelIos) pwaPanelIos.hidden = false;
+      if (pwaPanelAndroid) pwaPanelAndroid.hidden = true;
+    });
+    pwaTabAndroid.addEventListener('click', () => {
+      pwaTabAndroid.classList.add('is-active');
+      pwaTabIos.classList.remove('is-active');
+      if (pwaPanelAndroid) pwaPanelAndroid.hidden = false;
+      if (pwaPanelIos) pwaPanelIos.hidden = true;
+    });
+  }
+
   // Contact form
   const contactForm = document.getElementById('contact-form');
   if (contactForm) {
@@ -1182,7 +1382,8 @@ async function renderDashboard() {
   if (!state.user) state.user = Auth.current();
   if (!state.user) return navigate('/login');
 
-  await Data.ensureLoaded();
+  await Data.ensureLoaded('tohna1');
+  await CourseRegistry.ensureLoaded();
 
   // For the admin user, ensure demo data is seeded so the new screens have
   // realistic content even on the very first dashboard visit.
@@ -1196,8 +1397,8 @@ async function renderDashboard() {
   wireTopbar();
   document.getElementById('dash-greet-title').textContent = `שלום ${state.user.name}`;
 
-  // Stats — clean monochrome metric cards with subtle SVG label icons
-  const stats = Progress.stats(state.user.email);
+  // Stats — aggregate from the built-in course for now
+  const stats = Progress.stats(state.user.email, 'tohna1');
   const accuracy = stats.unique > 0 ? Math.round((stats.correct / stats.unique) * 100) : 0;
   const sg = document.getElementById('dash-stats');
   sg.className = 'metric-grid';
@@ -1236,41 +1437,53 @@ async function renderDashboard() {
     </div>
   `;
 
-  // Courses (currently only "תוכנה 1" for admin)
+  // Courses — dynamic list from CourseRegistry
   const cg = document.getElementById('dash-courses');
-  const totalQuestions = Data.allQuestions().length;
-  const totalExams = Data.metadata.exams.length;
-  cg.innerHTML = `
-    <div class="course-card" style="--course-color:#3b82f6" data-course="tohna1">
-      <h3>תוכנה 1</h3>
-      <div class="desc">בנק שאלות אמריקאיות מבחינות עבר של תוכנה 1 — אונ' תל אביב. כולל הסברים מפורטים בעברית לכל שאלה.</div>
-      <div class="meta">
-        <span>${totalQuestions} שאלות</span>
-        <span>${totalExams} מבחנים</span>
-        <span class="ready-pill">מוכן לתרגול</span>
+  const courses = CourseRegistry.list();
+  let coursesHtml = '';
+  for (const c of courses) {
+    let qCount = 0, eCount = 0;
+    if (c.id === 'tohna1') {
+      qCount = Data.allQuestions().length;
+      eCount = Data.metadata?.exams?.length || 0;
+    } else {
+      qCount = c.total_questions || 0;
+      eCount = c.total_pdfs || 0;
+    }
+    coursesHtml += `
+      <div class="course-card" style="--course-color:${escapeHtml(c.color || '#3b82f6')}" data-course="${escapeHtml(String(c.id))}">
+        <h3>${escapeHtml(c.name)}</h3>
+        <div class="desc">${escapeHtml(c.description || '')}</div>
+        <div class="meta">
+          <span>${qCount} שאלות</span>
+          <span>${eCount} מבחנים</span>
+          ${c.isBuiltin ? '<span class="ready-pill">מוכן לתרגול</span>' : (qCount > 0 ? '<span class="ready-pill">מוכן לתרגול</span>' : '<span class="ready-pill empty">ריק</span>')}
+        </div>
       </div>
-    </div>
+    `;
+  }
+  coursesHtml += `
     <div class="course-card add" id="btn-add-course-card">
       <div class="add-card-content">
         <div class="add-icon">+</div>
         <strong>הוסף קורס חדש</strong>
-        <small>העלה PDF של מבחן</small>
+        <small>הגדר שם ותיאור</small>
       </div>
     </div>
   `;
+  cg.innerHTML = coursesHtml;
 
-  document.querySelector('[data-course="tohna1"]').addEventListener('click', () => {
-    state.course = { id: 'tohna1', name: 'תוכנה 1' };
-    showCourseActionsModal(state.course);
+  // Course card click → navigate to course dashboard
+  cg.querySelectorAll('.course-card:not(.add)').forEach(card => {
+    card.addEventListener('click', () => {
+      const courseId = card.dataset.course;
+      navigate(`/course/${courseId}`);
+    });
   });
   const addBtn = document.getElementById('btn-add-course-card');
-  if (addBtn) addBtn.addEventListener('click', () => {
-    toast('העלאת PDF — בקרוב! פיצ\'ר זה יופעל בשלב הבא.', '');
-  });
+  if (addBtn) addBtn.addEventListener('click', () => showAddCourseModal());
   const topAddBtn = document.getElementById('btn-add-course');
-  if (topAddBtn) topAddBtn.addEventListener('click', () => {
-    toast('העלאת PDF — בקרוב! פיצ\'ר זה יופעל בשלב הבא.', '');
-  });
+  if (topAddBtn) topAddBtn.addEventListener('click', () => showAddCourseModal());
 }
 
 // ===== Course actions modal =====
@@ -1286,13 +1499,325 @@ function showCourseActionsModal(course) {
   modal.querySelectorAll('.action-tile').forEach(tile => {
     tile.addEventListener('click', () => {
       const action = tile.dataset.action;
+      const cid = course.id || state.course?.id || 'tohna1';
       close();
       if (action === 'practice') showBatchModal();
-      else if (action === 'lab') navigate('/lab');
-      else if (action === 'insights') navigate('/insights');
-      else if (action === 'progress') navigate('/progress');
+      else if (action === 'lab') navigate(`/course/${cid}/lab`);
+      else if (action === 'insights') navigate(`/course/${cid}/insights`);
+      else if (action === 'progress') navigate(`/course/${cid}/progress`);
       else if (action === 'study') navigate('/study');
     });
+  });
+}
+
+// ===== Render: Course Dashboard =====
+async function renderCourseDashboard() {
+  if (!state.user) state.user = Auth.current();
+  if (!state.user) return navigate('/login');
+  if (!state.course) state.course = CourseRegistry.BUILTIN;
+
+  const cid = state.course.id;
+  await Data.ensureLoaded(cid);
+
+  $app.innerHTML = '';
+  $app.appendChild(tmpl('tmpl-course-dash'));
+  wireTopbar();
+
+  // Header
+  const headerEl = document.getElementById('cd-header');
+  headerEl.style.setProperty('--course-color', state.course.color || '#3b82f6');
+  document.getElementById('cd-title').textContent = state.course.name;
+  document.getElementById('cd-desc').textContent = state.course.description || '';
+
+  // Stats
+  const uid = state.user.email;
+  const questions = questionsForCourse(cid);
+  const exams = examsForCourse(cid);
+  const stats = Progress.stats(uid, cid);
+  const accuracy = stats.unique > 0 ? Math.round((stats.correct / stats.unique) * 100) : 0;
+  const coverage = questions.length > 0 ? Math.round((stats.unique / questions.length) * 100) : 0;
+  document.getElementById('cd-stats').innerHTML = `
+    <div class="metric-card">
+      <div class="metric-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        שאלות בקורס
+      </div>
+      <div class="metric-value">${questions.length}</div>
+      <div class="metric-sub">${exams.length} מבחנים</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        דיוק
+      </div>
+      <div class="metric-value">${accuracy}%</div>
+      <div class="metric-sub">${stats.correct} מתוך ${stats.unique} שאלות</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        כיסוי
+      </div>
+      <div class="metric-value">${coverage}%</div>
+      <div class="metric-sub">${stats.unique} מתוך ${questions.length}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+        בתור החזרה
+      </div>
+      <div class="metric-value">${stats.reviewCount}</div>
+      <div class="metric-sub">שאלות לחזור עליהן</div>
+    </div>
+  `;
+
+  // Quick actions
+  document.getElementById('cd-actions').innerHTML = `
+    <button class="action-tile action-tile-featured" data-action="practice">
+      <span class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>
+      <strong>תרגול חופשי</strong>
+      <small>מקבצי תרגול לפי גודל וסוג</small>
+    </button>
+    <button class="action-tile" data-action="lab">
+      <span class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.58 16.5h12.85"/></svg></span>
+      <strong>מעבדה חכמה</strong>
+      <small>מבחני דמה + יוצר שאלות</small>
+    </button>
+    <button class="action-tile" data-action="insights">
+      <span class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+      <strong>תובנות</strong>
+      <small>ניתוח חומר ומפת נושאים</small>
+    </button>
+    <button class="action-tile" data-action="progress">
+      <span class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></span>
+      <strong>ההתקדמות שלי</strong>
+      <small>סטטיסטיקה, רצף וטיפים</small>
+    </button>
+    <button class="action-tile" data-action="study">
+      <span class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/></svg></span>
+      <strong>לימוד חכם מסיכום</strong>
+      <small>שאלות + כרטיסיות + מתאר</small>
+    </button>
+  `;
+
+  document.querySelectorAll('#cd-actions .action-tile').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const action = tile.dataset.action;
+      if (action === 'practice') showBatchModal();
+      else if (action === 'lab') navigate(`/course/${cid}/lab`);
+      else if (action === 'insights') navigate(`/course/${cid}/insights`);
+      else if (action === 'progress') navigate(`/course/${cid}/progress`);
+      else if (action === 'study') navigate('/study');
+    });
+  });
+
+  // Recent batches
+  const batches = batchesForCourse(uid, cid);
+  const batchesEl = document.getElementById('cd-batches');
+  const batchesHeader = document.getElementById('cd-batches-header');
+  if (!batches.length) {
+    batchesHeader.style.display = 'none';
+    batchesEl.innerHTML = '';
+  } else {
+    const recent = batches.slice(-5).reverse();
+    batchesEl.innerHTML = recent.map(b => {
+      const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
+      const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL') : '';
+      return `
+        <div class="batch-row">
+          <div class="batch-score">${score}%</div>
+          <div class="batch-info">
+            <div class="batch-summary">${b.correct} מתוך ${b.size} נכון${b.examMode ? ' · מצב מבחן' : ''}</div>
+            <div class="batch-date">${date}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // PDF & questions section — show for non-builtin courses
+  if (!state.course.isBuiltin) {
+    document.getElementById('cd-pdfs-header').style.display = '';
+
+    // Load and display exams (PDFs) for this course
+    loadCourseExams(cid);
+
+    document.getElementById('cd-upload-pdf').addEventListener('click', () => {
+      showUploadPdfModal(cid);
+    });
+  }
+}
+
+// Load and render exam list for a course
+async function loadCourseExams(courseId) {
+  const pdfsEl = document.getElementById('cd-pdfs');
+  if (!pdfsEl) return;
+  try {
+    const token = await Auth.getToken();
+    const res = await fetch(`/api/courses/${courseId}/exams`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) { pdfsEl.innerHTML = '<p class="muted">לא ניתן לטעון מבחנים.</p>'; return; }
+    const examsData = await res.json();
+    if (!examsData.length) {
+      pdfsEl.innerHTML = '<p class="muted">עדיין לא הועלו מבחנים לקורס זה. לחץ על "+ העלאת PDF" כדי להתחיל.</p>';
+      return;
+    }
+    pdfsEl.innerHTML = examsData.map(ex => {
+      const statusLabel = { pending: 'ממתין', processing: 'מעבד...', ready: 'מוכן', failed: 'נכשל' }[ex.status] || ex.status;
+      const statusCls = ex.status === 'ready' ? 'success' : (ex.status === 'failed' ? 'error' : '');
+      return `
+        <div class="batch-row">
+          <div class="batch-score" style="font-size:14px;">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div class="batch-info">
+            <div class="batch-summary">${escapeHtml(ex.name)}</div>
+            <div class="batch-date">${ex.question_count || 0} שאלות · <span class="${statusCls}">${statusLabel}</span></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    pdfsEl.innerHTML = '<p class="muted">שגיאה בטעינת מבחנים.</p>';
+  }
+}
+
+// Upload PDF modal
+function showUploadPdfModal(courseId) {
+  const html = `
+    <div class="modal-backdrop" id="upload-pdf-modal">
+      <div class="modal">
+        <button class="modal-close" id="up-close">✕</button>
+        <h2>העלאת מבחן PDF</h2>
+        <p class="modal-sub">העלה קובץ PDF של מבחן (ואופציונלית גם פתרון)</p>
+        <div class="auth-form">
+          <div class="field">
+            <label for="up-name">שם המבחן *</label>
+            <input type="text" id="up-name" placeholder="למשל: מבחן מועד א 2024" maxlength="100" />
+          </div>
+          <div class="field">
+            <label>קובץ מבחן (PDF) *</label>
+            <input type="file" id="up-exam" accept=".pdf" />
+          </div>
+          <div class="field">
+            <label>קובץ פתרון (PDF, אופציונלי)</label>
+            <input type="file" id="up-solution" accept=".pdf" />
+          </div>
+          <p class="auth-error" id="up-error"></p>
+          <div id="up-progress" style="display:none">
+            <div class="phb-track"><div class="phb-fill" id="up-progress-fill" style="width:0%"></div></div>
+            <p class="muted" id="up-status">מעלה...</p>
+          </div>
+          <button class="btn btn-primary btn-block" id="up-submit">העלה מבחן</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  document.body.appendChild(container.firstElementChild);
+  const modal = document.getElementById('upload-pdf-modal');
+  const close = () => modal.remove();
+  document.getElementById('up-close').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  document.getElementById('up-submit').addEventListener('click', async () => {
+    const name = document.getElementById('up-name').value.trim();
+    const examFile = document.getElementById('up-exam').files[0];
+    const solFile = document.getElementById('up-solution').files[0];
+    const errEl = document.getElementById('up-error');
+    errEl.textContent = '';
+
+    if (!name || name.length < 2) { errEl.textContent = 'שם המבחן חייב להיות לפחות 2 תווים'; return; }
+    if (!examFile) { errEl.textContent = 'חסר קובץ PDF של המבחן'; return; }
+
+    const btn = document.getElementById('up-submit');
+    btn.disabled = true;
+    btn.textContent = 'מעלה...';
+    document.getElementById('up-progress').style.display = '';
+
+    try {
+      const token = await Auth.getToken();
+      const form = new FormData();
+      form.append('courseId', courseId);
+      form.append('name', name);
+      form.append('examPdf', examFile);
+      if (solFile) form.append('solutionPdf', solFile);
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'שגיאה בהעלאה');
+      }
+
+      document.getElementById('up-status').textContent = 'הושלם!';
+      document.getElementById('up-progress-fill').style.width = '100%';
+      toast('המבחן הועלה בהצלחה! עיבוד השאלות מתחיל...', 'success');
+      close();
+
+      // Reload course data to show the new exam
+      Data._loadedSet.delete(courseId);
+      CourseRegistry.invalidate();
+      navigate(`/course/${courseId}`);
+    } catch (err) {
+      errEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'העלה מבחן';
+    }
+  });
+}
+
+// ===== Add Course Modal =====
+function showAddCourseModal() {
+  const wrap = document.createElement('div');
+  wrap.appendChild(tmpl('tmpl-add-course'));
+  document.body.appendChild(wrap.firstElementChild);
+  const modal = document.getElementById('add-course-modal');
+  const close = () => modal.remove();
+  document.getElementById('ac-close').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  // Color picker
+  let selectedColor = '#3b82f6';
+  document.querySelectorAll('#ac-colors .color-swatch').forEach(sw => {
+    sw.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('#ac-colors .color-swatch').forEach(s => s.classList.remove('active'));
+      sw.classList.add('active');
+      selectedColor = sw.dataset.color;
+    });
+  });
+
+  document.getElementById('ac-submit').addEventListener('click', async () => {
+    const name = document.getElementById('ac-name').value.trim();
+    const desc = document.getElementById('ac-desc').value.trim();
+    const errEl = document.getElementById('ac-error');
+    errEl.textContent = '';
+    if (!name || name.length < 2) {
+      errEl.textContent = 'שם הקורס חייב להיות לפחות 2 תווים';
+      return;
+    }
+    const btn = document.getElementById('ac-submit');
+    btn.disabled = true;
+    btn.textContent = 'יוצר קורס...';
+    try {
+      const course = await CourseRegistry.create(name, desc || null, selectedColor);
+      close();
+      toast(`הקורס "${course.name}" נוצר בהצלחה!`, 'success');
+      navigate(`/course/${course.id}`);
+    } catch (err) {
+      errEl.textContent = err.message || 'שגיאה ביצירת הקורס';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'צור קורס';
+    }
   });
 }
 
@@ -1340,7 +1865,7 @@ function showBatchModal() {
       if (!ex) return;
       questions = pickRandom(ex.questions, size);
     } else if (type === 'review') {
-      const rq = Progress.load(state.user.email).reviewQueue || [];
+      const rq = Progress.load(state.user.email, state.course?.id).reviewQueue || [];
       const all = Data.allQuestions().filter(q => rq.includes(q.id));
       if (!all.length) {
         toast('אין שאלות בתור החזרה. תרגל קצת ואז חזור!', '');
@@ -1348,7 +1873,7 @@ function showBatchModal() {
       }
       questions = pickRandom(all, size);
     } else if (type === 'unanswered') {
-      const seen = new Set(Progress.history(state.user.email).map(a => a.questionId));
+      const seen = new Set(Progress.history(state.user.email, state.course?.id).map(a => a.questionId));
       const all = Data.allQuestions().filter(q => !seen.has(q.id));
       if (!all.length) {
         toast('עברת על כל השאלות! נסה מקבץ אקראי.', 'success');
@@ -1381,7 +1906,7 @@ function startQuiz({ questions, timerSeconds, examMode }) {
     batchId: 'b_' + Date.now(),
     startedAt: Date.now(),
   };
-  navigate('/quiz');
+  navigate(`/course/${state.course?.id || 'tohna1'}/quiz`);
 }
 
 let timerInterval = null;
@@ -1558,7 +2083,7 @@ function revealSolution() {
     revealed: true,
     timeSeconds: tsec,
     batchId: state.quiz.batchId,
-  });
+  }, state.course?.id);
 }
 
 function showSolutionPanel(q, dataParam) {
@@ -1617,7 +2142,7 @@ function saveCurrentSelectionAsAttempt() {
     revealed: false,
     timeSeconds: tsec,
     batchId: state.quiz.batchId,
-  });
+  }, state.course?.id);
 }
 
 function navQuiz(delta) {
@@ -1697,9 +2222,9 @@ function endQuiz() {
     startedAt: state.quiz.startedAt,
     endedAt: Date.now(),
   };
-  Progress.saveBatch(state.user.email, batchSummary);
+  Progress.saveBatch(state.user.email, batchSummary, state.course?.id);
   state.lastBatch = batchSummary;
-  navigate('/summary');
+  navigate(`/course/${state.course?.id || 'tohna1'}/summary`);
 }
 
 // ===== Render: Summary =====
@@ -1742,8 +2267,9 @@ function renderSummary() {
     pillsEl.appendChild(p);
   });
 
-  document.getElementById('btn-mistake-review').addEventListener('click', () => navigate('/review'));
-  document.getElementById('btn-summary-home').addEventListener('click', () => navigate('/dashboard'));
+  const cid = state.course?.id || 'tohna1';
+  document.getElementById('btn-mistake-review').addEventListener('click', () => navigate(`/course/${cid}/review`));
+  document.getElementById('btn-summary-home').addEventListener('click', () => navigate(`/course/${cid}`));
 
   // If no mistakes, hide review button
   if (b.wrong === 0 && b.skipped === 0) {
@@ -1765,7 +2291,8 @@ function renderMistakeReview() {
   });
 
   if (!wrongQs.length) {
-    $app.innerHTML = '<div class="loader-screen"><div><h2>אין טעויות לסקור! 🎉</h2><p style="margin-top:14px"><a href="#/dashboard" class="btn btn-primary" data-route="/dashboard">חזרה למסך הבית</a></p></div></div>';
+    const backRoute = `/course/${state.course?.id || 'tohna1'}`;
+    $app.innerHTML = `<div class="loader-screen"><div><h2>אין טעויות לסקור! 🎉</h2><p style="margin-top:14px"><a href="#${backRoute}" class="btn btn-primary" data-route="${backRoute}">חזרה לקורס</a></p></div></div>`;
     document.querySelectorAll('[data-route]').forEach(link => {
       link.addEventListener('click', (e) => { e.preventDefault(); navigate(link.getAttribute('data-route')); });
     });
@@ -1846,7 +2373,7 @@ function renderMistakeReview() {
 
   document.getElementById('review-prev').addEventListener('click', () => { if (idx > 0) { idx--; renderOne(); } });
   document.getElementById('review-next').addEventListener('click', () => { if (idx < wrongQs.length - 1) { idx++; renderOne(); } });
-  document.getElementById('review-back').addEventListener('click', () => navigate('/dashboard'));
+  document.getElementById('review-back').addEventListener('click', () => navigate(`/course/${state.course?.id || 'tohna1'}`));
 
   renderOne();
 }
@@ -1932,9 +2459,9 @@ function buildMockExam(courseId, opts) {
 async function renderInsights() {
   if (!state.user) state.user = Auth.current();
   if (!state.user) return navigate('/login');
-  if (!state.course) state.course = { id: 'tohna1', name: 'תוכנה 1' };
+  if (!state.course) state.course = CourseRegistry.BUILTIN;
 
-  await Data.ensureLoaded();
+  await Data.ensureLoaded(state.course.id);
   $app.innerHTML = '';
   $app.appendChild(tmpl('tmpl-insights'));
   wireTopbar();
@@ -2050,9 +2577,9 @@ async function renderInsights() {
 async function renderLab() {
   if (!state.user) state.user = Auth.current();
   if (!state.user) return navigate('/login');
-  if (!state.course) state.course = { id: 'tohna1', name: 'תוכנה 1' };
+  if (!state.course) state.course = CourseRegistry.BUILTIN;
 
-  await Data.ensureLoaded();
+  await Data.ensureLoaded(state.course.id);
   $app.innerHTML = '';
   $app.appendChild(tmpl('tmpl-lab'));
   wireTopbar();
@@ -2399,9 +2926,9 @@ function startAiQuiz(aiQuestions, timerSeconds = 0, examMode = false) {
 async function renderProgress() {
   if (!state.user) state.user = Auth.current();
   if (!state.user) return navigate('/login');
-  if (!state.course) state.course = { id: 'tohna1', name: 'תוכנה 1' };
+  if (!state.course) state.course = CourseRegistry.BUILTIN;
 
-  await Data.ensureLoaded();
+  await Data.ensureLoaded(state.course.id);
   $app.innerHTML = '';
   $app.appendChild(tmpl('tmpl-progress'));
   wireTopbar();
@@ -2422,7 +2949,7 @@ async function renderProgress() {
   document.getElementById('progress-sub').textContent = `סקירה ריאליסטית של ההתקדמות שלך בקורס "${state.course.name}" — מה למדת, איפה אתה חזק, ומה צריך עבודה.`;
 
   // Hero stats
-  const stats = Progress.stats(uid);
+  const stats = Progress.stats(uid, courseId);
   const overallAcc = stats.total > 0 ? Math.round((stats.correct / Math.max(1, stats.unique)) * 100) : 0;
   const coverage = Math.round((stats.unique / Math.max(1, questions.length)) * 100);
   const heroEl = document.getElementById('progress-hero');
@@ -2622,7 +3149,7 @@ async function renderProgress() {
         const b = recent[idx];
         if (!b) return;
         state.lastBatch = b;
-        navigate('/summary');
+        navigate(`/course/${state.course?.id || 'tohna1'}/summary`);
       });
     });
   }
@@ -2645,9 +3172,10 @@ async function renderProgress() {
     document.querySelectorAll('.tip-cta').forEach(btn => {
       btn.addEventListener('click', () => {
         const r = btn.dataset.route;
+        const tipCid = state.course?.id || 'tohna1';
         if (r === 'practice') showBatchModal();
-        else if (r === 'insights') navigate('/insights');
-        else if (r === 'progress') navigate('/progress');
+        else if (r === 'insights') navigate(`/course/${tipCid}/insights`);
+        else if (r === 'progress') navigate(`/course/${tipCid}/progress`);
       });
     });
   }
@@ -2655,10 +3183,22 @@ async function renderProgress() {
 
 // ===== Shared topbar wiring =====
 function wireTopbar() {
+  // Rewrite course-scoped nav links to include the current courseId
+  const cid = state.course?.id || 'tohna1';
+  const courseRouteMap = {
+    '/insights': `/course/${cid}/insights`,
+    '/lab': `/course/${cid}/lab`,
+    '/progress': `/course/${cid}/progress`,
+  };
   document.querySelectorAll('[data-route]').forEach(link => {
+    let r = link.getAttribute('data-route');
+    if (courseRouteMap[r]) {
+      r = courseRouteMap[r];
+      link.setAttribute('data-route', r);
+      link.setAttribute('href', '#' + r);
+    }
     link.addEventListener('click', (e) => {
       e.preventDefault();
-      const r = link.getAttribute('data-route');
       if (r) navigate(r);
     });
   });
@@ -2907,7 +3447,7 @@ function renderSettings(initialTab) {
   document.getElementById('settings-export-data').addEventListener('click', () => {
     const data = {
       user: state.user,
-      progress: (typeof Progress !== 'undefined' && Progress.load) ? Progress.load(state.user.email) : null,
+      progress: (typeof Progress !== 'undefined' && Progress.load) ? Progress.load(state.user.email, state.course?.id) : null,
       studyPacks: (typeof StudyStore !== 'undefined' && StudyStore.list) ? StudyStore.list() : null,
       prefs,
       exportedAt: new Date().toISOString(),
