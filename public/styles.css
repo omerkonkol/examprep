@@ -893,6 +893,7 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
 }
 .contact-alt a { color: var(--primary); font-weight: 600; text-decoration: none; }
 .contact-alt a:hover { text-decoration: underline; }
+.contact-success[hidden] { display: none !important; }
 .contact-success {
   display: flex; align-items: center; gap: 10px; margin-top: 16px;
   padding: 14px 18px; border-radius: 12px;

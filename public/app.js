@@ -796,19 +796,6 @@ function renderLanding() {
   // Mobile reviews carousel — must run AFTER template is in the DOM
   initReviewsCarousel();
 
-  // PWA guide tabs
-  document.querySelectorAll('[data-pwa-tab]').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.pwa-tab').forEach(t => t.classList.remove('is-active'));
-      tab.classList.add('is-active');
-      const panel = tab.getAttribute('data-pwa-tab');
-      const iosPanel = document.getElementById('pwa-panel-ios');
-      const androidPanel = document.getElementById('pwa-panel-android');
-      if (iosPanel) iosPanel.hidden = panel !== 'ios';
-      if (androidPanel) androidPanel.hidden = panel !== 'android';
-    });
-  });
-
   // Contact form
   const contactForm = document.getElementById('contact-form');
   if (contactForm) {
