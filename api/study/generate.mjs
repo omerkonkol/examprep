@@ -79,54 +79,15 @@ function isPdfMagic(buf) {
     buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46;
 }
 
-// ----- PDF text extraction ---------------------------------------------------
+// ----- PDF text extraction (unpdf — serverless-safe, zero native deps) -------
 async function extractPdfText(pdfBuffer) {
-  // Try multiple import paths for pdfjs-dist compatibility
-  let pdfjsLib;
-  try {
-    pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  } catch {
-    try {
-      pdfjsLib = await import('pdfjs-dist');
-    } catch (e2) {
-      console.error('[study] pdfjs import failed:', e2?.message);
-      throw new Error('PDF library unavailable');
-    }
-  }
-
-  const data = new Uint8Array(pdfBuffer);
-  const loadingTask = pdfjsLib.getDocument({
-    data,
-    disableWorker: true,
-    isEvalSupported: false,
-    useSystemFonts: true,
-  });
-  const pdfDoc = await loadingTask.promise;
-  const pageCount = Math.min(pdfDoc.numPages, 30);
-  const chunks = [];
-  for (let i = 1; i <= pageCount; i++) {
-    const page = await pdfDoc.getPage(i);
-    const tc = await page.getTextContent();
-    const lineMap = new Map();
-    for (const it of tc.items) {
-      if (!it.str) continue;
-      const y = Math.round(it.transform[5]);
-      const list = lineMap.get(y) || [];
-      list.push({ x: it.transform[4], str: it.str });
-      lineMap.set(y, list);
-    }
-    const sortedYs = [...lineMap.keys()].sort((a, b) => b - a);
-    for (const y of sortedYs) {
-      const line = lineMap.get(y).sort((a, b) => b.x - a.x);
-      const text = line.map(it => it.str).join(' ').replace(/\s+/g, ' ').trim();
-      if (text) chunks.push(text);
-    }
-    chunks.push('');
-    page.cleanup();
-  }
-  await pdfDoc.cleanup();
-  await pdfDoc.destroy();
-  return chunks.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const { extractText } = await import('unpdf');
+  const result = await extractText(new Uint8Array(pdfBuffer), { mergePages: true });
+  // unpdf returns { totalPages: number, text: string }
+  const text = (result?.text || '').trim();
+  console.log(`[study] unpdf extracted ${text.length} chars from ${result?.totalPages || '?'} pages`);
+  if (!text) throw new Error('PDF contains no extractable text');
+  return text;
 }
 
 // ----- AI prompt + call ------------------------------------------------------

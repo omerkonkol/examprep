@@ -9,7 +9,7 @@
     "start": "node server.mjs"
   },
   "dependencies": {
-    "pdfjs-dist": "^4.10.38"
+    "unpdf": "^0.12.0"
   },
   "engines": {
     "node": "20.x"
