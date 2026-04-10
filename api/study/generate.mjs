@@ -200,7 +200,7 @@ ${safe}
 
 async function callGemini(summaryText, title) {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   if (!apiKey) {
     throw Object.assign(new Error('GEMINI_API_KEY not configured'), { http: 503, code: 'no_api_key' });
   }

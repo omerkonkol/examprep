@@ -816,7 +816,7 @@ app.post('/api/ai/generate-similar', authMiddleware, rateLimitMiddleware(AI_RATE
 // is intentionally not exposed in the API responses or client UI.)
 app.post('/api/lab/generate-questions', rateLimitMiddleware(4), ipAbuseGuard('lab_gen'), async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   if (!apiKey) {
     return res.status(503).json({
       error: 'יצירת AI אינה זמינה כרגע. נסה שוב מאוחר יותר.',
@@ -1089,7 +1089,7 @@ ${safe}
 // Call AI with the study pack prompt and validate the response shape.
 async function generateStudyPackWithAI(summaryText, title) {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   if (!apiKey) {
     throw Object.assign(new Error('AI generation unavailable'), { code: 'no_api_key', http: 503 });
   }
