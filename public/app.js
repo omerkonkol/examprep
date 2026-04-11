@@ -1994,62 +1994,223 @@ async function loadCourseExams(courseId, containerEl) {
   }
 }
 
-// Exam management modal — shows exam list with upload, expand, delete
+// Exam management modal — full CRUD: view questions, delete exams/questions, sort
 function showExamManagementModal(courseId) {
   const isBuiltin = state.course?.isBuiltin;
-  const html = `
-    <div class="modal-backdrop" id="exam-mgmt-modal">
-      <div class="modal" style="max-width:600px;">
-        <button class="modal-close" id="em-close">✕</button>
-        <h2>${isBuiltin ? 'בנק השאלות' : 'ניהול מבחנים'}</h2>
-        <p class="modal-sub">${isBuiltin ? 'כל המבחנים והשאלות בקורס' : 'העלאה, צפייה ומחיקת מבחנים'}</p>
-        ${!isBuiltin ? `<button class="btn btn-primary btn-block" id="em-upload" style="margin-bottom:16px;">📤 העלאת מבחן PDF חדש</button>` : ''}
-        <div id="em-list" style="max-height:50vh;overflow-y:auto;"></div>
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'exam-mgmt-modal';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:640px;">
+      <button class="modal-close" id="em-close">✕</button>
+      <h2>${isBuiltin ? 'בנק השאלות' : 'ניהול מבחנים'}</h2>
+      <p class="modal-sub">${isBuiltin ? 'לחץ על מבחן כדי לצפות בשאלות' : 'לחץ על מבחן לצפייה · גרור למחיקה'}</p>
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        ${!isBuiltin ? `<button class="btn btn-primary btn-sm" id="em-upload-btn">📤 העלאת מבחן</button>` : ''}
+        <select id="em-sort" class="btn btn-ghost btn-sm" style="font-family:inherit;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;">
+          <option value="name">מיון: לפי שם</option>
+          <option value="date-desc" selected>מיון: חדש → ישן</option>
+          <option value="date-asc">מיון: ישן → חדש</option>
+          <option value="questions">מיון: כמות שאלות</option>
+        </select>
       </div>
+      <div id="em-list" style="max-height:55vh;overflow-y:auto;"></div>
     </div>
   `;
-  const container = document.createElement('div');
-  container.innerHTML = html;
-  document.body.appendChild(container.firstElementChild);
-  const modal = document.getElementById('exam-mgmt-modal');
+  document.body.appendChild(modal);
   const close = () => modal.remove();
   document.getElementById('em-close').addEventListener('click', close);
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 
   // Upload button
-  const uploadBtn = document.getElementById('em-upload');
-  if (uploadBtn) {
-    uploadBtn.addEventListener('click', () => {
-      close();
-      showUploadPdfModal(courseId);
+  document.getElementById('em-upload-btn')?.addEventListener('click', () => { close(); showUploadPdfModal(courseId); });
+
+  const listEl = document.getElementById('em-list');
+
+  function renderBuiltinExams(sort) {
+    const exams = [...(Data.metadata?.exams || [])];
+    if (sort === 'name') exams.sort((a, b) => a.label.localeCompare(b.label, 'he'));
+    else if (sort === 'date-asc') exams.sort((a, b) => a.label.localeCompare(b.label, 'he'));
+    else if (sort === 'questions') exams.sort((a, b) => b.questions.length - a.questions.length);
+    // default date-desc is original order
+
+    listEl.innerHTML = exams.map((ex, i) => `
+      <div class="em-exam-row" data-exam-idx="${i}" style="cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--brand-500)" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <div style="flex:1;">
+            <div style="font-weight:600;font-size:14px;">${escapeHtml(ex.label)}</div>
+            <div style="font-size:12px;color:var(--text-muted);">${ex.questions.length} שאלות</div>
+          </div>
+          <svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="em-questions-grid" style="display:none;padding:0 14px 12px;"></div>
+      </div>
+    `).join('');
+
+    listEl.querySelectorAll('.em-exam-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.examIdx);
+        const grid = row.querySelector('.em-questions-grid');
+        const chevron = row.querySelector('.em-chevron');
+        if (grid.style.display !== 'none') {
+          grid.style.display = 'none';
+          chevron.style.transform = '';
+          return;
+        }
+        chevron.style.transform = 'rotate(180deg)';
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(80px, 1fr))';
+        grid.style.gap = '8px';
+        const ex = exams[idx];
+        grid.innerHTML = ex.questions.map(q => `
+          <div style="border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;aspect-ratio:1;display:grid;place-items:center;font-size:12px;color:var(--text-muted);cursor:pointer;" title="שאלה ${q.section}">
+            <img src="${Data.imageUrl(q.image)}" alt="שאלה ${q.section}" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.parentElement.textContent='#${q.section}'" />
+          </div>
+        `).join('');
+      });
     });
   }
 
-  // Load exam list into modal
-  const listEl = document.getElementById('em-list');
-  if (isBuiltin) {
-    // Built-in: show static exams
-    if (Data.metadata?.exams?.length) {
-      listEl.innerHTML = Data.metadata.exams.map(ex => `
-        <div class="exam-row">
-          <div class="batch-row">
-            <div class="batch-score" style="font-size:14px;">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+  async function renderUserExams(sort) {
+    listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">טוען מבחנים...</p>';
+    try {
+      const tk = await Auth.getToken();
+      const res = await fetch(`/api/courses/${courseId}/exams`, { headers: tk ? { Authorization: `Bearer ${tk}` } : {} });
+      if (!res.ok) { listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">שגיאה בטעינה.</p>'; return; }
+      let examsData = await res.json();
+      if (!Array.isArray(examsData) || !examsData.length) {
+        listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">עדיין לא הועלו מבחנים. לחץ "העלאת מבחן" למעלה.</p>';
+        return;
+      }
+
+      // Sort
+      if (sort === 'name') examsData.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+      else if (sort === 'date-asc') examsData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      else if (sort === 'questions') examsData.sort((a, b) => (b.question_count || 0) - (a.question_count || 0));
+      else examsData.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // date-desc default
+
+      listEl.innerHTML = examsData.map(ex => {
+        const statusLabel = { pending: 'ממתין', processing: 'מעבד...', ready: 'מוכן', failed: 'נכשל' }[ex.status] || ex.status;
+        const statusCls = ex.status === 'ready' ? 'color:var(--green-600)' : (ex.status === 'failed' ? 'color:var(--red-500)' : '');
+        const canExpand = ex.status === 'ready' && (ex.question_count || 0) > 0;
+        return `
+          <div class="em-exam-row" data-exam-id="${ex.id}" style="border-bottom:1px solid var(--border-soft);">
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;" class="em-row-header">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--brand-500)" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ex.name)}</div>
+                <div style="font-size:12px;color:var(--text-muted);">${ex.question_count || 0} שאלות · <span style="${statusCls}">${statusLabel}</span></div>
+              </div>
+              ${canExpand ? `<svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>` : ''}
+              <button class="btn-icon em-delete-btn" data-exam-id="${ex.id}" data-exam-name="${escapeHtml(ex.name)}" data-q-count="${ex.question_count || 0}" title="מחק מבחן" style="flex-shrink:0;">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
             </div>
-            <div class="batch-info" style="flex:1;">
-              <div class="batch-summary">${escapeHtml(ex.label)}</div>
-              <div class="batch-date">${ex.questions.length} שאלות</div>
-            </div>
-          </div>
-        </div>
-      `).join('');
-    } else {
-      listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">אין מבחנים בקורס.</p>';
-    }
-  } else {
-    // User course: load from API
-    loadCourseExams(courseId, listEl);
+            <div class="em-questions-grid" style="display:none;padding:0 14px 12px;"></div>
+          </div>`;
+      }).join('');
+
+      // Wire expand (click on row header)
+      listEl.querySelectorAll('.em-row-header').forEach(header => {
+        header.addEventListener('click', async (e) => {
+          if (e.target.closest('.em-delete-btn')) return; // don't expand when clicking delete
+          const row = header.closest('.em-exam-row');
+          const examId = row.dataset.examId;
+          const grid = row.querySelector('.em-questions-grid');
+          const chevron = row.querySelector('.em-chevron');
+          if (!grid || !chevron) return;
+
+          if (grid.style.display !== 'none') {
+            grid.style.display = 'none';
+            chevron.style.transform = '';
+            return;
+          }
+          chevron.style.transform = 'rotate(180deg)';
+          grid.style.display = 'grid';
+          grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(100px, 1fr))';
+          grid.style.gap = '8px';
+          grid.innerHTML = '<p class="muted" style="grid-column:1/-1;text-align:center;">טוען שאלות...</p>';
+
+          try {
+            const qRes = await fetch(`/api/courses/${courseId}/questions`, { headers: tk ? { Authorization: `Bearer ${tk}` } : {} });
+            if (!qRes.ok) { grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">שגיאה.</p>'; return; }
+            const allQs = await qRes.json();
+            const examQs = (Array.isArray(allQs) ? allQs : []).filter(q => String(q.exam_id) === String(examId));
+            if (!examQs.length) { grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">אין שאלות.</p>'; return; }
+
+            grid.innerHTML = examQs.map(q => `
+              <div class="em-q-thumb" data-q-id="${q.id}" style="border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;position:relative;">
+                ${q.image_path === 'text-only'
+                  ? `<div style="padding:8px;font-size:11px;color:var(--text-muted);min-height:60px;">${(q.general_explanation || 'שאלה ' + q.question_number).slice(0, 50)}...</div>`
+                  : `<img src="${Data.imageUrl(q.image_path)}" alt="שאלה ${q.question_number}" style="width:100%;display:block;" loading="lazy" onerror="this.parentElement.innerHTML='<div style=padding:8px;font-size:11px>#${q.question_number}</div>'" />`}
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--gray-50);font-size:11px;">
+                  <span>#${q.question_number}</span>
+                  <button class="em-q-delete" data-q-id="${q.id}" data-q-num="${q.question_number}" title="מחק שאלה" style="border:none;background:none;cursor:pointer;color:var(--text-muted);font-size:14px;">✕</button>
+                </div>
+              </div>
+            `).join('');
+
+            // Wire question delete
+            grid.querySelectorAll('.em-q-delete').forEach(btn => {
+              btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const qId = btn.dataset.qId;
+                showConfirmModal({
+                  title: 'מחיקת שאלה',
+                  body: `למחוק את שאלה #${btn.dataset.qNum}?`,
+                  confirmLabel: 'מחק', danger: true,
+                  onConfirm: async () => {
+                    const t2 = await Auth.getToken();
+                    const dr = await fetch(`/api/courses/${courseId}/questions/${qId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${t2}` } });
+                    if (dr.ok) {
+                      btn.closest('.em-q-thumb')?.remove();
+                      toast('שאלה נמחקה', 'success');
+                    } else toast('שגיאה במחיקה', 'error');
+                  },
+                });
+              });
+            });
+          } catch { grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">שגיאה בטעינה.</p>'; }
+        });
+      });
+
+      // Wire delete exam buttons
+      listEl.querySelectorAll('.em-delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const examId = btn.dataset.examId;
+          const examName = btn.dataset.examName;
+          const qCount = btn.dataset.qCount;
+          showConfirmModal({
+            title: 'מחיקת מבחן',
+            body: `למחוק את "${examName}"? ${qCount} שאלות יימחקו לצמיתות.`,
+            confirmLabel: 'מחק לצמיתות', danger: true,
+            onConfirm: async () => {
+              const t2 = await Auth.getToken();
+              const r = await fetch(`/api/courses/${courseId}/exams/${examId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${t2}` } });
+              if (r.ok) {
+                btn.closest('.em-exam-row')?.remove();
+                toast('המבחן נמחק בהצלחה', 'success');
+                Data._loadedSet.delete(courseId);
+              } else toast('שגיאה במחיקה', 'error');
+            },
+          });
+        });
+      });
+    } catch { listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">שגיאה בטעינה.</p>'; }
   }
+
+  // Initial render
+  const sortEl = document.getElementById('em-sort');
+  if (isBuiltin) renderBuiltinExams(sortEl.value);
+  else renderUserExams(sortEl.value);
+
+  // Re-render on sort change
+  sortEl.addEventListener('change', () => {
+    if (isBuiltin) renderBuiltinExams(sortEl.value);
+    else renderUserExams(sortEl.value);
+  });
 }
 
 // Generic confirmation modal
