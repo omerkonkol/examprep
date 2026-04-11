@@ -462,35 +462,90 @@ export default async function handler(req, res) {
       console.warn('[upload] Cloudinary not configured — questions will be text-only');
     }
 
-    // Match questions to PDF pages
-    let questionPages = {};
+    // Match questions to PDF pages + find Y position for cropping
+    // questionPos[qNum] = { page, yPct (0-100 from top), heightPct }
+    let questionPos = {};
+    let totalPdfPages = 0;
     try {
       const { getDocumentProxy } = await import('unpdf');
       const doc = await getDocumentProxy(new Uint8Array(examFile.data));
+      totalPdfPages = doc.numPages;
+
       for (let p = 1; p <= doc.numPages; p++) {
         const page = await doc.getPage(p);
+        const viewport = page.getViewport({ scale: 1 });
+        const pageHeight = viewport.height;
         const tc = await page.getTextContent();
-        const pageText = tc.items.map(it => it.str).join(' ');
-        for (const q of questions) {
-          if (questionPages[q.n]) continue;
-          if (pageText.includes(`שאלה ${q.n}`) || pageText.includes(`שאלה  ${q.n}`)) {
-            questionPages[q.n] = p;
+
+        // Find "שאלה X" text items and their Y positions
+        const qPositions = []; // { qNum, yFromTop }
+        for (const item of tc.items) {
+          const m = item.str.match(/שאלה\s*(\d+)/);
+          if (m) {
+            const qNum = parseInt(m[1]);
+            const yFromTop = pageHeight - item.transform[5]; // PDF Y is bottom-up
+            if (!questionPos[qNum]) {
+              qPositions.push({ qNum, yFromTop });
+              questionPos[qNum] = { page: p, yFromTop, pageHeight };
+            }
           }
         }
       }
-      console.log(`[upload] matched ${Object.keys(questionPages).length}/${questions.length} questions to pages`);
+
+      // Calculate crop regions: from question start to next question (or page bottom)
+      const allQNums = Object.keys(questionPos).map(Number).sort((a, b) => {
+        const pa = questionPos[a], pb = questionPos[b];
+        return pa.page - pb.page || pa.yFromTop - pb.yFromTop;
+      });
+
+      for (let i = 0; i < allQNums.length; i++) {
+        const qn = allQNums[i];
+        const pos = questionPos[qn];
+        const nextQn = allQNums[i + 1];
+        const nextPos = nextQn ? questionPos[nextQn] : null;
+
+        // Crop from this question's Y to next question's Y (or page bottom)
+        const startPct = Math.max(0, Math.floor((pos.yFromTop / pos.pageHeight) * 100) - 2);
+        let endPct;
+        if (nextPos && nextPos.page === pos.page) {
+          endPct = Math.floor((nextPos.yFromTop / pos.pageHeight) * 100);
+        } else {
+          endPct = 100; // rest of page
+        }
+        pos.yPct = startPct;
+        pos.heightPct = Math.min(endPct - startPct, 60); // cap at 60% of page
+      }
+
+      console.log(`[upload] matched ${Object.keys(questionPos).length}/${questions.length} questions with positions`);
     } catch (e) {
       console.warn('[upload] page matching failed:', e.message);
     }
 
-    // Store questions in DB — with Cloudinary page image URLs
+    // Deduplicate questions (version A/B exams often have same questions twice)
+    const seen = new Set();
+    questions = questions.filter(q => {
+      const key = q.q?.slice(0, 50) || `q${q.n}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // Store questions in DB — with Cloudinary CROPPED page image URLs
     if (questions.length > 0) {
       const qRecords = questions.map((q, i) => {
-        const pageNum = questionPages[q.n] || (i + 1);
-        // Cloudinary renders PDF pages as images via URL transformation
-        const imagePath = pdfCloudinaryId
-          ? `https://res.cloudinary.com/${cloudName}/image/upload/pg_${pageNum},w_800,q_auto/${pdfCloudinaryId}.png`
-          : 'text-only';
+        const pos = questionPos[q.n];
+        const pageNum = pos?.page || (i + 1);
+        let imagePath = 'text-only';
+        if (pdfCloudinaryId) {
+          if (pos?.yPct != null) {
+            // Crop to just this question's region on the page
+            const y = Math.round((pos.yPct / 100) * 792 * 2); // approx PDF height at scale 2
+            const h = Math.round((pos.heightPct / 100) * 792 * 2);
+            imagePath = `https://res.cloudinary.com/${cloudName}/image/upload/pg_${pageNum},w_1200,c_crop,g_north,y_${y},h_${Math.max(h, 200)},q_auto/${pdfCloudinaryId}.png`;
+          } else {
+            imagePath = `https://res.cloudinary.com/${cloudName}/image/upload/pg_${pageNum},w_800,q_auto/${pdfCloudinaryId}.png`;
+          }
+        }
         return {
           exam_id: exam.id,
           course_id: courseIdInt,
