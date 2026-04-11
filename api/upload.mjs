@@ -389,25 +389,7 @@ export default async function handler(req, res) {
 
     const combinedText = solText ? `=== מבחן ===\n${examText}\n\n=== פתרון ===\n${solText}` : examText;
 
-    // Try to improve the exam name from PDF content
-    let finalName = name;
-    if (examText.length > 50) {
-      const header = examText.slice(0, 500);
-      // Look for common Hebrew exam headers
-      const patterns = [
-        /מבחן\s+ב?(.{3,40})/,
-        /בחינה\s+ב?(.{3,40})/,
-        /מועד\s+[אב׳']\s*/i,
-        /סמסטר\s+[אב׳']\s*/i,
-        /\d{4}\s*[-–]\s*\d{4}/,
-      ];
-      const found = [];
-      for (const p of patterns) { const m = header.match(p); if (m) found.push(m[0].trim()); }
-      if (found.length && name.length < 10) {
-        finalName = `${name} - ${found.join(' ')}`.slice(0, 100);
-        await auth.db.from('ep_exams').update({ name: finalName }).eq('id', exam.id);
-      }
-    }
+    // Keep the user's original name — don't append long PDF header text
 
     // Extract questions: regex parser + optional Gemini AI enrichment
     let questions = [];
