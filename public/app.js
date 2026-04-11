@@ -2154,10 +2154,19 @@ function showExamManagementModal(courseId) {
         grid.style.gap = '8px';
         const ex = exams[idx];
         grid.innerHTML = ex.questions.map(q => `
-          <div style="border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;aspect-ratio:1;display:grid;place-items:center;font-size:12px;color:var(--text-muted);cursor:pointer;" title="שאלה ${q.section}">
+          <div class="em-builtin-q" data-qid="${q.id}" style="border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;aspect-ratio:1;display:grid;place-items:center;font-size:12px;color:var(--text-muted);cursor:pointer;" title="שאלה ${q.section}">
             <img src="${Data.imageUrl(q.image)}" alt="שאלה ${q.section}" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.parentElement.textContent='#${q.section}'" />
           </div>
         `).join('');
+        // Click thumbnail → full view
+        grid.querySelectorAll('.em-builtin-q').forEach(thumb => {
+          thumb.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const qid = thumb.dataset.qid;
+            const q = ex.questions.find(x => x.id === qid);
+            if (q) showQuestionViewer({ image_path: q.image, question_number: q.section, id: q.id }, courseId);
+          });
+        });
       });
     });
   }
@@ -2193,8 +2202,9 @@ function showExamManagementModal(courseId) {
                 <div style="font-size:12px;color:var(--text-muted);">${ex.question_count || 0} שאלות · <span style="${statusCls}">${statusLabel}</span></div>
               </div>
               ${canExpand ? `<svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>` : ''}
-              <button class="btn-icon em-delete-btn" data-exam-id="${ex.id}" data-exam-name="${escapeHtml(ex.name)}" data-q-count="${ex.question_count || 0}" title="מחק מבחן" style="flex-shrink:0;">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <button class="em-delete-btn" data-exam-id="${ex.id}" data-exam-name="${escapeHtml(ex.name)}" data-q-count="${ex.question_count || 0}" title="מחק מבחן" style="flex-shrink:0;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:inherit;display:flex;align-items:center;gap:4px;">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                מחק
               </button>
             </div>
             <div class="em-questions-grid" style="display:none;padding:0 14px 12px;"></div>
@@ -2241,7 +2251,18 @@ function showExamManagementModal(courseId) {
               </div>
             `).join('');
 
-            // Wire question delete
+            // Wire question click → open viewer
+            grid.querySelectorAll('.em-q-thumb').forEach(thumb => {
+              thumb.style.cursor = 'pointer';
+              thumb.addEventListener('click', (ev) => {
+                if (ev.target.closest('.em-q-delete')) return;
+                const qId = thumb.dataset.qId;
+                const q = examQs.find(x => String(x.id) === String(qId));
+                if (q) showQuestionViewer(q, courseId, () => thumb.remove());
+              });
+            });
+
+            // Wire question delete (small ✕ button)
             grid.querySelectorAll('.em-q-delete').forEach(btn => {
               btn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
@@ -2301,6 +2322,50 @@ function showExamManagementModal(courseId) {
     if (isBuiltin) renderBuiltinExams(sortEl.value);
     else renderUserExams(sortEl.value);
   });
+}
+
+// Question viewer lightbox — full-size image with delete option
+function showQuestionViewer(q, courseId, onDelete) {
+  const isTextOnly = q.image_path === 'text-only';
+  const imgSrc = isTextOnly ? null : Data.imageUrl(q.image_path, courseId);
+  const viewer = document.createElement('div');
+  viewer.className = 'modal-backdrop';
+  viewer.style.cssText = 'z-index:10000;display:flex;align-items:center;justify-content:center;';
+  viewer.innerHTML = `
+    <div style="background:#fff;border-radius:16px;max-width:90vw;max-height:90vh;overflow:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:0;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-soft);position:sticky;top:0;background:#fff;z-index:1;border-radius:16px 16px 0 0;">
+        <span style="font-weight:600;font-size:15px;">שאלה #${q.question_number || q.section || ''}</span>
+        <div style="display:flex;gap:8px;">
+          ${onDelete ? `<button id="qv-delete" class="btn btn-sm" style="color:var(--red-500);border-color:var(--red-200);">🗑️ מחק שאלה</button>` : ''}
+          <button id="qv-close" class="btn btn-ghost btn-sm">✕ סגור</button>
+        </div>
+      </div>
+      ${isTextOnly
+        ? `<div style="padding:24px;font-size:15px;line-height:1.8;direction:rtl;">${escapeHtml(q.general_explanation || 'שאלה ללא תמונה')}</div>`
+        : `<img src="${imgSrc}" alt="שאלה" style="width:100%;display:block;border-radius:0 0 16px 16px;" />`}
+    </div>
+  `;
+  document.body.appendChild(viewer);
+  viewer.querySelector('#qv-close').addEventListener('click', () => viewer.remove());
+  viewer.addEventListener('click', (e) => { if (e.target === viewer) viewer.remove(); });
+
+  const delBtn = viewer.querySelector('#qv-delete');
+  if (delBtn && onDelete) {
+    delBtn.addEventListener('click', () => {
+      viewer.remove();
+      showConfirmModal({
+        title: 'מחיקת שאלה',
+        body: `למחוק את שאלה #${q.question_number}?`,
+        confirmLabel: 'מחק', danger: true,
+        onConfirm: async () => {
+          const tk = await Auth.getToken();
+          const r = await fetch(`/api/courses/${courseId}/questions/${q.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tk}` } });
+          if (r.ok) { onDelete(); toast('שאלה נמחקה', 'success'); }
+          else toast('שגיאה במחיקה', 'error');
+        },
+      });
+    });
+  }
 }
 
 // Generic confirmation modal
