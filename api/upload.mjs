@@ -445,32 +445,38 @@ export default async function handler(req, res) {
         const publicId = `examprep/${auth.userId}/${exam.id}/exam`;
         const timestamp = String(Math.floor(Date.now() / 1000));
         const sigStr = `public_id=${publicId}&timestamp=${timestamp}${cloudSecret}`;
-        const crypto = await import('node:crypto');
-        const signature = crypto.createHash('sha1').update(sigStr).digest('hex');
+        const { createHash } = await import('node:crypto');
+        const signature = createHash('sha1').update(sigStr).digest('hex');
 
-        const form = new FormData();
-        form.append('file', new Blob([examFile.data], { type: 'application/pdf' }), 'exam.pdf');
-        form.append('public_id', publicId);
-        form.append('api_key', cloudKey);
-        form.append('timestamp', timestamp);
-        form.append('signature', signature);
-        form.append('resource_type', 'image');
+        // Use base64 data URI (most compatible with Vercel serverless)
+        const base64 = Buffer.from(examFile.data).toString('base64');
+        const dataUri = `data:application/pdf;base64,${base64}`;
 
-        console.log(`[upload] uploading PDF to Cloudinary: ${publicId}`);
+        console.log(`[upload] uploading PDF to Cloudinary: ${publicId} (${examFile.data.length} bytes)`);
         const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-          method: 'POST', body: form,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file: dataUri,
+            public_id: publicId,
+            api_key: cloudKey,
+            timestamp,
+            signature,
+          }),
         });
+        const cloudBody = await cloudRes.text();
         if (cloudRes.ok) {
-          const cloudData = await cloudRes.json();
+          const cloudData = JSON.parse(cloudBody);
           pdfCloudinaryId = cloudData.public_id;
-          console.log(`[upload] Cloudinary OK: ${pdfCloudinaryId}, pages: ${cloudData.pages || '?'}`);
+          console.log(`[upload] Cloudinary OK: ${pdfCloudinaryId}, pages: ${cloudData.pages || '?'}, url: ${cloudData.secure_url}`);
         } else {
-          const errText = await cloudRes.text().catch(() => '');
-          console.error(`[upload] Cloudinary upload failed (${cloudRes.status}):`, errText.slice(0, 200));
+          console.error(`[upload] Cloudinary failed (${cloudRes.status}):`, cloudBody.slice(0, 300));
         }
       } catch (e) {
-        console.warn('[upload] Cloudinary upload failed:', e.message);
+        console.error('[upload] Cloudinary error:', e.message);
       }
+    } else {
+      console.warn('[upload] Cloudinary not configured — questions will be text-only');
     }
 
     // Match questions to PDF pages
