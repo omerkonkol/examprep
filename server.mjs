@@ -68,6 +68,60 @@ const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, { auth: { persistSession: false } })
   : null;
 
+// ===== Cloudinary image upload (free, no credit card required) =====
+// Falls back to local storage when env vars are absent.
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
+const cloudinaryReady = !!(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+
+/**
+ * Upload an image file to Cloudinary.
+ * Uses Node 20 native fetch + FormData — no extra SDK needed.
+ * @param {string} publicId - e.g. "examprep/{userId}/{examId}/q-01"
+ * @param {string} filePath - local file path to the WebP image
+ * @returns {string} Cloudinary secure URL
+ */
+async function cloudinaryUpload(publicId, filePath) {
+  const timestamp = Math.round(Date.now() / 1000).toString();
+  const signatureStr = `public_id=${publicId}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
+  const signature = crypto.createHash('sha1').update(signatureStr).digest('hex');
+
+  const imageBuffer = fs.readFileSync(filePath);
+  const form = new FormData();
+  form.append('file', new Blob([imageBuffer], { type: 'image/webp' }), 'image.webp');
+  form.append('public_id', publicId);
+  form.append('api_key', CLOUDINARY_API_KEY);
+  form.append('timestamp', timestamp);
+  form.append('signature', signature);
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`Cloudinary upload failed (${res.status}): ${err.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.secure_url;
+}
+
+/**
+ * Upload a question image: tries Cloudinary, falls back to local path.
+ * @param {string} userId
+ * @param {string} examId
+ * @param {string} imageFile  - filename, e.g. "q-01.webp"
+ * @param {string} localDir   - directory where the file currently lives
+ * @returns {string} URL or relative path to store in DB
+ */
+async function uploadQuestionImage(userId, examId, imageFile, localDir) {
+  if (!cloudinaryReady) return `${userId}/${examId}/${imageFile}`;
+  const publicId = `examprep/${userId}/${examId}/${imageFile.replace(/\.[^.]+$/, '')}`;
+  const localFile = path.join(localDir, imageFile);
+  return await cloudinaryUpload(publicId, localFile);
+}
+
 // Resend email client — only active when RESEND_API_KEY is set.
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const CONTACT_NOTIFY_EMAIL = process.env.CONTACT_NOTIFY_EMAIL || '';
@@ -389,10 +443,12 @@ function publicProfile(profile) {
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/legal', express.static(path.join(__dirname, 'legal')));
 
-// Local image serving for dev only. In production images live in Supabase
-// Storage and are fetched directly from there with signed URLs.
-if (!IS_PROD) {
-  app.use('/storage', express.static(path.join(__dirname, 'data', 'storage')));
+// Local image serving (dev without Cloudinary). In production, images served from Cloudinary CDN.
+if (!IS_PROD || !cloudinaryReady) {
+  app.use('/storage', express.static(path.join(__dirname, 'data', 'storage'), {
+    maxAge: '1y',
+    immutable: true,
+  }));
 }
 
 // Default routes
@@ -685,7 +741,8 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
         fs.writeFileSync(solPath, solFile.buffer);
       }
 
-      // ===== Validate exam ↔ solution page count match =====
+      // ===== Validate exam ↔ solution page count match (soft warning, not blocking) =====
+      let pageCountWarning = null;
       if (solPath) {
         try {
           const { extractPositions } = await import('./scripts/process-pdf.mjs');
@@ -695,14 +752,10 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
           ]);
           const examPages = examPos.length;
           const solPages = solPos.length;
-          if (Math.abs(examPages - solPages) > 3) {
-            fs.rmSync(tempDir, { recursive: true, force: true });
-            tempDir = null;
-            return res.status(422).json({
-              error: 'קובץ הפתרון לא מתאים למבחן',
-              detail: `המבחן מכיל ${examPages} עמודים אבל הפתרון מכיל ${solPages} עמודים.`,
-              guidance: 'ודא שאתה מעלה את הפתרון של אותו מבחן. אם הפתרון מוטמע בקובץ המבחן, העלה רק קובץ אחד.',
-            });
+          const ratio = Math.max(examPages, solPages) / Math.max(1, Math.min(examPages, solPages));
+          if (ratio > 3) {
+            // Very large difference — warn but still proceed
+            pageCountWarning = `המבחן מכיל ${examPages} עמודים והפתרון ${solPages} עמודים — הפרש גדול. ודא שמדובר באותו מבחן.`;
           }
         } catch (valErr) {
           console.warn('[upload] page-count validation skipped:', valErr.message);
@@ -748,19 +801,23 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
           'PDF processing'
         );
 
+        // Upload question images to Cloudinary CDN (if configured).
+        // Falls back to local relative path when Cloudinary is not configured (local dev).
+        const localStorageDir = path.join(__dirname, 'data', 'storage', String(req.userId), String(exam.id));
+
         // Save questions to DB through RLS-enforced client.
-        const questionsToInsert = result.questions.map(q => ({
+        const questionsToInsert = await Promise.all(result.questions.map(async q => ({
           exam_id: exam.id,
           course_id: courseId,
           user_id: req.userId,
           question_number: q.index,
           section_label: q.section,
-          image_path: `${req.userId}/${exam.id}/${q.imageFile}`,
+          image_path: await uploadQuestionImage(req.userId, exam.id, q.imageFile, localStorageDir),
           num_options: q.numOptions,
-          correct_idx: q.correctIdx || 1,
+          correct_idx: q.correctIdx ?? null,
           option_labels: null,
           topic: null,
-        }));
+        })));
         if (questionsToInsert.length) {
           const { error: qErr } = await req.db.from('ep_questions').insert(questionsToInsert);
           if (qErr) console.error('[upload] insert questions:', qErr.message);
@@ -793,14 +850,18 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
         tempDir = null;
 
         // Check if solution was provided but answers weren't detected
-        let warning = null;
+        const warnings = [];
+        if (pageCountWarning) warnings.push(pageCountWarning);
         if (solFile && result.questions.length > 0) {
           const answeredCount = result.questions.filter(q => q.correctIdx != null).length;
           if (answeredCount === 0) {
-            warning = 'לא זוהו תשובות מסומנות בקובץ הפתרון. ודא שהתשובות הנכונות מסומנות בצהוב.';
+            warnings.push('לא זוהו תשובות מסומנות בקובץ הפתרון. ודא שהתשובות הנכונות מסומנות בצהוב.');
           } else if (answeredCount / result.questions.length < 0.3) {
-            warning = `זוהו תשובות רק ל-${answeredCount} מתוך ${result.questions.length} שאלות. ייתכן שקובץ הפתרון חלקי.`;
+            warnings.push(`זוהו תשובות רק ל-${answeredCount} מתוך ${result.questions.length} שאלות. ייתכן שקובץ הפתרון חלקי.`);
           }
+        }
+        if (result.questionCount === 0) {
+          warnings.push('לא זוהו שאלות אמריקאיות בקובץ. ודא שהמבחן מכיל שאלות רב-ברירה בפורמט מוכר.');
         }
 
         res.json({
@@ -808,7 +869,7 @@ app.post('/api/upload', authMiddleware, rateLimitMiddleware(3),
           exam_id: exam.id,
           question_count: result.questionCount,
           mode: result.mode,
-          ...(warning && { warning }),
+          ...(warnings.length && { warnings }),
         });
       } catch (procErr) {
         console.error('[upload] process error:', procErr?.message || procErr);

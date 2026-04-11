@@ -1,0 +1,1457 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ExamPrep - תוכנית שיווק ופרסום מקיפה</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800;900&display=swap');
+
+  :root {
+    --brand-blue: #1d4ed8;
+    --brand-light: #2563eb;
+    --brand-sky: #60a5fa;
+    --brand-bg: #eff6ff;
+    --dark: #0f172a;
+    --gray-700: #334155;
+    --gray-500: #64748b;
+    --gray-300: #cbd5e1;
+    --gray-100: #f1f5f9;
+    --green: #22c55e;
+    --red: #ef4444;
+    --orange: #f59e0b;
+    --purple: #8b5cf6;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Rubik', sans-serif;
+    background: #fff;
+    color: var(--dark);
+    line-height: 1.7;
+    font-size: 14px;
+  }
+
+  @media print {
+    body { font-size: 11px; line-height: 1.5; }
+    .page-break { page-break-before: always; }
+    .no-print { display: none; }
+    .cover { height: 100vh; }
+    section { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h2 { page-break-after: avoid; }
+  }
+
+  /* Cover Page */
+  .cover {
+    background: linear-gradient(135deg, var(--dark) 0%, #1e3a8a 50%, var(--brand-blue) 100%);
+    color: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    text-align: center;
+    padding: 60px 40px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cover::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle at 30% 70%, rgba(96,165,250,0.15) 0%, transparent 50%),
+                radial-gradient(circle at 70% 30%, rgba(37,99,235,0.1) 0%, transparent 50%);
+  }
+
+  .cover * { position: relative; z-index: 1; }
+
+  .cover-logo {
+    font-size: 64px;
+    font-weight: 900;
+    letter-spacing: -2px;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #fff 0%, var(--brand-sky) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .cover-tagline {
+    font-size: 20px;
+    font-weight: 300;
+    opacity: 0.9;
+    margin-bottom: 60px;
+    max-width: 500px;
+  }
+
+  .cover-title {
+    font-size: 36px;
+    font-weight: 700;
+    margin-bottom: 16px;
+  }
+
+  .cover-subtitle {
+    font-size: 18px;
+    font-weight: 300;
+    opacity: 0.8;
+    margin-bottom: 40px;
+  }
+
+  .cover-date {
+    font-size: 16px;
+    opacity: 0.6;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    padding-top: 20px;
+    margin-top: 40px;
+  }
+
+  .cover-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 50px;
+    padding: 8px 24px;
+    font-size: 14px;
+    margin-top: 20px;
+  }
+
+  /* Content */
+  .content {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 40px;
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--gray-100);
+    border-radius: 16px;
+    padding: 32px 40px;
+    margin: 40px 0;
+  }
+
+  .toc h2 {
+    font-size: 24px;
+    color: var(--brand-blue);
+    margin-bottom: 20px;
+    border: none;
+    padding: 0;
+  }
+
+  .toc ol {
+    list-style: none;
+    counter-reset: toc;
+  }
+
+  .toc ol li {
+    counter-increment: toc;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--gray-300);
+    font-size: 15px;
+  }
+
+  .toc ol li:last-child { border-bottom: none; }
+
+  .toc ol li::before {
+    content: counter(toc, decimal-leading-zero);
+    color: var(--brand-blue);
+    font-weight: 700;
+    margin-left: 12px;
+    font-size: 18px;
+  }
+
+  /* Sections */
+  h2 {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--brand-blue);
+    border-bottom: 3px solid var(--brand-blue);
+    padding-bottom: 12px;
+    margin: 50px 0 24px 0;
+  }
+
+  h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--dark);
+    margin: 30px 0 16px 0;
+  }
+
+  h4 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin: 20px 0 10px 0;
+  }
+
+  p { margin: 10px 0; color: var(--gray-700); }
+
+  strong { color: var(--dark); }
+
+  /* Cards */
+  .phase-card {
+    background: white;
+    border: 2px solid var(--gray-300);
+    border-radius: 16px;
+    padding: 28px;
+    margin: 20px 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .phase-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+  }
+
+  .phase-card.phase-1::before { background: var(--brand-sky); }
+  .phase-card.phase-2::before { background: var(--brand-blue); }
+  .phase-card.phase-3::before { background: var(--purple); }
+
+  .phase-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .phase-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--dark);
+  }
+
+  .phase-budget {
+    background: var(--brand-bg);
+    color: var(--brand-blue);
+    padding: 6px 16px;
+    border-radius: 50px;
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .phase-goals {
+    background: var(--gray-100);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+
+  .phase-goals strong { color: var(--brand-blue); }
+
+  /* Channel Cards */
+  .channel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 20px 0;
+  }
+
+  @media (max-width: 700px) {
+    .channel-grid { grid-template-columns: 1fr; }
+  }
+
+  .channel-card {
+    background: white;
+    border: 1px solid var(--gray-300);
+    border-radius: 12px;
+    padding: 20px;
+  }
+
+  .channel-name {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .channel-why {
+    font-size: 12px;
+    color: var(--gray-500);
+    margin-bottom: 10px;
+  }
+
+  .channel-detail {
+    font-size: 13px;
+    color: var(--gray-700);
+    margin: 4px 0;
+  }
+
+  .channel-budget {
+    display: inline-block;
+    background: var(--brand-bg);
+    color: var(--brand-blue);
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 8px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+
+  thead th {
+    background: var(--dark);
+    color: white;
+    padding: 10px 14px;
+    text-align: right;
+    font-weight: 600;
+  }
+
+  thead th:first-child { border-radius: 0 8px 0 0; }
+  thead th:last-child { border-radius: 8px 0 0 0; }
+
+  tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--gray-300);
+  }
+
+  tbody tr:nth-child(even) { background: var(--gray-100); }
+  tbody tr:hover { background: var(--brand-bg); }
+
+  /* Prompt Blocks */
+  .prompt-block {
+    background: var(--dark);
+    color: #e2e8f0;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 16px 0;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    direction: ltr;
+    text-align: left;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    position: relative;
+  }
+
+  .prompt-label {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    background: var(--brand-blue);
+    color: white;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: 'Rubik', sans-serif;
+    font-weight: 600;
+  }
+
+  /* Video Script */
+  .video-script {
+    background: white;
+    border: 2px solid var(--gray-300);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 20px 0;
+  }
+
+  .video-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .video-title {
+    font-size: 17px;
+    font-weight: 700;
+  }
+
+  .video-meta {
+    font-size: 12px;
+    color: var(--gray-500);
+    background: var(--gray-100);
+    padding: 4px 12px;
+    border-radius: 20px;
+  }
+
+  .video-section {
+    margin: 12px 0;
+    padding: 12px 16px;
+    border-radius: 8px;
+  }
+
+  .video-section.hook { background: #fef2f2; border-right: 3px solid var(--red); }
+  .video-section.content-s { background: var(--brand-bg); border-right: 3px solid var(--brand-blue); }
+  .video-section.cta { background: #f0fdf4; border-right: 3px solid var(--green); }
+
+  .video-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+
+  .hook .video-section-label { color: var(--red); }
+  .content-s .video-section-label { color: var(--brand-blue); }
+  .cta .video-section-label { color: var(--green); }
+
+  /* KPI Cards */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  @media (max-width: 600px) {
+    .kpi-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  .kpi-card {
+    background: var(--brand-bg);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+
+  .kpi-value {
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--brand-blue);
+  }
+
+  .kpi-label {
+    font-size: 12px;
+    color: var(--gray-500);
+    margin-top: 4px;
+  }
+
+  .kpi-target {
+    font-size: 10px;
+    color: var(--gray-500);
+    margin-top: 2px;
+  }
+
+  /* Guerrilla Tactics */
+  .tactic {
+    background: white;
+    border: 1px solid var(--gray-300);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .tactic-number {
+    background: var(--brand-blue);
+    color: white;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .tactic-content { flex: 1; }
+
+  .tactic-title {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+
+  .tactic-desc {
+    font-size: 13px;
+    color: var(--gray-700);
+  }
+
+  /* Highlight Boxes */
+  .highlight-box {
+    background: linear-gradient(135deg, var(--brand-bg) 0%, #dbeafe 100%);
+    border: 1px solid var(--brand-sky);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 20px 0;
+  }
+
+  .highlight-box.warning {
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border-color: var(--orange);
+  }
+
+  .highlight-box.success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border-color: var(--green);
+  }
+
+  /* Calendar */
+  .calendar-table th {
+    background: var(--brand-blue);
+    font-size: 12px;
+    padding: 8px 10px;
+  }
+
+  .calendar-table td {
+    font-size: 12px;
+    padding: 8px 10px;
+  }
+
+  /* Lists */
+  ul, ol {
+    margin: 10px 20px;
+    color: var(--gray-700);
+  }
+
+  li { margin: 6px 0; }
+
+  /* Action Items */
+  .action-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .action-list li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--gray-100);
+  }
+
+  .action-number {
+    background: var(--brand-blue);
+    color: white;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .action-cost {
+    background: #f0fdf4;
+    color: var(--green);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: auto;
+  }
+
+  /* Post Template */
+  .post-template {
+    background: var(--gray-100);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 16px 0;
+    border-right: 4px solid var(--brand-blue);
+  }
+
+  .post-template p {
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--dark);
+  }
+
+  /* Divider */
+  .divider {
+    height: 1px;
+    background: linear-gradient(to left, transparent, var(--gray-300), transparent);
+    margin: 40px 0;
+  }
+
+  /* Seasonal Chart */
+  .season-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+  }
+
+  .season-label {
+    width: 100px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .season-fill {
+    height: 24px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 11px;
+    color: white;
+    font-weight: 600;
+  }
+
+  .email-seq {
+    background: white;
+    border: 1px solid var(--gray-300);
+    border-radius: 10px;
+    margin: 8px 0;
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .email-day {
+    background: var(--brand-blue);
+    color: white;
+    padding: 2px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .email-content {
+    font-size: 13px;
+    color: var(--gray-700);
+  }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 40px;
+    color: var(--gray-500);
+    font-size: 12px;
+    border-top: 1px solid var(--gray-300);
+    margin-top: 60px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== COVER PAGE ==================== -->
+<div class="cover">
+  <div class="cover-logo">ExamPrep</div>
+  <div class="cover-tagline">הסיכום שלך הופך לכלי תרגול מלא -- בדקה אחת</div>
+  <div class="cover-title">תוכנית שיווק ופרסום מקיפה</div>
+  <div class="cover-subtitle">אסטרטגיה, ערוצים, קריאייטיב, תקציב, KPIs ותוכנית ליום 1</div>
+  <div class="cover-badge">מסמך פנימי | אפריל 2026</div>
+  <div class="cover-date">try-examprep.com</div>
+</div>
+
+<!-- ==================== CONTENT ==================== -->
+<div class="content">
+
+<!-- Context -->
+<div class="highlight-box">
+  <h4>היתרון התחרותי המרכזי</h4>
+  <p>המתחרים (קידום ₪4,000+, יואל גבע ₪6,000-₪8,700) גובים אלפי שקלים לקורסי הכנה. <strong>ExamPrep עולה ₪19.90-₪49.90/חודש -- זול פי 10 עד 50.</strong></p>
+  <p><strong>USP:</strong> "הסיכום שלך הופך לכלי תרגול מלא -- בדקה אחת. לא ChatGPT גנרי."</p>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <h2>תוכן עניינים</h2>
+  <ol>
+    <li>אסטרטגיה לפי שלבים (3 שלבים, 12 חודשים)</li>
+    <li>אסטרטגיה ערוץ-ערוץ (7 ערוצים)</li>
+    <li>קריאייטיב -- סוגי מודעות תמונה (10 סוגים)</li>
+    <li>פרומפטים ל-NanoBanana AI (12 פרומפטים)</li>
+    <li>תסריטי וידאו (5 תסריטים)</li>
+    <li>הקצאת תקציב מפורטת</li>
+    <li>KPIs ומדדי הצלחה</li>
+    <li>לוח תוכן שבועי + עונתיות</li>
+    <li>טקטיקות גרילה לשוק הישראלי (8 טקטיקות)</li>
+    <li>פסיכולוגיית תמחור ואופטימיזציית המרות</li>
+    <li>פעולות ליום 1</li>
+  </ol>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 1: PHASES ==================== -->
+<h2>01 | אסטרטגיה לפי שלבים</h2>
+
+<div class="phase-card phase-1">
+  <div class="phase-header">
+    <div class="phase-title">שלב 1: השקה וולידציה (חודשים 1-3)</div>
+    <div class="phase-budget">$500/חודש</div>
+  </div>
+  <div class="phase-goals">
+    <strong>מטרות:</strong> 500 רשומים | 50 משלמים | Product-Market Fit ראשוני
+  </div>
+
+  <h4>א. שיווק אורגני אגרסיבי (חודש 1)</h4>
+  <ul>
+    <li>פרסום ב-50+ קבוצות פייסבוק של סטודנטים (TAU, Technion, HUJI, BGU, IDC, Bar-Ilan, Haifa)</li>
+    <li>קבוצות קורסים ספציפיות (מבוא לסטטיסטיקה, תוכנה 1, פסיכומטרי 2026, בגרות 5 יחידות)</li>
+    <li>WhatsApp groups של קורסים</li>
+    <li>Reddit: r/Israel, r/hebrew</li>
+  </ul>
+
+  <div class="post-template">
+    <h4>פורמט פוסט מומלץ לקבוצות:</h4>
+    <p>
+      היי, בניתי כלי חינמי שהופך סיכום PDF לשאלות תרגול אוטומטית.<br>
+      מעלים סיכום → מקבלים שאלות אמריקאיות + כרטיסיות + מילון מושגים.<br>
+      עובד לפסיכומטרי, בגרויות, וכל קורס באוניברסיטה.<br>
+      14 ימים חינם, בלי כרטיס אשראי.<br>
+      <strong>try-examprep.com</strong>
+    </p>
+  </div>
+
+  <h4>ב. קמפיין Founder's Story (חודש 1-2)</h4>
+  <ul>
+    <li>3-5 סרטוני TikTok/Reels בשבוע -- סיפור אישי, demo, טיפים</li>
+    <li>סגנון: אותנטי, talking head, screen recording</li>
+  </ul>
+
+  <h4>ג. Beta Ambassadors (חודש 1-3)</h4>
+  <ul>
+    <li>20 סטודנטים מ-5 אוניברסיטאות, Pro חינם לסמסטר</li>
+    <li>תמורה: פוסט שבועי בסטורי/קבוצה + screenshots</li>
+  </ul>
+
+  <h4>ד. מודעות ממומנות ראשונות (חודש 2-3)</h4>
+  <ul>
+    <li>Facebook/Instagram: $200/חודש -- 10+ קריאייטיבים</li>
+    <li>TikTok: $100/חודש -- 5+ קריאייטיבים</li>
+    <li>Google Search: $100/חודש -- מילות מפתח ממוקדות</li>
+  </ul>
+</div>
+
+<div class="phase-card phase-2">
+  <div class="phase-header">
+    <div class="phase-title">שלב 2: צמיחה ואופטימיזציה (חודשים 4-6)</div>
+    <div class="phase-budget">$1,000/חודש</div>
+  </div>
+  <div class="phase-goals">
+    <strong>מטרות:</strong> 2,000 רשומים | 200 משלמים | CAC < $5
+  </div>
+  <ul>
+    <li><strong>הגברת Paid:</strong> 20+ קריאייטיבים בשבוע, Retargeting (ROI פי 10), Lookalike audiences</li>
+    <li><strong>SEO Blog:</strong> 4-8 מאמרים/חודש ("איך להתכונן לפסיכומטרי 2026", "טיפים למבחן סטטיסטיקה 1")</li>
+    <li><strong>שותפויות מתרגלים:</strong> פנייה ל-50 מתרגלים -- חשבון Education חינם</li>
+    <li><strong>Email Automation:</strong> Welcome sequence, Trial ending, Weekly digest, Win-back</li>
+    <li><strong>YouTube:</strong> 2 סרטונים/שבוע (tutorials + Shorts cross-post)</li>
+  </ul>
+</div>
+
+<div class="phase-card phase-3">
+  <div class="phase-header">
+    <div class="phase-title">שלב 3: סקיילינג (חודשים 7-12)</div>
+    <div class="phase-budget">$1,500-2,000/חודש</div>
+  </div>
+  <div class="phase-goals">
+    <strong>מטרות:</strong> 10,000 רשומים | 1,000 משלמים | MRR ₪25,000-₪50,000
+  </div>
+  <ul>
+    <li><strong>הגדלת Paid:</strong> Meta 50%, TikTok 20%, Google 20%, YouTube 10%, Retargeting 30%</li>
+    <li><strong>Referral Program:</strong> "הזמן חבר -- שניכם מקבלים שבוע Pro חינם"</li>
+    <li><strong>קמפיינים עונתיים:</strong> x2-3 תקציב בתקופת מבחנים (ינואר-פברואר, מאי-יולי)</li>
+    <li><strong>PR:</strong> Geektime, Calcalist Tech, פודקאסטים (SigmaLabs, StartupForStartup)</li>
+    <li><strong>Influencer Marketing:</strong> 5-10 יוצרי TikTok/Instagram, $100-300 ליוצר</li>
+  </ul>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 2: CHANNELS ==================== -->
+<h2>02 | אסטרטגיה ערוץ-ערוץ</h2>
+
+<div class="channel-grid">
+  <div class="channel-card">
+    <div class="channel-name">TikTok</div>
+    <div class="channel-why">CPM הנמוך ביותר ($4.67) | קהל Gen Z</div>
+    <div class="channel-detail"><strong>תדירות:</strong> 5-7 סרטונים/שבוע</div>
+    <div class="channel-detail"><strong>תוכן:</strong> POV, screen recording, השוואות מחיר, מימים, trending sounds</div>
+    <div class="channel-budget">$100-400/חודש</div>
+  </div>
+
+  <div class="channel-card">
+    <div class="channel-name">Instagram</div>
+    <div class="channel-why">73% share ישראלי | visual platform</div>
+    <div class="channel-detail"><strong>תדירות:</strong> 4-5 Reels, 3 posts, Stories יומי</div>
+    <div class="channel-detail"><strong>תוכן:</strong> Cross-post TikTok, Carousels, Stories (polls), Highlights</div>
+    <div class="channel-budget">$200-500/חודש</div>
+  </div>
+
+  <div class="channel-card">
+    <div class="channel-name">Facebook</div>
+    <div class="channel-why">קבוצות סטודנטים = goldmine</div>
+    <div class="channel-detail"><strong>אורגני:</strong> 50+ קבוצות, תגובות רלוונטיות</div>
+    <div class="channel-detail"><strong>Paid:</strong> Retargeting, Lookalike, גילאי 18-30</div>
+    <div class="channel-budget">$200-600/חודש</div>
+  </div>
+
+  <div class="channel-card">
+    <div class="channel-name">Google Ads</div>
+    <div class="channel-why">Intent-based | מי שמחפש עכשיו</div>
+    <div class="channel-detail"><strong>מילות מפתח:</strong> "תרגול פסיכומטרי", "הכנה לבגרות", "אלטרנטיבה לקידום"</div>
+    <div class="channel-detail"><strong>CPC צפוי:</strong> 1-4 שקל</div>
+    <div class="channel-budget">$100-350/חודש</div>
+  </div>
+
+  <div class="channel-card">
+    <div class="channel-name">WhatsApp</div>
+    <div class="channel-why">95% penetration | open rate 98%</div>
+    <div class="channel-detail">קבוצת "טיפים למבחנים" -- ערך אמיתי</div>
+    <div class="channel-detail">כפתור "שתף עם חבר" באפליקציה</div>
+    <div class="channel-detail">Welcome message + תזכורות trial</div>
+    <div class="channel-budget">חינם (אורגני)</div>
+  </div>
+
+  <div class="channel-card">
+    <div class="channel-name">Email</div>
+    <div class="channel-why">ROI $36 לכל $1 שמושקע</div>
+    <div class="channel-detail">Welcome Sequence (14 ימים)</div>
+    <div class="channel-detail">Win-back, Weekly Digest</div>
+    <div class="channel-detail">Trial ending sequence</div>
+    <div class="channel-budget">חינם (Resend free tier)</div>
+  </div>
+
+  <div class="channel-card" style="grid-column: 1 / -1;">
+    <div class="channel-name">SEO</div>
+    <div class="channel-why">צמיחה אורגנית ארוכת-טווח</div>
+    <div class="channel-detail"><strong>תוכן:</strong> 4-8 מאמרי בלוג/חודש, 1,500+ מילים, internal links, CTA</div>
+    <div class="channel-detail"><strong>דפי נחיתה:</strong> לכל קטגוריה (פסיכומטרי, בגרות, אוניברסיטה)</div>
+    <div class="channel-detail"><strong>מילות מפתח:</strong> "איך להתכונן לפסיכומטרי", "תרגול שאלות אמריקאיות", "הכנה למבחנים בזול"</div>
+    <div class="channel-budget">חינם (זמן)</div>
+  </div>
+</div>
+
+<h3>רצף מיילים אוטומטי -- Welcome Sequence</h3>
+
+<div class="email-seq">
+  <div class="email-day">יום 0</div>
+  <div class="email-content">"ברוכים הבאים ל-ExamPrep! הנה 3 דברים שכדאי לנסות עכשיו"</div>
+</div>
+<div class="email-seq">
+  <div class="email-day">יום 3</div>
+  <div class="email-content">"נסה את מצב המבחן -- בדיוק כמו במבחן אמיתי"</div>
+</div>
+<div class="email-seq">
+  <div class="email-day">יום 7</div>
+  <div class="email-content">"חצי trial מאחוריך -- הנה מה שגילית" [מטריקות אישיות]</div>
+</div>
+<div class="email-seq">
+  <div class="email-day">יום 12</div>
+  <div class="email-content">"מחר ה-Trial נגמר. ₪19.90/חודש = פחות מקפה אחד בשבוע"</div>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 3: IMAGE AD TYPES ==================== -->
+<h2>03 | קריאייטיב -- סוגי מודעות תמונה</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>סוג מודעה</th>
+      <th>תיאור</th>
+      <th>פלטפורמה</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td><strong>Before/After</strong></td><td>מסך מפוצל: סיכום מבולגן → חבילת לימוד מסודרת</td><td>Instagram, Facebook</td></tr>
+    <tr><td>2</td><td><strong>Price Comparison</strong></td><td>ExamPrep ₪19.90 VS קידום ₪4,000-₪8,700</td><td>Facebook, TikTok</td></tr>
+    <tr><td>3</td><td><strong>Countdown Pressure</strong></td><td>"המבחן שלך בעוד 3 ימים. מה אתה עושה?"</td><td>Stories, Reels</td></tr>
+    <tr><td>4</td><td><strong>AI Magic</strong></td><td>PDF מתפוצץ לשאלות, כרטיסיות, מפת נושאים</td><td>Facebook, Instagram</td></tr>
+    <tr><td>5</td><td><strong>Social Proof Wall</strong></td><td>קיר ביקורות + ציונים + מספרים מרשימים</td><td>Instagram, Facebook</td></tr>
+    <tr><td>6</td><td><strong>Mobile Lifestyle</strong></td><td>סטודנט מחייך בספרייה עם ExamPrep על הטלפון</td><td>Stories, Reels</td></tr>
+    <tr><td>7</td><td><strong>Knowledge Map</strong></td><td>ויזואליזציה של נושאים חזקים/חלשים -- neon futuristic</td><td>Instagram, Facebook</td></tr>
+    <tr><td>8</td><td><strong>Meme Format</strong></td><td>Drake meme: "₪6,000 קורס" vs "₪19.90 AI"</td><td>TikTok, Instagram</td></tr>
+    <tr><td>9</td><td><strong>Feature Showcase</strong></td><td>6 פיצ'רים מרחפים סביב לפטופ -- glass-morphism</td><td>Instagram, Facebook</td></tr>
+    <tr><td>10</td><td><strong>Exam Season</strong></td><td>לוח שנה עם מבחנים מסומנים + ExamPrep כפתרון</td><td>Stories, Reels</td></tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 4: NANOBANANA PROMPTS ==================== -->
+<h2>04 | פרומפטים ל-NanoBanana AI</h2>
+
+<p>12 פרומפטים מפורטים באנגלית ליצירת תמונות פרסום. כל פרומפט מותאם לפלטפורמה ספציפית (1:1, 9:16, 16:9).</p>
+
+<h3>Prompt 1: "The Before/After Split" (1:1 Instagram)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a modern, clean split-screen advertisement image for an Israeli edtech app called "ExamPrep". LEFT SIDE (labeled "לפני" in Hebrew, meaning "Before"): A messy, cluttered desk with scattered paper notes, a stressed student with head in hands, crumpled papers, coffee cups, and a chaotic PDF document on a laptop screen. Use muted, grayish tones. RIGHT SIDE (labeled "אחרי" in Hebrew, meaning "After"): The same student now smiling and confident, looking at a sleek laptop screen showing a clean, organized quiz interface with progress bars in blue (#2563eb), checkmarks in green, and a score of 94%. The desk is clean and organized. Use bright, warm lighting with the brand blue (#1d4ed8) as accent. Bottom center: ExamPrep logo (blue text) with tagline in Hebrew text. Style: Flat illustration, modern SaaS aesthetic, vibrant colors, professional but youthful. Aspect ratio 1:1 for Instagram feed.</div>
+
+<h3>Prompt 2: "Price Shock Comparison" (9:16 Stories/Reels)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a bold, eye-catching advertisement image comparing exam preparation prices in Israel. Show two paths side by side. LEFT option: A fancy classroom building with a huge red price tag showing "₪6,000-₪8,700", looking expensive and intimidating, labeled "Traditional prep courses" in Hebrew. RIGHT option: A glowing smartphone showing the ExamPrep interface with a tiny green price tag "₪19.90/month", looking accessible and inviting, labeled "ExamPrep" with a golden glow effect. The right side should be clearly more appealing with arrows pointing to it, star ratings, happy student faces. Style: Modern infographic, high contrast, expensive option feels heavy/dark, ExamPrep feels light/bright/affordable. Brand colors: deep blue (#1d4ed8) and sky blue (#60a5fa). Aspect ratio 9:16 for Stories/Reels.</div>
+
+<h3>Prompt 3: "The Countdown Panic" (1:1)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create an urgent, attention-grabbing ad image for ExamPrep targeting Israeli students. Show a dramatic scene: a large digital clock countdown timer displaying "3 days to exam" in bold red numbers against a dark background. Below the timer, a glowing laptop screen shows the ExamPrep dashboard with organized study packs, progress tracking at 87%, and AI-generated questions. A student's hands on keyboard, looking determined not stressed. Mood transitions from panic (top/red) to confidence (bottom/blue). Floating elements: checkmarks, brain icons, progress charts. Bottom text in Hebrew: "You can still make it. Start now for free." Brand accent blue (#2563eb). Style: Cinematic lighting, dramatic but hopeful, modern tech aesthetic. Aspect ratio 1:1.</div>
+
+<h3>Prompt 4: "The AI Magic Moment" (16:9 Facebook)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a visually stunning advertisement showing the AI-powered magic of ExamPrep. Center: A PDF document with Hebrew text and math formulas being uploaded, with magical blue sparkles and light trails transforming it into multiple organized study elements floating outward: quiz cards with multiple choice questions, flashcards, a knowledge mind map, a glossary, and a progress dashboard. Transformation looks like a magical explosion of organized learning materials emerging from the PDF. Gradient background from dark navy (#172554) to brand blue (#2563eb). Subtle Hebrew text on floating cards. ExamPrep logo at bottom with text: "Upload a summary. Get a complete study pack. In one minute." Style: Magical realism, particle effects, glowing edges, premium SaaS aesthetic. Aspect ratio 16:9 for Facebook feed.</div>
+
+<h3>Prompt 5: "Social Proof Wall" (1:1)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a trust-building advertisement for ExamPrep showing a wall of student testimonials and success metrics. Layout resembles a modern dashboard showing: Multiple floating review cards with 5-star ratings and Hebrew text quotes from students with avatars, names, and Israeli university names. Scatter impressive metrics: "94% average score", "+16 point improvement", "10,000+ questions created". Background: soft gradient brand blue (#eff6ff to white). Subtle confetti celebration elements. Bottom: ExamPrep logo and CTA "Join thousands of students already using it" in Hebrew. Style: Clean, modern, lots of white space, trustworthy. Aspect ratio 1:1.</div>
+
+<h3>Prompt 6: "The Mobile-First Student" (9:16)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a lifestyle advertisement showing ExamPrep on mobile. Scene: A young Israeli student (early 20s) sitting casually in a university library, confidently studying from their phone which clearly shows the ExamPrep quiz interface: a multiple-choice question in Hebrew, answer options A/B/C/D, a timer, progress bar in blue. Other students in background look stressed with heavy textbooks. Main student looks relaxed and in control. Warm natural lighting. Floating semi-transparent UI elements: score badges, streak counters, mastery indicators. Bottom text: "Practice anywhere. Master the material." in Hebrew. ExamPrep logo corner. Style: Photorealistic, warm tones, aspirational lifestyle. Aspect ratio 9:16.</div>
+
+<h3>Prompt 7: "The Knowledge Map" (1:1)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create an abstract data-visualization advertisement for ExamPrep's Insights feature. Show a beautiful glowing neural network knowledge map spreading across the image, with nodes representing study topics labeled in Hebrew: Statistics, Algebra, Probability, Regression. Nodes color-coded: bright green for mastered, yellow for in-progress, red for weak areas. Connection lines pulse with blue (#2563eb) energy. Center: student silhouette surrounded by this network. Overlay text: "Know exactly where you're weak. Focus on what matters." in Hebrew. ExamPrep logo bottom. Style: Dark background (#0f172a), neon glow effects, futuristic data visualization, premium tech. Aspect ratio 1:1.</div>
+
+<h3>Prompt 8: "Exam Day Confidence" (9:16)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create an empowering advertisement for ExamPrep. Scene: A student walking confidently into a university exam hall (modern Israeli architecture). Smiling, carrying only a pen. Behind them, transparent overlay of ExamPrep dashboard showing 95% mastery, all topics green, hundreds of questions practiced. Other students frantically flipping through notebooks. Confident student has subtle blue aura (#2563eb). Hebrew text: "You came prepared. Now prove it." Below: ExamPrep logo + "Start for free". Style: Cinematic, inspirational, blue-toned, hero shot, modern Israeli setting. Aspect ratio 9:16.</div>
+
+<h3>Prompt 9: "60-Second Transformation" (16:9)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a dynamic timeline advertisement showing what happens in 60 seconds with ExamPrep. Horizontal timeline from left to right with 4 moments: SECOND 0: Student holding PDF, uncertain. SECOND 15: PDF being processed with gears, AI sparkles. SECOND 40: Multiple study materials materializing: quiz cards, flashcards, outline, glossary. SECOND 60: Student practicing with complete study pack, big green checkmark. Below: "60 seconds. From summary to complete practice tool." in Hebrew. Brand blue (#2563eb) primary color, each step progressively brighter. ExamPrep logo bottom. Style: Clean infographic, motion-implied, modern flat design with 3D elements. Aspect ratio 16:9.</div>
+
+<h3>Prompt 10: "The Meme Ad" (1:1 TikTok/Instagram)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a humorous meme-style advertisement Israeli students would share. Drake meme layout with stylized Israeli student character (casual clothes, early 20s). TOP PANEL (rejecting): "Pay 6,000 shekels for psychometric prep course" in Hebrew, expensive classroom background. BOTTOM PANEL (approving): "Pay 19.90 shekels and get AI-personalized questions" in Hebrew, ExamPrep interface glowing on phone. ExamPrep logo subtly in corner. Style: Bold meme aesthetic, high contrast, funny but professional enough for an ad, vibrant colors, Instagram/TikTok native 1:1 format.</div>
+
+<h3>Prompt 11: "Feature Showcase" (1:1)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create a premium dark-themed showcase image for ExamPrep features. Background: deep navy gradient (#0f172a to #1e3a8a). Center: floating glowing laptop showing ExamPrep dashboard with Hebrew text. Around laptop, 6 feature icons float in semi-circle with Hebrew labels: Professor pattern analysis, AI similar questions, Progress tracking, Mastery map, Exam mode, Mock exam generator. Each icon has subtle glow in different color (blue, purple, green, cyan, orange, pink). Top text: "All-in-one for smart studying" in Hebrew. ExamPrep logo bottom. Style: Premium SaaS hero, glass-morphism, floating elements. Aspect ratio 1:1.</div>
+
+<h3>Prompt 12: "Exam Season Urgency" (9:16)</h3>
+<div class="prompt-block"><span class="prompt-label">NanoBanana</span>
+Create an urgent seasonal advertisement for ExamPrep. Shows dramatic Hebrew calendar page for exam season with dates circled in red. From calendar, glowing path leads to phone showing ExamPrep with 92% practice score. Surrounding: alarm clock, coffee cup, Israeli university silhouettes. Large Hebrew text: "Exam season? You still have time." Sub-text: "14 days free. Start now." Colors transition from urgent reds to calming blues (#2563eb). ExamPrep logo prominent. Style: High-energy, seasonal urgency, modern graphic design. Aspect ratio 9:16.</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 5: VIDEO SCRIPTS ==================== -->
+<h2>05 | תסריטי וידאו</h2>
+
+<div class="video-script">
+  <div class="video-header">
+    <div class="video-title">וידאו 1: "19.90 ש"ח ועליתי 16 נקודות"</div>
+    <div class="video-meta">TikTok/Reels | 30 שניות</div>
+  </div>
+  <div class="video-section hook">
+    <div class="video-section-label">HOOK (0-3 שניות)</div>
+    מסך שחור + טקסט גדול: "שילמתי 19.90 ש"ח ועליתי 16 נקודות במבחן" [trending sound ישראלי]
+  </div>
+  <div class="video-section content-s">
+    <div class="video-section-label">תוכן (3-20 שניות)</div>
+    [talking head] "גיליתי כלי מטורף בשם ExamPrep" → [screen recording] "מעלים PDF, תוך דקה יש שאלות, כרטיסיות, הכל אוטומטי" → [חזרה] "תרגלתי 3 ימים וקיבלתי 91"
+  </div>
+  <div class="video-section cta">
+    <div class="video-section-label">CTA (20-30 שניות)</div>
+    "14 ימים חינם. בלי כרטיס אשראי." [מסך + טקסט: try-examprep.com]
+  </div>
+</div>
+
+<div class="video-script">
+  <div class="video-header">
+    <div class="video-title">וידאו 2: "₪6,000 VS ₪19.90"</div>
+    <div class="video-meta">TikTok/Reels | 20 שניות</div>
+  </div>
+  <div class="video-section hook">
+    <div class="video-section-label">HOOK (0-3 שניות)</div>
+    [split screen] שמאל: שלט "קורס הכנה ₪6,000" | ימין: שלט "ExamPrep ₪19.90/חודש" | טקסט: "נחשו מי קיבל ציון יותר גבוה"
+  </div>
+  <div class="video-section content-s">
+    <div class="video-section-label">תוכן (3-15 שניות)</div>
+    "כל מה שעשיתי זה להעלות את הסיכומים שלי" → [screen recording מהיר] → "קיבלתי 87. חבר שילם 6,000 על קידום -- 82."
+  </div>
+  <div class="video-section cta">
+    <div class="video-section-label">CTA (15-20 שניות)</div>
+    "הלינק בביו. 14 ימים חינם." [לוגו ExamPrep + URL]
+  </div>
+</div>
+
+<div class="video-script">
+  <div class="video-header">
+    <div class="video-title">וידאו 3: "POV: מבחן מחר"</div>
+    <div class="video-meta">TikTok | 15 שניות</div>
+  </div>
+  <div class="video-section hook">
+    <div class="video-section-label">HOOK (0-2 שניות)</div>
+    [POV מצלמה, ספרייה] טקסט: "POV: יש לך מבחן מחר ומצאת את ExamPrep" [dramatic reveal sound]
+  </div>
+  <div class="video-section content-s">
+    <div class="video-section-label">תוכן (2-10 שניות)</div>
+    [ידיים על מקלדת → מעלה PDF → loading → חבילת לימוד שלמה מופיעה → zoom-in "95% דיוק"]
+  </div>
+  <div class="video-section cta">
+    <div class="video-section-label">CTA (10-15 שניות)</div>
+    [חיוך + טקסט] "try-examprep.com -- חינם" [celebration sound]
+  </div>
+</div>
+
+<div class="video-script">
+  <div class="video-header">
+    <div class="video-title">וידאו 4: "למה בניתי את ExamPrep" (סיפור המייסד)</div>
+    <div class="video-meta">YouTube/Facebook | 60-90 שניות</div>
+  </div>
+  <div class="video-section hook">
+    <div class="video-section-label">פתיחה (0-10 שניות)</div>
+    [מול מצלמה, רקע נקי] "בשנה שלישית באוניברסיטה, היו לי 4 מבחנים בשבועיים. לא כסף על קורסי הכנה, לא כלי שבאמת עוזר."
+  </div>
+  <div class="video-section content-s">
+    <div class="video-section-label">בעיה + פתרון (10-50 שניות)</div>
+    "חיפשתי אפליקציה שתהפוך סיכומים לשאלות תרגול. לא מצאתי. אז בניתי אחת."<br>
+    [screen recording] "מעלים PDF → שאלות + הסברים + מפת נושאים + מבחני דמה. הכל ב-₪19.90, לא ₪6,000."<br>
+    [Social proof] "+16 נקודות שיפור. תלמידה עלתה מ-78 ל-94 בבגרות."
+  </div>
+  <div class="video-section cta">
+    <div class="video-section-label">CTA (70-90 שניות)</div>
+    "14 ימים חינם. בלי כרטיס אשראי, בלי התחייבות. הלינק בתיאור." [מסך סיום + לוגו + URL]
+  </div>
+</div>
+
+<div class="video-script">
+  <div class="video-header">
+    <div class="video-title">וידאו 5: "ExamPrep VS ChatGPT"</div>
+    <div class="video-meta">YouTube/TikTok | 45 שניות</div>
+  </div>
+  <div class="video-section hook">
+    <div class="video-section-label">HOOK (0-5 שניות)</div>
+    [טקסט על מסך שחור] "ChatGPT לא מכיר את המרצה שלך. ExamPrep כן." [split screen]
+  </div>
+  <div class="video-section content-s">
+    <div class="video-section-label">תוכן (5-35 שניות)</div>
+    שמאל ChatGPT: "שאלות גנריות, לא יודע נושאים/רמה/סגנון"<br>
+    ימין ExamPrep: "מנתח מבחנים, מזהה חזרות, יוצר שאלות באותו סגנון" → [demo תובנות]
+  </div>
+  <div class="video-section cta">
+    <div class="video-section-label">CTA (35-45 שניות)</div>
+    "try-examprep.com. 14 ימים חינם."
+  </div>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 6: BUDGET ==================== -->
+<h2>06 | הקצאת תקציב</h2>
+
+<h3>שלב 1 (חודשים 1-3): $500/חודש</h3>
+<table>
+  <thead><tr><th>ערוץ</th><th>$ לחודש</th><th>%</th></tr></thead>
+  <tbody>
+    <tr><td>Facebook/Instagram Ads</td><td>200</td><td>40%</td></tr>
+    <tr><td>TikTok Ads</td><td>100</td><td>20%</td></tr>
+    <tr><td>Google Search</td><td>100</td><td>20%</td></tr>
+    <tr><td>Content Creation (Canva Pro)</td><td>50</td><td>10%</td></tr>
+    <tr><td>Micro-Influencer / מדבקות</td><td>50</td><td>10%</td></tr>
+  </tbody>
+</table>
+
+<h3>שלב 2 (חודשים 4-6): $1,000/חודש</h3>
+<table>
+  <thead><tr><th>ערוץ</th><th>$ לחודש</th><th>%</th></tr></thead>
+  <tbody>
+    <tr><td>Facebook/Instagram</td><td>350</td><td>35%</td></tr>
+    <tr><td>TikTok</td><td>200</td><td>20%</td></tr>
+    <tr><td>Google Search</td><td>200</td><td>20%</td></tr>
+    <tr><td>YouTube</td><td>100</td><td>10%</td></tr>
+    <tr><td>Influencer</td><td>100</td><td>10%</td></tr>
+    <tr><td>Email Tools</td><td>50</td><td>5%</td></tr>
+  </tbody>
+</table>
+
+<h3>שלב 3 (חודשים 7-12): $1,700/חודש</h3>
+<table>
+  <thead><tr><th>ערוץ</th><th>$ לחודש</th><th>%</th></tr></thead>
+  <tbody>
+    <tr><td>Facebook/Instagram + Retargeting</td><td>600</td><td>35%</td></tr>
+    <tr><td>TikTok</td><td>300</td><td>17%</td></tr>
+    <tr><td>Google Search + Display</td><td>350</td><td>20%</td></tr>
+    <tr><td>YouTube</td><td>150</td><td>9%</td></tr>
+    <tr><td>Influencer/UGC</td><td>200</td><td>12%</td></tr>
+    <tr><td>Email + PR + Content</td><td>100</td><td>6%</td></tr>
+  </tbody>
+</table>
+
+<div class="highlight-box warning">
+  <h4>תקציב עונתי</h4>
+  <p><strong>בתקופת מבחנים (ינואר-פברואר, מאי-יולי):</strong> הכפל תקציב x2-3</p>
+  <p><strong>בחופשות (אוגוסט):</strong> הורד ל-x0.5</p>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 7: KPIs ==================== -->
+<h2>07 | KPIs ומדדי הצלחה</h2>
+
+<h3>North Star Metrics</h3>
+
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-value">500</div>
+    <div class="kpi-label">רשומים</div>
+    <div class="kpi-target">חודש 3</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">2,000</div>
+    <div class="kpi-label">רשומים</div>
+    <div class="kpi-target">חודש 6</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">10,000</div>
+    <div class="kpi-label">רשומים</div>
+    <div class="kpi-target">חודש 12</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">50</div>
+    <div class="kpi-label">משלמים</div>
+    <div class="kpi-target">חודש 3</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">200</div>
+    <div class="kpi-label">משלמים</div>
+    <div class="kpi-target">חודש 6</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">1,000</div>
+    <div class="kpi-label">משלמים</div>
+    <div class="kpi-target">חודש 12</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">₪1,500</div>
+    <div class="kpi-label">MRR</div>
+    <div class="kpi-target">חודש 3</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">₪6,000</div>
+    <div class="kpi-label">MRR</div>
+    <div class="kpi-target">חודש 6</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">₪30,000</div>
+    <div class="kpi-label">MRR</div>
+    <div class="kpi-target">חודש 12</div>
+  </div>
+</div>
+
+<h3>Acquisition Metrics</h3>
+<table>
+  <thead><tr><th>מדד</th><th>יעד</th></tr></thead>
+  <tbody>
+    <tr><td>CAC (Customer Acquisition Cost)</td><td><strong>< $5</strong></td></tr>
+    <tr><td>CPR (Cost Per Registration)</td><td><strong>< $2</strong></td></tr>
+    <tr><td>CTR מודעות</td><td><strong>> 2%</strong></td></tr>
+    <tr><td>CPC ממוצע</td><td><strong>< $0.50</strong></td></tr>
+    <tr><td>Organic Traffic (חודש 12)</td><td><strong>5,000+/חודש</strong></td></tr>
+  </tbody>
+</table>
+
+<h3>Activation / Retention / Revenue</h3>
+<table>
+  <thead><tr><th>מדד</th><th>יעד</th></tr></thead>
+  <tbody>
+    <tr><td>% שהעלו PDF ב-session ראשון</td><td><strong>> 60%</strong></td></tr>
+    <tr><td>Trial-to-Paid Conversion</td><td><strong>> 15%</strong></td></tr>
+    <tr><td>Week 1 Retention</td><td><strong>> 40%</strong></td></tr>
+    <tr><td>DAU/MAU ratio</td><td><strong>> 20%</strong></td></tr>
+    <tr><td>LTV:CAC ratio</td><td><strong>> 3:1</strong></td></tr>
+    <tr><td>LTV</td><td><strong>> ₪150</strong></td></tr>
+    <tr><td>Monthly Churn</td><td><strong>< 10%</strong></td></tr>
+  </tbody>
+</table>
+
+<h3>כלי מדידה מומלצים</h3>
+<table>
+  <thead><tr><th>תפקיד</th><th>כלי</th><th>עלות</th></tr></thead>
+  <tbody>
+    <tr><td>Analytics</td><td>Vercel Analytics + Plausible</td><td>חינם</td></tr>
+    <tr><td>Conversion Tracking</td><td>Meta Pixel, TikTok Pixel, Google Tag Manager</td><td>חינם</td></tr>
+    <tr><td>Heatmaps</td><td>Hotjar</td><td>חינם (free tier)</td></tr>
+    <tr><td>A/B Testing</td><td>PostHog</td><td>חינם (free tier)</td></tr>
+    <tr><td>Revenue</td><td>Stripe Dashboard</td><td>כלול</td></tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 8: CONTENT CALENDAR ==================== -->
+<h2>08 | לוח תוכן</h2>
+
+<h3>שבוע לדוגמה</h3>
+<table class="calendar-table">
+  <thead>
+    <tr><th>יום</th><th>TikTok</th><th>Instagram</th><th>Facebook</th><th>YouTube</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>א'</strong></td><td>POV "מבחן מחר"</td><td>Reel (cross-post)</td><td>פוסט בקבוצות</td><td>Short</td></tr>
+    <tr><td><strong>ב'</strong></td><td>טיפ "3 טעויות"</td><td>Story: Poll</td><td>--</td><td>--</td></tr>
+    <tr><td><strong>ג'</strong></td><td>Screen recording</td><td>Carousel: 5 טיפים</td><td>Retargeting ad</td><td>--</td></tr>
+    <tr><td><strong>ד'</strong></td><td>"VS ChatGPT"</td><td>Reel (cross-post)</td><td>פוסט בקבוצות</td><td>Short</td></tr>
+    <tr><td><strong>ה'</strong></td><td>Testimonial</td><td>Story: screenshot</td><td>--</td><td>Tutorial ארוך</td></tr>
+    <tr><td><strong>ו'</strong></td><td>Meme/humor</td><td>Reel (cross-post)</td><td>--</td><td>Short</td></tr>
+    <tr><td><strong>ש'</strong></td><td>Trending sound</td><td>Story: recap</td><td>--</td><td>--</td></tr>
+  </tbody>
+</table>
+
+<h3>עונתיות -- מתי להגביר</h3>
+
+<div class="season-bar">
+  <div class="season-label">ספט-אוקט</div>
+  <div class="season-fill" style="width: 37%; background: var(--brand-sky);">x1.5 פתיחת סמסטר</div>
+</div>
+<div class="season-bar">
+  <div class="season-label">נוב-דצמ</div>
+  <div class="season-fill" style="width: 50%; background: var(--brand-blue);">x2 countdown למבחנים</div>
+</div>
+<div class="season-bar">
+  <div class="season-label">ינו-פבר</div>
+  <div class="season-fill" style="width: 75%; background: var(--red);">x3 תקופת מבחנים!</div>
+</div>
+<div class="season-bar">
+  <div class="season-label">מרץ-אפר</div>
+  <div class="season-fill" style="width: 25%; background: var(--gray-500);">x1 סמסטר ב'</div>
+</div>
+<div class="season-bar">
+  <div class="season-label">מאי-יולי</div>
+  <div class="season-fill" style="width: 75%; background: var(--red);">x3 מבחנים + בגרויות + פסיכומטרי</div>
+</div>
+<div class="season-bar">
+  <div class="season-label">אוגוסט</div>
+  <div class="season-fill" style="width: 12%; background: var(--gray-300); color: var(--gray-700);">x0.5</div>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 9: GUERRILLA ==================== -->
+<h2>09 | טקטיקות גרילה לשוק הישראלי</h2>
+
+<div class="tactic">
+  <div class="tactic-number">1</div>
+  <div class="tactic-content">
+    <div class="tactic-title">חדירה לקבוצות WhatsApp של קורסים</div>
+    <div class="tactic-desc">מצא 100 קבוצות דרך חברים/ambassadors. הודעה אחת פשוטה לקבוצה (לא ספאם). הגב לשאלות כמו "מישהו יודע על חומר תרגול?"</div>
+  </div>
+</div>
+
+<div class="tactic">
+  <div class="tactic-number">2</div>
+  <div class="tactic-content">
+    <div class="tactic-title">"First Exam Free" -- דפי נחיתה לקורסים</div>
+    <div class="tactic-desc">דף ספציפי לכל קורס: try-examprep.com/stat-1, try-examprep.com/software-1. "העלה את המבחן הקודם -- חבילת תרגול מלאה חינם"</div>
+  </div>
+</div>
+
+<div class="tactic">
+  <div class="tactic-number">3</div>
+  <div class="tactic-content">
+    <div class="tactic-title">Campus Ambassador Program</div>
+    <div class="tactic-desc">5 ambassadors מ-5 אוניברסיטאות. Pro חינם + ₪50 לכל 10 referrals משלמים. חולצות/מדבקות (~₪500).</div>
+  </div>
+</div>
+
+<div class="tactic">
+  <div class="tactic-number">4</div>
+  <div class="tactic-content">
+    <div class="tactic-title">QR Code Stickers -- מדבקות בקמפוסים</div>
+    <div class="tactic-desc">500 מדבקות (~₪100) ליד חדרי מבחנים, ספריות, קפיטריות. "סריקה = תרגול חינם"</div>
+  </div>
+</div>
+
+<div class="tactic">
+  <div class="tactic-number">5</div>
+  <div class="tactic-content">
+    <div class="tactic-title">WhatsApp Status Hack</div>
+    <div class="tactic-desc">תמונות status מוכנות: "סיימתי 200 שאלות השבוע" + ציון + לוגו. כפתור "שתף בסטטוס" באפליקציה אחרי כל מקבץ.</div>
+  </div>
+</div>
+
+<div class="tactic">
+  <div class="tactic-number">6</div>
+  <div class="tactic-content">
+    <div class="tactic-title">Study Challenge -- Viral Loop</div>
+    <div class="tactic-desc">"אומר/ת לך שאתה לא יכול לקבל יותר ממני" → try-examprep.com/challenge/XYZ. הנמען חייב להירשם כדי לקבל אתגר.</div>
+  </div>
+</div>
+
+<div class="tactic">
+  <div class="tactic-number">7</div>
+  <div class="tactic-content">
+    <div class="tactic-title">Lecturer Outreach -- פנייה למרצים</div>
+    <div class="tactic-desc">מייל ל-50 מרצים/מתרגלים -- חשבון Education חינם לסמסטר. מרצה אחד שממליץ = 200+ משתמשים חדשים.</div>
+  </div>
+</div>
+
+<div class="tactic">
+  <div class="tactic-number">8</div>
+  <div class="tactic-content">
+    <div class="tactic-title">Exam Season Blitz -- מבצע תקופת מבחנים</div>
+    <div class="tactic-desc">2 שבועות לפני מבחנים: 50% הנחה על Basic (₪9.95). Countdown timer + push notifications + email blast.</div>
+  </div>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 10: PRICING PSYCHOLOGY ==================== -->
+<h2>10 | פסיכולוגיית תמחור ואופטימיזציית המרות</h2>
+
+<h3>פסיכולוגיית תמחור</h3>
+
+<table>
+  <thead><tr><th>טקטיקה</th><th>הסבר</th><th>יישום</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Price Anchoring</strong></td>
+      <td>הצג מחיר מתחרים קודם</td>
+      <td>תמיד תציג: "קורסי הכנה ₪4,000-₪8,700" לפני "ExamPrep ₪19.90"</td>
+    </tr>
+    <tr>
+      <td><strong>Daily Framing</strong></td>
+      <td>פרק מחיר ליחידות קטנות</td>
+      <td>"₪19.90/חודש = פחות מקפה בשבוע = 66 אגורות ליום"</td>
+    </tr>
+    <tr>
+      <td><strong>Loss Aversion</strong></td>
+      <td>הדגש מה מפסידים</td>
+      <td>"נשארו 3 ימים. תאבד גישה ל-X שאלות ו-Y חבילות"</td>
+    </tr>
+    <tr>
+      <td><strong>Social Proof</strong></td>
+      <td>מה אחרים עושים</td>
+      <td>"87% בוחרים Basic" + badge "הכי פופולרי"</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>אופטימיזציית המרות</h3>
+
+<table>
+  <thead><tr><th>#</th><th>פעולה</th><th>השפעה צפויה</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><strong>Hero Video</strong> -- GIF/video 5 שניות ב-above the fold</td><td>+20-30% engagement</td></tr>
+    <tr><td>2</td><td><strong>Google Sign-In</strong> -- כפתור התחברות מהירה</td><td>-40% friction ב-signup</td></tr>
+    <tr><td>3</td><td><strong>Paywall Teaser</strong> -- preview + testimonial + "פחות מקפה בשבוע"</td><td>+15-25% upgrade</td></tr>
+    <tr><td>4</td><td><strong>Exit Intent</strong> -- "לפני שתלך: 7 ימים Pro בחינם"</td><td>חזרה של 5-10% עוזבים</td></tr>
+    <tr><td>5</td><td><strong>Onboarding ב-5 דקות</strong> -- העלה PDF → WOW → 5 שאלות → התקדמות</td><td>+30% activation</td></tr>
+    <tr><td>6</td><td><strong>Upgrade Triggers</strong> -- אחרי הצלחה, 90% מכסה, 3 ימים לסוף trial</td><td>+20% conversion</td></tr>
+    <tr><td>7</td><td><strong>Annual Plan</strong> (שלב 2) -- ₪199/שנה (חיסכון 17%)</td><td>הגדלת LTV, הורדת churn</td></tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ==================== SECTION 11: DAY 1 ==================== -->
+<h2>11 | פעולות ליום 1</h2>
+
+<div class="highlight-box success">
+  <h4>10 פעולות מיידיות -- רובן בחינם</h4>
+  <p>התחל מהיום. רוב הפעולות לא עולות כלום ויכולות להתחיל להביא תנועה תוך שעות.</p>
+</div>
+
+<ul class="action-list">
+  <li>
+    <div class="action-number">1</div>
+    <span>הקם <strong>Meta Business Suite</strong> + התקן <strong>Meta Pixel</strong> באתר</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">2</div>
+    <span>הקם <strong>TikTok Business account</strong> + התקן <strong>TikTok Pixel</strong></span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">3</div>
+    <span>הקם <strong>Google Ads</strong> + <strong>Google Tag Manager</strong> + Conversion tracking</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">4</div>
+    <span>צלם <strong>3 סרטונים ראשונים</strong> (תסריטים 1-3 מלמעלה)</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">5</div>
+    <span>צור <strong>5 תמונות מודעה</strong> ב-NanoBanana (prompts 1, 2, 3, 10, 12)</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">6</div>
+    <span>פרסם ב-<strong>10 קבוצות פייסבוק</strong> של סטודנטים</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">7</div>
+    <span>שלח ל-<strong>20 חברים</strong> "בניתי כלי, מה דעתך?"</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">8</div>
+    <span>הגדר <strong>Resend welcome email sequence</strong> (5 מיילים)</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">9</div>
+    <span>צור <strong>Linktree</strong> ל-bio ב-TikTok/Instagram</span>
+    <span class="action-cost">$0</span>
+  </li>
+  <li>
+    <div class="action-number">10</div>
+    <span>הגדר <strong>UTM parameters</strong> לכל קישור</span>
+    <span class="action-cost">$0</span>
+  </li>
+</ul>
+
+<h3>תקציב חודש 1: $500</h3>
+<table>
+  <thead><tr><th>פריט</th><th>עלות</th></tr></thead>
+  <tbody>
+    <tr><td>Facebook/Instagram Ads</td><td>$200</td></tr>
+    <tr><td>TikTok Ads</td><td>$100</td></tr>
+    <tr><td>Google Ads</td><td>$100</td></tr>
+    <tr><td>Canva Pro</td><td>$13</td></tr>
+    <tr><td>500 מדבקות QR</td><td>$25</td></tr>
+    <tr><td>רזרבה ל-A/B testing</td><td>$62</td></tr>
+    <tr><td><strong>סה"כ</strong></td><td><strong>$500</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="divider"></div>
+
+<!-- Summary -->
+<div class="highlight-box">
+  <h3>סיכום: הדרך ל-1,000 משתמשים משלמים</h3>
+  <p>
+    <strong>חודשים 1-3:</strong> ולידציה + אורגני אגרסיבי → 50 משלמים<br>
+    <strong>חודשים 4-6:</strong> Paid + SEO + Email → 200 משלמים<br>
+    <strong>חודשים 7-12:</strong> סקיילינג + Referral + PR → 1,000 משלמים<br><br>
+    <strong>MRR בחודש 12: ₪30,000 (~$8,000)</strong><br>
+    <strong>עלויות: ~$2,000/חודש</strong><br>
+    <strong>רווח נקי: ~$6,000/חודש</strong>
+  </p>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <p><strong>ExamPrep</strong> | try-examprep.com | תוכנית שיווק אפריל 2026</p>
+  <p>מסמך פנימי -- סודי</p>
+</div>
+
+</div><!-- end content -->
+
+</body>
+</html>

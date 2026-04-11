@@ -1844,9 +1844,18 @@ async function loadCourseExams(courseId) {
         const examId = btn.dataset.examId;
         const examName = btn.dataset.examName;
         const qCount = btn.dataset.qCount;
+        const plan = state.user?.plan || 'free';
+        const daysLeft = state.user?.days_left;
+        // Build warning for trial/limited plan users
+        let deleteWarning = '';
+        if (plan === 'trial' && typeof daysLeft === 'number') {
+          deleteWarning = `\n\n⚠️ שים לב: נשארו לך ${daysLeft} ימים בתקופת הניסיון. מחיקת מבחן לא תחזיר את מכסת ההעלאות שנוצלה.`;
+        } else if (plan === 'basic') {
+          deleteWarning = '\n\n⚠️ שים לב: מחיקת מבחן לא תחזיר את מכסת ההעלאות שנוצלה.';
+        }
         showConfirmModal({
           title: 'מחיקת מבחן',
-          body: `למחוק את "${examName}"? ${qCount} שאלות וכל הנתונים שלהן (ניסיונות, סטטיסטיקות) יימחקו לצמיתות.`,
+          body: `למחוק את "${examName}"? ${qCount} שאלות וכל הנתונים שלהן (ניסיונות, סטטיסטיקות) יימחקו לצמיתות.${deleteWarning}`,
           confirmLabel: 'מחק לצמיתות',
           danger: true,
           onConfirm: async () => {
@@ -1857,6 +1866,8 @@ async function loadCourseExams(courseId) {
             });
             if (r.ok) {
               toast('המבחן נמחק בהצלחה', 'success');
+              // Refresh course data so stats update
+              Data._loadedSet.delete(courseId);
               loadCourseExams(courseId);
             } else {
               const d = await r.json().catch(() => ({}));
@@ -2098,15 +2109,22 @@ function showUploadPdfModal(courseId) {
     btn.disabled = true;
     btn.textContent = 'מעלה ומעבד...';
     document.getElementById('up-progress').style.display = '';
-    // Animate progress bar
+    // Animate progress bar — slow, decaying curve so it never feels stuck
     const fill = document.getElementById('up-progress-fill');
     const statusEl = document.getElementById('up-status');
     let pct = 0;
+    const startTime = Date.now();
     const progressInterval = setInterval(() => {
-      if (pct < 90) { pct += Math.random() * 8; fill.style.width = Math.min(pct, 90) + '%'; }
-      if (pct > 20 && pct < 50) statusEl.textContent = 'מחלץ טקסט מהקובץ...';
-      else if (pct >= 50) statusEl.textContent = 'מזהה שאלות ותשובות...';
-    }, 500);
+      const elapsed = (Date.now() - startTime) / 1000; // seconds
+      // Logarithmic curve: fast start, slows to a crawl near 90%
+      // Reaches ~30% at 5s, ~50% at 15s, ~70% at 40s, ~85% at 80s
+      pct = Math.min(90, 90 * (1 - Math.exp(-elapsed / 30)));
+      fill.style.width = pct + '%';
+      if (elapsed < 8) statusEl.textContent = 'מעלה ומעבד שאלות...';
+      else if (elapsed < 20) statusEl.textContent = 'מחלץ טקסט מהקובץ...';
+      else if (elapsed < 45) statusEl.textContent = 'מזהה שאלות ותשובות...';
+      else statusEl.textContent = 'כמעט סיימנו, עוד רגע...';
+    }, 800);
 
     try {
       const token = await Auth.getToken();
@@ -2463,7 +2481,9 @@ function revealSolution() {
   state.quiz.revealed[q.id] = true;
   state.quiz.correctIdxByQ[q.id] = data.correctIdx;
   const sel = state.quiz.selections[q.id];
-  state.quiz.correct[q.id] = sel === data.correctIdx;
+  // If correct answer is unknown (null), don't penalize — mark as correct by default
+  const answerKnown = data.correctIdx != null;
+  state.quiz.correct[q.id] = answerKnown ? sel === data.correctIdx : true;
   refreshAnswerVisual();
   showSolutionPanel(q);
   renderQuizNav();
@@ -2512,7 +2532,9 @@ function showSolutionPanel(q, dataParam) {
       </div>
     `;
   }
-  if (!exp) {
+  if (data.correctIdx == null) {
+    html += `<p class="muted" style="margin-top:12px;">⚠️ התשובה הנכונה לא זוהתה אוטומטית. ודא שקובץ הפתרון מסומן בצהוב.</p>`;
+  } else if (!exp) {
     html += `<p class="muted" style="margin-top:12px;">הסבר מפורט לשאלה זו טרם נכתב.</p>`;
   }
   document.getElementById('solution-content').innerHTML = html;
@@ -2525,7 +2547,8 @@ function saveCurrentSelectionAsAttempt() {
   if (state.quiz.revealed[q.id]) return; // already saved
   const data = Data.reveal(q.id);
   state.quiz.correctIdxByQ[q.id] = data.correctIdx;
-  state.quiz.correct[q.id] = sel === data.correctIdx;
+  const answerKnown = data.correctIdx != null;
+  state.quiz.correct[q.id] = answerKnown ? sel === data.correctIdx : true;
   state.quiz.revealed[q.id] = true; // mark internally as decided
   const tsec = Math.round((Date.now() - state.quiz.questionStartedAt[q.id]) / 1000);
   state.quiz.timeUsed[q.id] = tsec;

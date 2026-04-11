@@ -167,8 +167,8 @@ function findSectionHeadings(pages, parentQ, letters = ALL_LETTERS) {
   return { headings: results, range };
 }
 
-// ===== Find standalone numbered question headings (for 2023-style exams) =====
-function findStandaloneQuestions(pages, fromQ, toQ) {
+// ===== Find standalone numbered question headings (auto-detect range) =====
+function findStandaloneQuestions(pages, fromQ = 1, toQ = 100) {
   const results = [];
   const seen = new Set();
   for (const page of pages) {
@@ -224,7 +224,7 @@ async function cropQuestion(pageImagesDir, heading, bottom, outFile) {
       meta.height - top,
       Math.ceil((bottom.yFromTop + MARGIN_BOTTOM - heading.yFromTop + MARGIN_TOP) * SCALE)
     );
-    await sharp(imgPath).extract({ left: 0, top, width: meta.width, height }).toFile(outFile);
+    await sharp(imgPath).extract({ left: 0, top, width: meta.width, height }).webp({ lossless: true }).toFile(outFile);
     return;
   }
 
@@ -254,7 +254,7 @@ async function cropQuestion(pageImagesDir, heading, bottom, outFile) {
   }
   await sharp({
     create: { width, height: totalHeight, channels: 3, background: { r: 255, g: 255, b: 255 } },
-  }).composite(composite).png().toFile(outFile);
+  }).composite(composite).webp({ lossless: true }).toFile(outFile);
 }
 
 // ===== Detect yellow highlight in a region (returns: {hasYellow, intensity}) =====
@@ -362,13 +362,23 @@ export async function processExamPair({
   let headings = [];
   let mode = mcqMode;
   if (mode === 'auto') {
-    // Try sections first
-    const { headings: sectionHeadings } = findSectionHeadings(examPositions, parentQuestion);
-    if (sectionHeadings.length >= 3) {
-      headings = sectionHeadings;
+    // Try sections within multiple parent questions (1-20) and pick the best
+    let bestSectionHeadings = [];
+    let bestParent = parentQuestion;
+    for (let pq = 1; pq <= 20; pq++) {
+      const { headings: sectionHeadings } = findSectionHeadings(examPositions, pq);
+      if (sectionHeadings.length > bestSectionHeadings.length) {
+        bestSectionHeadings = sectionHeadings;
+        bestParent = pq;
+      }
+    }
+    if (bestSectionHeadings.length >= 3) {
+      headings = bestSectionHeadings;
+      parentQuestion = bestParent;
       mode = 'sections';
     } else {
-      const stHeadings = findStandaloneQuestions(examPositions, fromQ, toQ);
+      // Try standalone questions with full range
+      const stHeadings = findStandaloneQuestions(examPositions, 1, 100);
       headings = stHeadings;
       mode = 'questions';
     }
@@ -380,7 +390,9 @@ export async function processExamPair({
   }
 
   if (!headings.length) {
-    throw new Error('Could not detect any MCQ headings in the exam PDF.');
+    // Don't throw — return 0 questions so the exam is saved with a warning
+    console.warn('[process-pdf] No MCQ headings detected in PDF');
+    return { mode, questionCount: 0, questions: [] };
   }
 
   // 4. Crop each question + detect answer
@@ -392,23 +404,21 @@ export async function processExamPair({
     if (!bottom) continue;
 
     // Crop the question image (from exam PDF)
-    const outFile = path.join(outputDir, `q-${String(i + 1).padStart(2, '0')}.png`);
+    const outFile = path.join(outputDir, `q-${String(i + 1).padStart(2, '0')}.webp`);
     await cropQuestion(examPagesDir, h, bottom, outFile);
 
     // Detect the highlighted answer (from solution PDF)
     let correctIdx = null;
     if (solutionPositions) {
       // Find the corresponding heading in the solution (by section letter)
-      const solRange = mode === 'sections'
-        ? findSectionHeadings(solutionPositions, parentQuestion).headings.find(s => s.section === h.section)
-        : findStandaloneQuestions(solutionPositions, fromQ, toQ).find(s => s.section === h.section);
+      const solHeadings = mode === 'sections'
+        ? findSectionHeadings(solutionPositions, parentQuestion).headings
+        : findStandaloneQuestions(solutionPositions, 1, 100);
+      const solRange = solHeadings.find(s => s.section === h.section);
 
       if (solRange) {
-        const solBottom = findBottomBoundary(solutionPositions, solRange,
-          mode === 'sections'
-            ? findSectionHeadings(solutionPositions, parentQuestion).headings[i + 1]
-            : findStandaloneQuestions(solutionPositions, fromQ, toQ)[i + 1]
-        );
+        const solIdx = solHeadings.indexOf(solRange);
+        const solBottom = findBottomBoundary(solutionPositions, solRange, solHeadings[solIdx + 1]);
         if (solBottom) {
           correctIdx = await detectHighlightedAnswer(solutionPagesDir, solutionPositions, solRange, solBottom, expectedNumOptions);
         }
