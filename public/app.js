@@ -622,28 +622,36 @@ function uploadWithProgress({ url, headers, body, onUploadProgress, onUploadDone
   return promise;
 }
 
-// Render a PDF page to a canvas element using PDF.js
-// Returns the canvas, or null on failure.
-const _pdfPageCache = {};
+// Render a PDF page to a canvas element using PDF.js (loaded from CDN as pdfjsLib global)
+const _pdfDocCache = {};
+const _pdfCanvasCache = {};
 async function renderPdfPage(pdfUrl, pageNum, scale = 1.5) {
   const cacheKey = `${pdfUrl}:${pageNum}:${scale}`;
-  if (_pdfPageCache[cacheKey]) return _pdfPageCache[cacheKey].cloneNode(true);
+  if (_pdfCanvasCache[cacheKey]) {
+    // Return a copy of the cached canvas as an image
+    const img = document.createElement('img');
+    img.src = _pdfCanvasCache[cacheKey];
+    return img;
+  }
   try {
-    const pdfjsLib = window['pdfjs-dist/build/pdf'] || await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');
-    if (pdfjsLib.GlobalWorkerOptions) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+    if (!window.pdfjsLib) { console.error('[renderPdfPage] pdfjsLib not loaded'); return null; }
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js';
+    // Cache the PDF document to avoid re-downloading
+    if (!_pdfDocCache[pdfUrl]) {
+      _pdfDocCache[pdfUrl] = await window.pdfjsLib.getDocument(pdfUrl).promise;
     }
-    const doc = await pdfjsLib.getDocument(pdfUrl).promise;
+    const doc = _pdfDocCache[pdfUrl];
     const page = await doc.getPage(pageNum);
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-    _pdfPageCache[cacheKey] = canvas;
-    return canvas.cloneNode(true);
+    // Cache as data URL for reuse
+    _pdfCanvasCache[cacheKey] = canvas.toDataURL('image/png');
+    return canvas;
   } catch (e) {
-    console.error('[renderPdfPage]', e.message);
+    console.error('[renderPdfPage]', e.message, 'url:', pdfUrl, 'page:', pageNum);
     return null;
   }
 }

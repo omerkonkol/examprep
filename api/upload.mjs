@@ -442,12 +442,18 @@ export default async function handler(req, res) {
         // Auto-create bucket (idempotent)
         await admin.storage.createBucket('exam-pages', { public: true }).catch(() => {});
         const pdfPath = `exams/${auth.userId}/${exam.id}/exam.pdf`;
-        await admin.storage.from('exam-pages').upload(pdfPath, examFile.data, {
+        const pdfBuffer = Buffer.from(examFile.data);
+        console.log(`[upload] uploading PDF to storage: ${pdfPath} (${pdfBuffer.length} bytes)`);
+        const { error: storageErr } = await admin.storage.from('exam-pages').upload(pdfPath, pdfBuffer, {
           contentType: 'application/pdf', upsert: true,
         });
-        const { data: urlData } = admin.storage.from('exam-pages').getPublicUrl(pdfPath);
-        pdfStorageUrl = urlData?.publicUrl || null;
-        console.log(`[upload] PDF stored at: ${pdfStorageUrl}`);
+        if (storageErr) {
+          console.error('[upload] storage upload error:', storageErr.message);
+        } else {
+          const { data: urlData } = admin.storage.from('exam-pages').getPublicUrl(pdfPath);
+          pdfStorageUrl = urlData?.publicUrl || null;
+          console.log(`[upload] PDF stored at: ${pdfStorageUrl}`);
+        }
       } catch (e) {
         console.warn('[upload] PDF storage failed:', e.message);
       }
