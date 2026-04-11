@@ -484,8 +484,8 @@ export default async function handler(req, res) {
     if (questions.length > 0) {
       const qRecords = questions.map((q, i) => {
         const pageNum = questionPages[q.n] || (i + 1);
-        // Format: "pdfpage:{pageNum}" — client renders the page using PDF.js
-        const imagePath = pdfStorageUrl ? `pdfpage:${pageNum}` : 'text-only';
+        // Format: "pdfpage:{fullUrl}:{pageNum}" — client renders with PDF.js
+        const imagePath = pdfStorageUrl ? `pdfpage:${pdfStorageUrl}:${pageNum}` : 'text-only';
         return {
           exam_id: exam.id,
           course_id: courseIdInt,
