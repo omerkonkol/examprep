@@ -2102,9 +2102,9 @@ function showExamManagementModal(courseId) {
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
         ${!isBuiltin ? `<button class="btn btn-primary btn-sm" id="em-upload-btn">📤 העלאת מבחן</button>` : ''}
         <select id="em-sort" class="btn btn-ghost btn-sm" style="font-family:inherit;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;">
+          <option value="year-desc" selected>מיון: שנה (חדש → ישן)</option>
+          <option value="year-asc">מיון: שנה (ישן → חדש)</option>
           <option value="name">מיון: לפי שם</option>
-          <option value="date-desc" selected>מיון: חדש → ישן</option>
-          <option value="date-asc">מיון: ישן → חדש</option>
           <option value="questions">מיון: כמות שאלות</option>
         </select>
       </div>
@@ -2121,29 +2121,77 @@ function showExamManagementModal(courseId) {
 
   const listEl = document.getElementById('em-list');
 
-  function renderBuiltinExams(sort) {
-    const exams = [...(Data.metadata?.exams || [])];
-    if (sort === 'name') exams.sort((a, b) => a.label.localeCompare(b.label, 'he'));
-    else if (sort === 'date-asc') exams.sort((a, b) => a.label.localeCompare(b.label, 'he'));
-    else if (sort === 'questions') exams.sort((a, b) => b.questions.length - a.questions.length);
-    // default date-desc is original order
+  // Helper: extract year from exam label like "מועד א, סמסטר א, 2024"
+  function examYear(label) {
+    const m = label.match(/\b(20[1-3]\d)\b/);
+    return m ? parseInt(m[1]) : 0;
+  }
 
-    listEl.innerHTML = exams.map((ex, i) => `
-      <div class="em-exam-row" data-exam-idx="${i}" style="cursor:pointer;">
-        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;">
+  // Hidden exams (stored locally)
+  const HIDDEN_KEY = `ep_hidden_exams_${courseId}`;
+  function getHiddenExams() { try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'); } catch { return []; } }
+  function setHiddenExams(arr) { localStorage.setItem(HIDDEN_KEY, JSON.stringify(arr)); }
+
+  function renderBuiltinExams(sort) {
+    const hidden = getHiddenExams();
+    const allExams = [...(Data.metadata?.exams || [])];
+    const exams = allExams.filter(ex => !hidden.includes(ex.id));
+
+    // Sort
+    if (sort === 'year-desc') exams.sort((a, b) => examYear(b.label) - examYear(a.label));
+    else if (sort === 'year-asc') exams.sort((a, b) => examYear(a.label) - examYear(b.label));
+    else if (sort === 'name') exams.sort((a, b) => a.label.localeCompare(b.label, 'he'));
+    else if (sort === 'questions') exams.sort((a, b) => b.questions.length - a.questions.length);
+
+    let html = exams.map((ex, i) => `
+      <div class="em-exam-row" data-exam-idx="${i}" style="cursor:pointer;border-bottom:1px solid var(--border-soft);">
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;" class="em-row-header">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--brand-500)" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           <div style="flex:1;">
             <div style="font-weight:600;font-size:14px;">${escapeHtml(ex.label)}</div>
             <div style="font-size:12px;color:var(--text-muted);">${ex.questions.length} שאלות</div>
           </div>
-          <svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
+          <button class="em-hide-btn" data-exam-id="${ex.id}" title="הסתר מבחן" style="flex-shrink:0;border:1px solid var(--border);background:#fff;color:var(--text-muted);border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px;font-family:inherit;">👁 הסתר</button>
+          <svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
         <div class="em-questions-grid" style="display:none;padding:0 14px 12px;"></div>
       </div>
     `).join('');
 
-    listEl.querySelectorAll('.em-exam-row').forEach(row => {
-      row.addEventListener('click', () => {
+    // Show hidden count with restore option
+    if (hidden.length) {
+      html += `<div style="text-align:center;padding:12px;">
+        <button id="em-restore-hidden" class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--text-muted);">👁 הצג ${hidden.length} מבחנים מוסתרים</button>
+      </div>`;
+    }
+
+    listEl.innerHTML = html;
+
+    // Wire hide buttons
+    listEl.querySelectorAll('.em-hide-btn').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = btn.dataset.examId;
+        const h = getHiddenExams();
+        h.push(id);
+        setHiddenExams(h);
+        toast('המבחן הוסתר', 'success');
+        renderBuiltinExams(document.getElementById('em-sort').value);
+      });
+    });
+
+    // Wire restore hidden
+    document.getElementById('em-restore-hidden')?.addEventListener('click', () => {
+      setHiddenExams([]);
+      toast('כל המבחנים שוחזרו', 'success');
+      renderBuiltinExams(document.getElementById('em-sort').value);
+    });
+
+    // Wire expand (click on row)
+    listEl.querySelectorAll('.em-row-header').forEach(header => {
+      header.addEventListener('click', (e) => {
+        if (e.target.closest('.em-hide-btn')) return;
+        const row = header.closest('.em-exam-row');
         const idx = parseInt(row.dataset.examIdx);
         const grid = row.querySelector('.em-questions-grid');
         const chevron = row.querySelector('.em-chevron');
@@ -2162,7 +2210,6 @@ function showExamManagementModal(courseId) {
             <img src="${Data.imageUrl(q.image)}" alt="שאלה ${q.section}" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.parentElement.textContent='#${q.section}'" />
           </div>
         `).join('');
-        // Click thumbnail → full view
         grid.querySelectorAll('.em-builtin-q').forEach(thumb => {
           thumb.addEventListener('click', (ev) => {
             ev.stopPropagation();
@@ -2188,10 +2235,11 @@ function showExamManagementModal(courseId) {
       }
 
       // Sort
-      if (sort === 'name') examsData.sort((a, b) => a.name.localeCompare(b.name, 'he'));
-      else if (sort === 'date-asc') examsData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      if (sort === 'year-desc') examsData.sort((a, b) => examYear(b.name) - examYear(a.name) || new Date(b.created_at) - new Date(a.created_at));
+      else if (sort === 'year-asc') examsData.sort((a, b) => examYear(a.name) - examYear(b.name) || new Date(a.created_at) - new Date(b.created_at));
+      else if (sort === 'name') examsData.sort((a, b) => a.name.localeCompare(b.name, 'he'));
       else if (sort === 'questions') examsData.sort((a, b) => (b.question_count || 0) - (a.question_count || 0));
-      else examsData.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // date-desc default
+      else examsData.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
       listEl.innerHTML = examsData.map(ex => {
         const statusLabel = { pending: 'ממתין', processing: 'מעבד...', ready: 'מוכן', failed: 'נכשל' }[ex.status] || ex.status;
