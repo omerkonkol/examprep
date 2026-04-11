@@ -203,6 +203,77 @@ function validateFiles(name, examHeader, solHeader) {
   return warnings;
 }
 
+// ===== Regex-based MCQ parser (fallback when Gemini is unavailable) =====
+function parseQuestionsFromText(examText, solText) {
+  const text = solText ? `${examText}\n\n${solText}` : examText;
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+  // Phase 1: Find question boundaries
+  // Patterns: "שאלה 3", "שאלה 3:", "3.", "3)", "סעיף א", etc.
+  const questionStarts = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // "שאלה X" pattern (most common in Hebrew exams)
+    const mQ = line.match(/^(?:שאלה\s*(\d+))/);
+    if (mQ) { questionStarts.push({ idx: i, num: parseInt(mQ[1]), label: line }); continue; }
+    // "סעיף א" pattern (sub-sections with MCQ)
+    const mS = line.match(/^(?:סעיף\s*([א-י]))/);
+    if (mS) {
+      const letterIdx = 'אבגדהוזחטי'.indexOf(mS[1]) + 1;
+      if (letterIdx > 0) questionStarts.push({ idx: i, num: letterIdx, label: line, isSection: true });
+    }
+  }
+
+  // Phase 2: For each question boundary, extract options
+  const questions = [];
+  for (let qi = 0; qi < questionStarts.length; qi++) {
+    const start = questionStarts[qi].idx;
+    const end = qi + 1 < questionStarts.length ? questionStarts[qi + 1].idx : Math.min(start + 40, lines.length);
+    const region = lines.slice(start + 1, end);
+
+    // Find option lines: "1." / ".1" / "א." / "א)" / "(1)" etc.
+    const opts = [];
+    let questionText = '';
+    for (const rl of region) {
+      // Option patterns: "1." "2." "3." "4." or "א." "ב." "ג." "ד." or "(1)" "(2)"
+      const mo = rl.match(/^(?:\(?([1-9])\)?[.):\s]|([א-ד])[.):\s])\s*(.+)/);
+      if (mo) {
+        opts.push({ idx: parseInt(mo[1]) || ('אבגד'.indexOf(mo[2]) + 1), text: mo[3].trim() });
+      } else if (opts.length === 0 && rl.length > 5) {
+        // Lines before first option are part of the question stem
+        questionText += (questionText ? ' ' : '') + rl;
+      }
+    }
+
+    if (opts.length >= 2 && opts.length <= 8) {
+      questions.push({
+        n: questionStarts[qi].num,
+        q: questionText || questionStarts[qi].label,
+        opts: opts.map(o => o.text),
+        correct: 1, // Unknown without solution markup
+      });
+    }
+  }
+
+  // Phase 3: Try to find correct answers from solution text
+  if (solText && questions.length > 0) {
+    const solLines = solText.split('\n').map(l => l.trim());
+    for (const q of questions) {
+      for (const sl of solLines) {
+        // "שאלה X: Y" or "שאלה X - Y" or "X. Y" where Y is the answer number/letter
+        const m = sl.match(new RegExp(`(?:שאלה\\s*${q.n}|^${q.n})[\\s:.-]+(?:תשובה\\s*)?([1-9]|[א-ד])`));
+        if (m) {
+          const ans = parseInt(m[1]) || ('אבגד'.indexOf(m[1]) + 1);
+          if (ans >= 1 && ans <= q.opts.length) q.correct = ans;
+          break;
+        }
+      }
+    }
+  }
+
+  return questions;
+}
+
 function buildExtractionPrompt(text, hasSolution) {
   return `אתה מומחה בחילוץ שאלות אמריקאיות ממבחנים. חלץ את כל השאלות מהטקסט הבא.
 
@@ -304,16 +375,31 @@ export default async function handler(req, res) {
       }
     }
 
-    // Use Gemini to extract questions
+    // Extract questions: try regex parser first, then Gemini AI as enrichment
     let questions = [];
+    let extractionMode = 'none';
     if (combinedText.length > 100) {
-      const aiResponse = await callGemini(buildExtractionPrompt(combinedText, !!solFile));
-      if (aiResponse) {
-        try {
-          const cleaned = aiResponse.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-          questions = JSON.parse(cleaned);
-          if (!Array.isArray(questions)) questions = [];
-        } catch { console.error('[upload] failed to parse Gemini response'); }
+      // Step 1: Regex-based extraction (always available, no API needed)
+      questions = parseQuestionsFromText(examText, solText || '');
+      if (questions.length > 0) {
+        extractionMode = 'regex';
+        console.log(`[upload] regex parser found ${questions.length} questions`);
+      }
+
+      // Step 2: Try Gemini AI for better extraction (if available and regex found few/no questions)
+      if (questions.length < 2) {
+        const aiResponse = await callGemini(buildExtractionPrompt(combinedText, !!solFile));
+        if (aiResponse) {
+          try {
+            const cleaned = aiResponse.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+            const aiQuestions = JSON.parse(cleaned);
+            if (Array.isArray(aiQuestions) && aiQuestions.length > questions.length) {
+              questions = aiQuestions;
+              extractionMode = 'gemini';
+              console.log(`[upload] Gemini found ${questions.length} questions`);
+            }
+          } catch { console.error('[upload] failed to parse Gemini response'); }
+        }
       }
     }
 
@@ -336,9 +422,9 @@ export default async function handler(req, res) {
       if (qErr) console.error('[upload] insert questions:', qErr.message);
     }
 
-    // Update exam status
+    // Update exam status — always 'ready' after processing (even with 0 questions)
     await auth.db.from('ep_exams').update({
-      status: questions.length > 0 ? 'ready' : 'pending',
+      status: 'ready',
       question_count: questions.length,
       processed_at: new Date().toISOString(),
     }).eq('id', exam.id);
@@ -351,11 +437,16 @@ export default async function handler(req, res) {
     ]);
     await auth.db.from('ep_courses').update({ total_questions: qCount, total_pdfs: pdfCount }).eq('id', courseId);
 
+    // Build warnings
+    if (questions.length === 0) {
+      fileWarnings.push('לא זוהו שאלות אמריקאיות בקובץ. ודא שהמבחן מכיל שאלות רב-ברירה בפורמט מוכר.');
+    }
+
     res.json({
       ok: true,
       exam_id: exam.id,
       question_count: questions.length,
-      mode: questions.length > 0 ? 'text' : 'pending',
+      mode: extractionMode,
       ...(fileWarnings.length && { warnings: fileWarnings }),
     });
   } catch (err) {
