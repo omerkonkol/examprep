@@ -198,69 +198,107 @@ function validateFiles(name, examHeader, solHeader) {
   return warnings;
 }
 
-// ===== Regex-based MCQ parser (fallback when Gemini is unavailable) =====
+// ===== Robust MCQ parser — works on full text, not line-by-line =====
+// Handles messy PDF text extraction where line breaks may be missing or wrong.
+// Strategy 1: Find "שאלה X" headers, then extract options (א./ב./ג./ד.) after each.
+// Strategy 2: If no headers found, scan for groups of consecutive Hebrew-letter options.
 function parseQuestionsFromText(examText, solText) {
-  const text = solText ? `${examText}\n\n${solText}` : examText;
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-  // Phase 1: Find question boundaries
-  // Patterns: "שאלה 3", "שאלה 3:", "3.", "3)", "סעיף א", etc.
-  const questionStarts = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // "שאלה X" pattern (most common in Hebrew exams)
-    const mQ = line.match(/^(?:שאלה\s*(\d+))/);
-    if (mQ) { questionStarts.push({ idx: i, num: parseInt(mQ[1]), label: line }); continue; }
-    // "סעיף א" pattern (sub-sections with MCQ)
-    const mS = line.match(/^(?:סעיף\s*([א-י]))/);
-    if (mS) {
-      const letterIdx = 'אבגדהוזחטי'.indexOf(mS[1]) + 1;
-      if (letterIdx > 0) questionStarts.push({ idx: i, num: letterIdx, label: line, isSection: true });
-    }
-  }
-
-  // Phase 2: For each question boundary, extract options
+  if (!examText || examText.length < 50) return [];
   const questions = [];
-  for (let qi = 0; qi < questionStarts.length; qi++) {
-    const start = questionStarts[qi].idx;
-    const end = qi + 1 < questionStarts.length ? questionStarts[qi + 1].idx : Math.min(start + 40, lines.length);
-    const region = lines.slice(start + 1, end);
 
-    // Find option lines: "1." / ".1" / "א." / "א)" / "(1)" etc.
-    const opts = [];
-    let questionText = '';
-    for (const rl of region) {
-      // Option patterns: "1." "2." "3." "4." or "א." "ב." "ג." "ד." or "(1)" "(2)"
-      const mo = rl.match(/^(?:\(?([1-9])\)?[.):\s]|([א-ד])[.):\s])\s*(.+)/);
-      if (mo) {
-        opts.push({ idx: parseInt(mo[1]) || ('אבגד'.indexOf(mo[2]) + 1), text: mo[3].trim() });
-      } else if (opts.length === 0 && rl.length > 5) {
-        // Lines before first option are part of the question stem
-        questionText += (questionText ? ' ' : '') + rl;
+  // Strategy 1: Find "שאלה X" headers anywhere in text (not just line starts)
+  const qHeaders = [...examText.matchAll(/שאלה\s*(\d+)\s*[:.?]?\s*/g)];
+  console.log(`[parser] Found ${qHeaders.length} "שאלה" headers in ${examText.length} chars`);
+
+  if (qHeaders.length > 0) {
+    for (let i = 0; i < qHeaders.length; i++) {
+      const qNum = parseInt(qHeaders[i][1]);
+      const regionStart = qHeaders[i].index + qHeaders[i][0].length;
+      const regionEnd = i + 1 < qHeaders.length ? qHeaders[i + 1].index : Math.min(regionStart + 3000, examText.length);
+      const region = examText.slice(regionStart, regionEnd);
+
+      // Find Hebrew-letter options: א. / ב. / ג. / ד. (with flexible punctuation)
+      const opts = [];
+      const HEB_LETTERS = 'אבגדהוזחט';
+      for (const m of region.matchAll(/([א-ט])\s*[.)]\s*(.{2,}?)(?=\s*[א-ט]\s*[.)]|\s*שאלה\s*\d|$)/gs)) {
+        const letter = m[1];
+        const letterIdx = HEB_LETTERS.indexOf(letter);
+        // Accept if it's the expected next letter (sequential: א then ב then ג...)
+        if (letterIdx === opts.length) {
+          opts.push(m[2].replace(/\n/g, ' ').trim());
+        }
+      }
+
+      // Fallback: try numeric options (1. / 2. / 3. / 4.)
+      if (opts.length < 2) {
+        opts.length = 0;
+        for (const m of region.matchAll(/([1-9])\s*[.)]\s*(.{2,}?)(?=\s*[1-9]\s*[.)]|\s*שאלה\s*\d|$)/gs)) {
+          const num = parseInt(m[1]);
+          if (num === opts.length + 1) {
+            opts.push(m[2].replace(/\n/g, ' ').trim());
+          }
+        }
+      }
+
+      if (opts.length >= 2) {
+        // Extract question stem (text before first option)
+        const firstOptMatch = region.match(/[א-ט]\s*[.)]/);
+        const stemEnd = firstOptMatch ? firstOptMatch.index : 200;
+        const stem = region.slice(0, stemEnd).replace(/\n/g, ' ').trim();
+
+        questions.push({
+          n: qNum,
+          q: stem || `שאלה ${qNum}`,
+          opts,
+          correct: null,
+        });
       }
     }
+  }
 
-    if (opts.length >= 2 && opts.length <= 8) {
-      questions.push({
-        n: questionStarts[qi].num,
-        q: questionText || questionStarts[qi].label,
-        opts: opts.map(o => o.text),
-        correct: 1, // Unknown without solution markup
-      });
+  // Strategy 2: No "שאלה X" headers — find groups of consecutive א./ב./ג./ד. options
+  if (questions.length === 0) {
+    console.log('[parser] No headers found, trying option-group detection');
+    const HEB = 'אבגד';
+    // Find all Hebrew-letter option markers
+    const allOpts = [...examText.matchAll(/([א-ד])\s*[.)]\s*(.{2,}?)(?=\s*[א-ד]\s*[.)]|\n\n|$)/gs)];
+    let group = [];
+    for (const m of allOpts) {
+      const letterIdx = HEB.indexOf(m[1]);
+      if (letterIdx === 0 && group.length >= 2) {
+        // Start of new group — save previous
+        questions.push({ n: questions.length + 1, q: `שאלה ${questions.length + 1}`, opts: group.map(g => g.text), correct: null });
+        group = [{ letter: m[1], text: m[2].replace(/\n/g, ' ').trim() }];
+      } else if (letterIdx === group.length) {
+        group.push({ letter: m[1], text: m[2].replace(/\n/g, ' ').trim() });
+      } else {
+        if (group.length >= 2) {
+          questions.push({ n: questions.length + 1, q: `שאלה ${questions.length + 1}`, opts: group.map(g => g.text), correct: null });
+        }
+        group = letterIdx === 0 ? [{ letter: m[1], text: m[2].replace(/\n/g, ' ').trim() }] : [];
+      }
+    }
+    if (group.length >= 2) {
+      questions.push({ n: questions.length + 1, q: `שאלה ${questions.length + 1}`, opts: group.map(g => g.text), correct: null });
     }
   }
 
-  // Phase 3: Try to find correct answers from solution text
+  console.log(`[parser] Extracted ${questions.length} questions total`);
+
+  // Try to find correct answers from solution text
   if (solText && questions.length > 0) {
-    const solLines = solText.split('\n').map(l => l.trim());
+    // Common patterns in Hebrew solution PDFs
     for (const q of questions) {
-      for (const sl of solLines) {
-        // "שאלה X: Y" or "שאלה X - Y" or "X. Y" where Y is the answer number/letter
-        const m = sl.match(new RegExp(`(?:שאלה\\s*${q.n}|^${q.n})[\\s:.-]+(?:תשובה\\s*)?([1-9]|[א-ד])`));
+      const patterns = [
+        new RegExp(`שאלה\\s*${q.n}\\s*[:.\\-–]\\s*(?:תשובה\\s*)?([1-9]|[א-ד])`, 'i'),
+        new RegExp(`(?:^|\\n)\\s*${q.n}\\s*[.):]\\s*([א-ד])`, 'm'),
+        new RegExp(`תשובה\\s*(?:נכונה\\s*)?(?:לשאלה\\s*)?${q.n}\\s*[:.\\-–]\\s*([1-9]|[א-ד])`, 'i'),
+      ];
+      for (const p of patterns) {
+        const m = solText.match(p);
         if (m) {
           const ans = parseInt(m[1]) || ('אבגד'.indexOf(m[1]) + 1);
-          if (ans >= 1 && ans <= q.opts.length) q.correct = ans;
-          break;
+          if (ans >= 1 && ans <= q.opts.length) { q.correct = ans; break; }
         }
       }
     }

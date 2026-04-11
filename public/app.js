@@ -754,33 +754,34 @@ function setCourseContext(courseId) {
 }
 
 function renderRoute() {
-  const route = getRoute();
-  const path = route.split('?')[0];
-  const params = new URLSearchParams(route.split('?')[1] || '');
+  try {
+    const route = getRoute();
+    const path = route.split('?')[0];
+    const params = new URLSearchParams(route.split('?')[1] || '');
 
-  if (path === '/' || path === '') return renderLanding();
-  if (path === '/login') return renderAuth(params.get('signup') === '1');
-  if (path === '/dashboard') return renderDashboard();
-  if (path === '/settings') return renderSettings(params.get('tab') || 'profile');
-  if (path === '/study') return renderStudyList();
-  if (path === '/study/new') return renderStudyCreate();
-  if (path.startsWith('/study/')) return renderStudyPack(path.split('/')[2]);
+    if (path === '/' || path === '') return renderLanding();
+    if (path === '/login') return renderAuth(params.get('signup') === '1');
+    if (path === '/dashboard') return renderDashboard();
+    if (path === '/settings') return renderSettings(params.get('tab') || 'profile');
+    if (path === '/study') return renderStudyList();
+    if (path === '/study/new') return renderStudyCreate();
+    if (path.startsWith('/study/')) return renderStudyPack(path.split('/')[2]);
 
-  // Course-scoped routes: /course/{courseId}/{page}
-  const courseMatch = path.match(/^\/course\/([^/]+)(?:\/(.*))?$/);
-  if (courseMatch) {
-    const courseId = courseMatch[1];
-    const page = courseMatch[2] || '';
-    setCourseContext(courseId);
-    if (page === '' || page === 'dashboard') return renderCourseDashboard();
-    if (page === 'quiz') return state.quiz ? renderQuiz() : navigate(`/course/${courseId}`);
-    if (page === 'summary') return renderSummary();
-    if (page === 'review') return renderMistakeReview();
-    if (page === 'insights') return renderInsights();
-    if (page === 'lab') return renderLab();
-    if (page === 'progress') return renderProgress();
-    return renderCourseDashboard();
-  }
+    // Course-scoped routes: /course/{courseId}/{page}
+    const courseMatch = path.match(/^\/course\/([^/]+)(?:\/(.*))?$/);
+    if (courseMatch) {
+      const courseId = courseMatch[1];
+      const page = courseMatch[2] || '';
+      setCourseContext(courseId);
+      if (page === '' || page === 'dashboard') return renderCourseDashboard();
+      if (page === 'quiz') return state.quiz ? renderQuiz() : navigate(`/course/${courseId}`);
+      if (page === 'summary') return renderSummary();
+      if (page === 'review') return renderMistakeReview();
+      if (page === 'insights') return renderInsights();
+      if (page === 'lab') return renderLab();
+      if (page === 'progress') return renderProgress();
+      return renderCourseDashboard();
+    }
 
   // Backward compat: old routes redirect to /course/tohna1/{page}
   if (path === '/quiz') { setCourseContext('tohna1'); return state.quiz ? renderQuiz() : navigate('/course/tohna1'); }
@@ -791,6 +792,15 @@ function renderRoute() {
   if (path === '/progress') return navigate('/course/tohna1/progress');
 
   return renderLanding();
+  } catch (err) {
+    console.error('[renderRoute] crash:', err);
+    // Prevent blank page — show a recovery message
+    $app.innerHTML = `<div style="text-align:center;padding:60px 20px;direction:rtl;">
+      <h2>משהו השתבש</h2>
+      <p style="margin:16px 0;color:#666;">אירעה שגיאה בטעינת הדף.</p>
+      <button onclick="location.hash='#/dashboard';location.reload()" class="btn btn-primary">חזרה לדף הבית</button>
+    </div>`;
+  }
 }
 
 // ===== Course-scoped data helpers =====
