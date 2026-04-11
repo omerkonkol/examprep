@@ -515,19 +515,22 @@ export default async function handler(req, res) {
       const seenQ = new Set();
       const uniqueHeaders = allHeaders.filter(h => { if (seenQ.has(h.qNum)) return false; seenQ.add(h.qNum); return true; });
 
-      // Calculate crop for each MCQ question
+      // Calculate crop for each MCQ question — tight to ONLY this question
       for (let i = 0; i < uniqueHeaders.length; i++) {
         const h = uniqueHeaders[i];
         const next = uniqueHeaders[i + 1];
         const startPct = Math.max(0, (h.yFromTop / h.pageHeight) * 100 - 1);
         let endPct;
         if (next && next.page === h.page) {
-          endPct = (next.yFromTop / h.pageHeight) * 100 - 1;
+          // Stop 4% BEFORE next question so its header doesn't appear
+          endPct = (next.yFromTop / h.pageHeight) * 100 - 4;
         } else {
-          endPct = startPct + 30; // max 30% of page
+          // Last question on page — take max 25% of page
+          endPct = Math.min(startPct + 25, 95);
         }
-        const heightPct = Math.min(Math.max(endPct - startPct, 12), 35);
+        const heightPct = Math.min(Math.max(endPct - startPct, 10), 28);
         questionPos[h.qNum] = { page: h.page, yPct: startPct, heightPct };
+        console.log(`[crop] q${h.qNum} p${h.page}: ${startPct.toFixed(0)}% → ${(startPct + heightPct).toFixed(0)}% (${heightPct.toFixed(0)}%)`);
       }
       // Find "שאלות פתוחות" section to exclude questions after it
       let openSectionStart = null; // { page, yFromTop }
@@ -566,6 +569,15 @@ export default async function handler(req, res) {
       questions = questions.filter(q => questionPos[q.n]);
       console.log(`[upload] after open-section filter: ${questions.length} MCQs`);
     }
+
+    // Strict dedup: one question per question number, keep first
+    const seenNums = new Set();
+    questions = questions.filter(q => {
+      if (seenNums.has(q.n)) return false;
+      seenNums.add(q.n);
+      return true;
+    });
+    console.log(`[upload] after dedup: ${questions.length} unique MCQs`);
     const seen = new Set();
     questions = questions.filter(q => {
       if (seen.has(q.n)) return false;
