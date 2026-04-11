@@ -2266,8 +2266,14 @@ function showExamManagementModal(courseId) {
     listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">טוען מבחנים...</p>';
     try {
       const tk = await Auth.getToken();
-      const res = await fetch(`/api/courses/${courseId}/exams`, { headers: tk ? { Authorization: `Bearer ${tk}` } : {} });
-      if (!res.ok) { listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">שגיאה בטעינה.</p>'; return; }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(`/api/courses/${courseId}/exams`, {
+        headers: tk ? { Authorization: `Bearer ${tk}` } : {},
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) { listEl.innerHTML = `<p class="muted" style="text-align:center;padding:20px;">שגיאה בטעינה (${res.status}). נסה לרענן.</p>`; return; }
       let examsData = await res.json();
       if (!Array.isArray(examsData) || !examsData.length) {
         listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">עדיין לא הועלו מבחנים. לחץ "העלאת מבחן" למעלה.</p>';
@@ -2412,7 +2418,10 @@ function showExamManagementModal(courseId) {
           });
         });
       });
-    } catch { listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">שגיאה בטעינה.</p>'; }
+    } catch (e) {
+      const msg = e?.name === 'AbortError' ? 'הטעינה לקחה יותר מדי זמן. נסה לרענן.' : 'שגיאה בטעינה. נסה לרענן.';
+      listEl.innerHTML = `<p class="muted" style="text-align:center;padding:20px;">${msg}</p>`;
+    }
   }
 
   // Initial render
