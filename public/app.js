@@ -2289,9 +2289,9 @@ function showExamManagementModal(courseId) {
             const freshTk = await Auth.getToken();
             const qRes = await fetch(`/api/courses/${courseId}/questions`, { headers: freshTk ? { Authorization: `Bearer ${freshTk}` } : {} });
             if (!qRes.ok) {
-              const errBody = await qRes.text().catch(() => '');
+              const errBody = await qRes.json().catch(() => ({}));
               console.error(`[expand] questions fetch failed: ${qRes.status}`, errBody);
-              grid.innerHTML = `<p class="muted" style="grid-column:1/-1;">שגיאה בטעינת שאלות (${qRes.status}). נסה לרענן.</p>`;
+              grid.innerHTML = `<p class="muted" style="grid-column:1/-1;">שגיאה בטעינת שאלות: ${errBody.detail || errBody.error || qRes.status}. נסה לרענן.</p>`;
               return;
             }
             const allQs = await qRes.json();

@@ -179,13 +179,22 @@ export default async function handler(req, res) {
       return res.json(data || []);
     }
     case 'list-questions': {
-      console.log(`[list-questions] courseId=${m.cid} (${typeof m.cid})`);
-      const { data, error } = await auth.db.from('ep_questions').select('*')
-        .eq('course_id', m.cid).is('deleted_at', null)
-        .order('exam_id', { ascending: true }).order('question_number', { ascending: true });
-      if (error) { console.error('[list-questions] error:', error.message); return dbErr(res, 'list questions', error); }
-      console.log(`[list-questions] returned ${(data || []).length} questions`);
-      return res.json(data || []);
+      console.log(`[list-questions] courseId=${m.cid} (${typeof m.cid}) userId=${auth.userId}`);
+      try {
+        const { data, error } = await auth.db.from('ep_questions')
+          .select('id, exam_id, course_id, user_id, question_number, section_label, image_path, num_options, correct_idx, option_labels, general_explanation, topic, created_at')
+          .eq('course_id', m.cid).is('deleted_at', null)
+          .order('exam_id', { ascending: true }).order('question_number', { ascending: true });
+        if (error) {
+          console.error('[list-questions] supabase error:', JSON.stringify(error));
+          return res.status(500).json({ error: 'שגיאה בטעינת שאלות', detail: error.message, code: error.code });
+        }
+        console.log(`[list-questions] returned ${(data || []).length} questions`);
+        return res.json(data || []);
+      } catch (e) {
+        console.error('[list-questions] exception:', e?.message || e);
+        return res.status(500).json({ error: 'שגיאה פנימית', detail: e?.message });
+      }
     }
     case 'review-queue': {
       const { data, error } = await auth.db.from('ep_review_queue').select('question_id').eq('course_id', m.cid);
