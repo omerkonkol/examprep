@@ -1014,15 +1014,12 @@
         </div>
         <div class="course-actions-grid cd-actions" id="cd-actions"></div>
 
-        <div class="section-h" id="cd-pdfs-header">
-          <h2 id="cd-pdfs-title">מבחנים וחומרים</h2>
+        <div class="cd-tabs" id="cd-tabs">
+          <button class="cd-tab active" data-tab="exams">📄 מבחנים</button>
+          <button class="cd-tab" data-tab="batches">📊 מקבצים</button>
         </div>
-        <div id="cd-pdfs"></div>
-
-        <div class="section-h" id="cd-batches-header">
-          <h2>מקבצים אחרונים</h2>
-        </div>
-        <div id="cd-batches"></div>
+        <div class="cd-tab-panel" id="cd-tab-exams"></div>
+        <div class="cd-tab-panel" id="cd-tab-batches" style="display:none"></div>
       </main>
     </div>
   </template>

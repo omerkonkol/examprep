@@ -1800,46 +1800,26 @@ async function renderCourseDashboard() {
     });
   });
 
-  // Recent batches
-  const batches = batchesForCourse(uid, cid);
-  const batchesEl = document.getElementById('cd-batches');
-  const batchesHeader = document.getElementById('cd-batches-header');
-  if (!batches.length) {
-    batchesHeader.style.display = 'none';
-    batchesEl.innerHTML = '';
-  } else {
-    const recent = batches.slice(-5).reverse();
-    batchesEl.innerHTML = recent.map((b, i) => {
-      const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
-      const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL') : '';
-      return `
-        <div class="batch-row batch-clickable" data-batch-i="${i}" style="cursor:pointer">
-          <div class="batch-score">${score}%</div>
-          <div class="batch-info">
-            <div class="batch-summary">${b.correct} מתוך ${b.size} נכון${b.examMode ? ' · מצב מבחן' : ''}</div>
-            <div class="batch-date">${date}</div>
-          </div>
-          <svg class="batch-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        </div>
-      `;
-    }).join('');
-    batchesEl.querySelectorAll('.batch-clickable').forEach(row => {
-      row.addEventListener('click', () => {
-        const idx = parseInt(row.dataset.batchI);
-        state.lastBatch = recent[idx];
-        navigate(`/course/${cid}/summary`);
-      });
-    });
-  }
+  // ===== Tabs: Exams + Batches =====
+  const tabExams = document.getElementById('cd-tab-exams');
+  const tabBatches = document.getElementById('cd-tab-batches');
 
-  // Exams & materials section — always visible for all courses
-  const pdfsTitle = document.getElementById('cd-pdfs-title');
+  // Wire tab switching
+  document.querySelectorAll('#cd-tabs .cd-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#cd-tabs .cd-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const target = tab.dataset.tab;
+      tabExams.style.display = target === 'exams' ? '' : 'none';
+      tabBatches.style.display = target === 'batches' ? '' : 'none';
+    });
+  });
+
+  // -- Exams tab content --
   if (state.course.isBuiltin) {
-    // Built-in course: show static exams list (read-only)
-    if (pdfsTitle) pdfsTitle.textContent = 'מבחנים בקורס';
-    const pdfsEl = document.getElementById('cd-pdfs');
-    if (pdfsEl && Data.metadata?.exams?.length) {
-      pdfsEl.innerHTML = Data.metadata.exams.map(ex => `
+    // Built-in course: show static exams list
+    if (Data.metadata?.exams?.length) {
+      tabExams.innerHTML = Data.metadata.exams.map(ex => `
         <div class="exam-row">
           <div class="batch-row">
             <div class="batch-score" style="font-size:14px;">
@@ -1855,14 +1835,42 @@ async function renderCourseDashboard() {
     }
   } else {
     // User course: show uploaded PDFs with management
-    if (pdfsTitle) pdfsTitle.textContent = 'מבחנים שהעליתי';
-    loadCourseExams(cid);
+    loadCourseExams(cid, tabExams);
+  }
+
+  // -- Batches tab content --
+  const batches = batchesForCourse(uid, cid);
+  if (!batches.length) {
+    tabBatches.innerHTML = '<p class="muted" style="padding:24px 16px;text-align:center;">עדיין לא תרגלת בקורס זה. לחץ על "תרגול חופשי" כדי להתחיל.</p>';
+  } else {
+    const recent = batches.slice(-5).reverse();
+    tabBatches.innerHTML = recent.map((b, i) => {
+      const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
+      const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL') : '';
+      return `
+        <div class="batch-row batch-clickable" data-batch-i="${i}" style="cursor:pointer">
+          <div class="batch-score">${score}%</div>
+          <div class="batch-info">
+            <div class="batch-summary">${b.correct} מתוך ${b.size} נכון${b.examMode ? ' · מצב מבחן' : ''}</div>
+            <div class="batch-date">${date}</div>
+          </div>
+          <svg class="batch-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </div>
+      `;
+    }).join('');
+    tabBatches.querySelectorAll('.batch-clickable').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.batchI);
+        state.lastBatch = recent[idx];
+        navigate(`/course/${cid}/summary`);
+      });
+    });
   }
 }
 
 // Load and render exam list for a course
-async function loadCourseExams(courseId) {
-  const pdfsEl = document.getElementById('cd-pdfs');
+async function loadCourseExams(courseId, containerEl) {
+  const pdfsEl = containerEl || document.getElementById('cd-tab-exams') || document.getElementById('cd-pdfs');
   if (!pdfsEl) return;
   try {
     const token = await Auth.getToken();
@@ -2268,7 +2276,10 @@ function showUploadPdfModal(courseId) {
       const newExamId = res.data.exam_id;
 
       // If already on course page, just refresh the exam list in-place
-      if (document.getElementById('cd-pdfs')) {
+      if (document.getElementById('cd-tab-exams')) {
+        // Switch to exams tab if not already active
+        const examsTab = document.querySelector('#cd-tabs [data-tab="exams"]');
+        if (examsTab) examsTab.click();
         await loadCourseExams(courseId);
         // Animate the new exam row sliding in
         const newRow = document.querySelector(`[data-exam-id="${newExamId}"]`);
