@@ -183,7 +183,7 @@ export default async function handler(req, res) {
       try {
         const { data, error } = await auth.db.from('ep_questions')
           .select('id, exam_id, course_id, user_id, question_number, section_label, image_path, num_options, correct_idx, option_labels, general_explanation, topic, created_at')
-          .eq('course_id', m.cid).is('deleted_at', null)
+          .eq('course_id', m.cid)
           .order('exam_id', { ascending: true }).order('question_number', { ascending: true });
         if (error) {
           console.error('[list-questions] supabase error:', JSON.stringify(error));
@@ -211,7 +211,7 @@ export default async function handler(req, res) {
         const { error: de } = await auth.db.from('ep_exams').delete().eq('id', m.eid).eq('course_id', m.cid);
         if (de) return dbErr(res, 'delete exam', de);
         const [{ count: qc }, { count: pc }] = await Promise.all([
-          auth.db.from('ep_questions').select('id', { count: 'exact', head: true }).eq('course_id', m.cid).is('deleted_at', null),
+          auth.db.from('ep_questions').select('id', { count: 'exact', head: true }).eq('course_id', m.cid),
           auth.db.from('ep_exams').select('id', { count: 'exact', head: true }).eq('course_id', m.cid),
         ]);
         await auth.db.from('ep_courses').update({ total_questions: qc, total_pdfs: pc }).eq('id', m.cid);
@@ -247,10 +247,10 @@ export default async function handler(req, res) {
     }
     case 'delete-question': {
       const { error } = await auth.db.from('ep_questions')
-        .update({ deleted_at: new Date().toISOString() }).eq('id', m.qid).eq('course_id', m.cid);
+        .delete().eq('id', m.qid).eq('course_id', m.cid);
       if (error) return dbErr(res, 'delete question', error);
       const { count } = await auth.db.from('ep_questions').select('id', { count: 'exact', head: true })
-        .eq('course_id', m.cid).is('deleted_at', null);
+        .eq('course_id', m.cid);
       await auth.db.from('ep_courses').update({ total_questions: count }).eq('id', m.cid);
       return res.json({ ok: true });
     }

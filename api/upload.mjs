@@ -466,7 +466,7 @@ export default async function handler(req, res) {
     // Update course counters
     const [{ count: qCount }, { count: pdfCount }] = await Promise.all([
       auth.db.from('ep_questions').select('id', { count: 'exact', head: true })
-        .eq('course_id', courseIdInt).is('deleted_at', null),
+        .eq('course_id', courseIdInt),
       auth.db.from('ep_exams').select('id', { count: 'exact', head: true }).eq('course_id', courseIdInt),
     ]);
     await auth.db.from('ep_courses').update({ total_questions: qCount, total_pdfs: pdfCount }).eq('id', courseIdInt);
