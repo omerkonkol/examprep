@@ -509,15 +509,26 @@ export default async function handler(req, res) {
           question_number: q.n || (i + 1),
           image_path: imagePath,
           num_options: q.options?.length || q.opts?.length || 4,
-          correct_idx: q.correct || q.correctIdx || null,
+          correct_idx: q.correct || q.correctIdx || 1, // NOT NULL in DB, default to 1
           option_labels: q.options || q.opts || null,
           general_explanation: q.explanation || q.q || null,
           is_ai_generated: true,
         };
       });
 
+      console.log(`[upload] inserting ${qRecords.length} questions, first image_path: ${qRecords[0]?.image_path?.slice(0, 80)}`);
       const { error: qErr } = await auth.db.from('ep_questions').insert(qRecords);
-      if (qErr) console.error('[upload] insert questions:', qErr.message);
+      if (qErr) {
+        console.error('[upload] insert questions FAILED:', qErr.message, qErr.details, qErr.hint);
+        // Try inserting one by one to find the problematic record
+        let inserted = 0;
+        for (const rec of qRecords) {
+          const { error: e2 } = await auth.db.from('ep_questions').insert(rec);
+          if (e2) console.error(`[upload] q#${rec.question_number} failed:`, e2.message);
+          else inserted++;
+        }
+        console.log(`[upload] individual insert: ${inserted}/${qRecords.length} succeeded`);
+      }
     }
 
     const fileWarnings = [];
