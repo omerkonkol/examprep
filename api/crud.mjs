@@ -99,8 +99,8 @@ function matchRoute(method, url) {
     if (s.length === 3 && s[2] === 'exams' && method === 'GET') return { r: 'list-exams', cid };
     if (s.length === 3 && s[2] === 'questions' && method === 'GET') return { r: 'list-questions', cid };
     if (s.length === 3 && s[2] === 'review-queue' && method === 'GET') return { r: 'review-queue', cid };
-    if (s.length === 4 && s[2] === 'exams' && method === 'DELETE') return { r: 'delete-exam', cid, eid: s[3] };
-    if (s.length === 4 && s[2] === 'questions' && method === 'DELETE') return { r: 'delete-question', cid, qid: s[3] };
+    if (s.length === 4 && s[2] === 'exams' && method === 'DELETE') return { r: 'delete-exam', cid, eid: parseInt(s[3], 10) || s[3] };
+    if (s.length === 4 && s[2] === 'questions' && method === 'DELETE') return { r: 'delete-question', cid, qid: parseInt(s[3], 10) || s[3] };
   }
 
   if (s[0] === 'study' && s[1] === 'packs' && s.length === 3) {

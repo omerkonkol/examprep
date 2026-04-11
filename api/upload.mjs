@@ -85,32 +85,36 @@ async function analyzeExamWithGemini(examPdfBase64, solPdfBase64) {
   const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
   if (!apiKey) return null;
 
-  const prompt = `Analyze this Hebrew university exam PDF.
+  const prompt = `Analyze this Hebrew university exam PDF. Extract ONLY multiple-choice questions (שאלות סגורות / שאלות בחירה / שאלות אמריקאיות).
 
-TASK: Find ONLY "שאלות סגורות" (closed/multiple-choice questions).
+WHAT IS A MULTIPLE-CHOICE QUESTION:
+- Has "שאלה X:" header
+- Has exactly 4 options: א. ב. ג. ד.
+- Student picks ONE answer
 
-A multiple-choice question looks like this:
-- Has a question stem (e.g. "שאלה 3: איזו מבין הטענות...")
-- Has exactly 4 options labeled א. ב. ג. ד. (Hebrew letters)
-- Student circles ONE correct answer
+WHAT IS NOT A MULTIPLE-CHOICE QUESTION (SKIP THESE):
+- Anything under "שאלות פתוחות" section
+- Proof questions ("הוכיחו", "הראו", "הפריכו")
+- Definition questions ("נגדיר", "תהא")
+- Questions with blank answer lines or "תשובה ריקה"
+- Instructions page (page 1)
+- Sub-sections (סעיף א/ב) that are NOT multiple choice
 
-DO NOT INCLUDE:
-- Questions under "שאלות פתוחות" section
-- Questions that say "הוכיחו", "הראו", "נגדיר", "תהא"
-- Questions with blank answer lines ("תשובה ריקה")
-- Sub-parts (סעיף א, סעיף ב) of open questions
-- The first page (cover/instructions)
+IMPORTANT: If the exam has two versions (גרסה 1, גרסה 2), only use גרסה 1.
 
-For each MCQ found, return:
-- n: the question number as printed in the exam
-- page: PDF page number (1-based) where it appears
-- correct: correct answer index (1=א, 2=ב, 3=ג, 4=ד), or null
-- explanation: one sentence in Hebrew explaining the answer
+For EACH multiple-choice question, return:
+{
+  "n": question number as printed,
+  "page": PDF page number (1-based),
+  "y_top": percentage from top of page where the question HEADER starts (0-100),
+  "y_bottom": percentage from top of page where the LAST option (ד.) ends (0-100),
+  "correct": correct answer (1=א, 2=ב, 3=ג, 4=ד) or null if unknown,
+  "explanation": "one line explanation in Hebrew"
+}
 
-Return ONLY a JSON array, nothing else:
-[{"n":1,"page":2,"correct":3,"explanation":"..."}]
+The y_top and y_bottom MUST be precise — y_top starts AT the "שאלה X:" line, y_bottom ends right AFTER option ד. Do NOT include any content from neighboring questions.
 
-If solution PDF is attached, use it to determine correct answers.`;
+Return ONLY a JSON array. If solution PDF attached, use it for answers.`;
 
   const parts = [{ text: prompt }];
   // Add exam PDF as inline data
@@ -478,156 +482,39 @@ export default async function handler(req, res) {
     pdfCloudinaryId = cloudinaryId;
     let questions = questions_raw || [];
 
-    // ===== Step 3: Calculate precise crop positions from PDF text =====
-    // Gemini gives us question numbers + pages. We find exact Y from PDF text.
-    let questionPos = {}; // qNum → { page, yPct, heightPct }
-    try {
-      const { getDocumentProxy } = await import('unpdf');
-      const doc = await getDocumentProxy(new Uint8Array(examFile.data));
+    // ===== Step 3: USE GEMINI's y_top/y_bottom directly =====
+    // No more unpdf text parsing — trust AI's visual analysis
+    const RENDER_H = 2070; // Cloudinary renders letter PDF at w_1600 → ~2070px tall
 
-      // Build a map of all "שאלה X" positions across all pages
-      const allHeaders = []; // { qNum, page, yFromTop, pageHeight }
-      for (let p = 1; p <= doc.numPages; p++) {
-        const page = await doc.getPage(p);
-        const vp = page.getViewport({ scale: 1 });
-        const tc = await page.getTextContent();
-        // Merge nearby items into lines
-        const lines = [];
-        for (const item of tc.items) {
-          if (!item.str?.trim()) continue;
-          const y = Math.round(item.transform[5]);
-          const line = lines.find(l => Math.abs(l.y - y) < 5);
-          if (line) line.texts.push(item.str);
-          else lines.push({ y, yFromTop: vp.height - y, texts: [item.str] });
-        }
-        for (const line of lines) {
-          const text = line.texts.join(' ');
-          const m = text.match(/שאלה\s*(\d+)/);
-          if (m && text.length < 100) { // short line = header, not instructions
-            allHeaders.push({ qNum: parseInt(m[1]), page: p, yFromTop: line.yFromTop, pageHeight: vp.height });
-          }
-        }
-      }
-
-      // Sort by document order
-      allHeaders.sort((a, b) => a.page - b.page || a.yFromTop - b.yFromTop);
-      // Remove duplicates (keep first occurrence of each question number)
-      const seenQ = new Set();
-      const uniqueHeaders = allHeaders.filter(h => { if (seenQ.has(h.qNum)) return false; seenQ.add(h.qNum); return true; });
-
-      // Calculate PIXEL-EXACT crop for each question
-      // Cloudinary renders PDF at w_1600 → scale = 1600/612 ≈ 2.614
-      // Page height at that scale ≈ pageHeight * 2.614
-      const RENDER_W = 1600;
-      const PDF_W = 612; // standard letter width in points
-      const scale = RENDER_W / PDF_W;
-
-      for (let i = 0; i < uniqueHeaders.length; i++) {
-        const h = uniqueHeaders[i];
-        const next = uniqueHeaders[i + 1];
-        const renderedPageH = Math.round(h.pageHeight * scale);
-
-        // Start: at the question header, with 5px margin above
-        const yStartPx = Math.max(0, Math.round(h.yFromTop * scale) - 5);
-
-        // End: 15px BEFORE the next question header on same page
-        let yEndPx;
-        if (next && next.page === h.page) {
-          yEndPx = Math.round(next.yFromTop * scale) - 15;
-        } else {
-          // Last question on page: take at most 500px or to page bottom
-          yEndPx = Math.min(yStartPx + 500, renderedPageH - 10);
-        }
-
-        const cropH = Math.max(yEndPx - yStartPx, 150); // min 150px
-        questionPos[h.qNum] = { page: h.page, yPx: yStartPx, hPx: cropH };
-        console.log(`[crop] q${h.qNum} p${h.page}: y=${yStartPx}px h=${cropH}px (of ${renderedPageH}px)`);
-      }
-      // Find "שאלות פתוחות" section to exclude questions after it
-      let openSectionStart = null; // { page, yFromTop }
-      for (let p = 1; p <= doc.numPages; p++) {
-        const page = await doc.getPage(p);
-        const vp = page.getViewport({ scale: 1 });
-        const tc = await page.getTextContent();
-        for (const item of tc.items) {
-          if (item.str && (item.str.includes('שאלות פתוחות') || item.str.includes('שאלות פתוחות:'))) {
-            openSectionStart = { page: p, yFromTop: vp.height - item.transform[5] };
-            break;
-          }
-        }
-        if (openSectionStart) break;
-      }
-      if (openSectionStart) {
-        console.log(`[upload] "שאלות פתוחות" section found on page ${openSectionStart.page}`);
-        // Remove any question headers that appear AFTER the open section
-        for (const qn of Object.keys(questionPos)) {
-          const pos = questionPos[qn];
-          if (pos.page > openSectionStart.page ||
-              (pos.page === openSectionStart.page && pos.yPct > (openSectionStart.yFromTop / pos.pageHeight * 100))) {
-            delete questionPos[qn];
-          }
-        }
-      }
-
-      console.log(`[upload] MCQ positions: ${Object.keys(questionPos).length} headers (after filtering open section)`);
-    } catch (e) {
-      console.warn('[upload] text position extraction failed:', e.message);
-    }
-
-    // ===== Step 4: Build image URLs + store in DB =====
-    // Filter: only keep questions that have a position in the closed section
-    if (Object.keys(questionPos).length > 0) {
-      questions = questions.filter(q => questionPos[q.n]);
-      console.log(`[upload] after open-section filter: ${questions.length} MCQs`);
-    }
-
-    // Strict dedup: one question per question number, keep first
+    // Dedup by question number
     const seenNums = new Set();
-    questions = questions.filter(q => {
-      if (seenNums.has(q.n)) return false;
-      seenNums.add(q.n);
-      return true;
-    });
-    console.log(`[upload] after dedup: ${questions.length} unique MCQs`);
-    const seen = new Set();
-    questions = questions.filter(q => {
-      if (seen.has(q.n)) return false;
-      seen.add(q.n);
-      return true;
-    });
+    questions = questions.filter(q => { if (seenNums.has(q.n)) return false; seenNums.add(q.n); return true; });
+    console.log(`[upload] ${questions.length} unique MCQs`);
 
+    // Build image URLs using Gemini's y_top/y_bottom + store in DB
     if (questions.length > 0) {
-      const H = 2070; // rendered height at w_1600
       const qRecords = questions.map((q, i) => {
-        const pos = questionPos[q.n];
-        const pageNum = pos?.page || q.page || 2; // page 1 is usually cover
+        const pageNum = q.page || 2;
         let imagePath = 'text-only';
-
-        if (pdfCloudinaryId && pos) {
-          imagePath = `https://res.cloudinary.com/${cloudName}/image/upload/pg_${pageNum},w_1600/c_crop,w_1600,h_${pos.hPx},y_${pos.yPx},g_north/q_auto/${pdfCloudinaryId}.png`;
-        } else if (pdfCloudinaryId) {
-          // No position data — show full page
-          imagePath = `https://res.cloudinary.com/${cloudName}/image/upload/pg_${pageNum},w_1200,q_auto/${pdfCloudinaryId}.png`;
+        if (pdfCloudinaryId) {
+          const yTop = q.y_top ?? 0;
+          const yBottom = q.y_bottom ?? Math.min(yTop + 25, 100);
+          const yPx = Math.max(0, Math.round((yTop / 100) * RENDER_H));
+          const hPx = Math.max(Math.round(((yBottom - yTop) / 100) * RENDER_H), 150);
+          imagePath = `https://res.cloudinary.com/${cloudName}/image/upload/pg_${pageNum},w_1600/c_crop,w_1600,h_${hPx},y_${yPx},g_north/q_auto/${pdfCloudinaryId}.png`;
+          console.log(`[crop] q${q.n} p${pageNum}: ${yTop}%-${yBottom}% → y=${yPx} h=${hPx}`);
         }
-
         return {
-          exam_id: exam.id,
-          course_id: courseIdInt,
-          user_id: auth.userId,
-          question_number: q.n || (i + 1),
-          image_path: imagePath,
-          num_options: 4,
-          correct_idx: q.correct || 1,
-          option_labels: null,
-          general_explanation: q.explanation || null,
-          is_ai_generated: true,
+          exam_id: exam.id, course_id: courseIdInt, user_id: auth.userId,
+          question_number: q.n || (i + 1), image_path: imagePath,
+          num_options: 4, correct_idx: q.correct || 1,
+          option_labels: null, general_explanation: q.explanation || null, is_ai_generated: true,
         };
       });
-
       console.log(`[upload] inserting ${qRecords.length} questions`);
       const { error: qErr } = await auth.db.from('ep_questions').insert(qRecords);
       if (qErr) {
-        console.error('[upload] insert failed:', qErr.message);
+        console.error('[upload] batch insert failed:', qErr.message);
         let ok = 0;
         for (const r of qRecords) { if (!(await auth.db.from('ep_questions').insert(r)).error) ok++; }
         console.log(`[upload] individual: ${ok}/${qRecords.length}`);
