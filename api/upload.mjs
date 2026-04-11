@@ -417,9 +417,9 @@ export default async function handler(req, res) {
     }
 
     // Upload PDF to Cloudinary → renders pages as images automatically
-    const cloudName = (process.env.CLOUDINARY_CLOUD_NAME || '').trim();
-    const cloudKey = (process.env.CLOUDINARY_API_KEY || '').trim();
-    const cloudSecret = (process.env.CLOUDINARY_API_SECRET || '').trim();
+    const cloudName = (process.env.CLOUDINARY_CLOUD_NAME || '').replace(/\s+/g, '');
+    const cloudKey = (process.env.CLOUDINARY_API_KEY || '').replace(/\s+/g, '');
+    const cloudSecret = (process.env.CLOUDINARY_API_SECRET || '').replace(/\s+/g, '');
     let pdfCloudinaryId = null;
 
     if (cloudName && cloudKey && cloudSecret) {
