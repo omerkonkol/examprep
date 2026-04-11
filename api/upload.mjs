@@ -242,9 +242,11 @@ function parseQuestionsFromText(examText, solText) {
 
       if (opts.length >= 3) { // MCQ needs at least 3 options (usually 4)
         // Filter out open questions: sub-items like "הוכיחו כי..." aren't MCQ options
-        const openPatterns = /^(הוכיח|הראה|תנו דוגמ|הסביר|בנו מכונ|צייר|כתבו|מצאו|חשבו|הגדיר|תאר)/;
+        const openPatterns = /^(הוכיח|הפריכ|הראה|הראו|תנו דוגמ|הסביר|בנו מכונ|צייר|כתבו|מצאו|חשבו|הגדיר|נגדיר|תהא|נתון|פתרון|תאר|סדרו|ענו|פרקו|חשב)/;
         const isOpen = opts.some(o => openPatterns.test(o.trim()));
         if (isOpen) continue; // skip open questions
+        // Also skip if options contain "תשובה ריקה" (answer boxes for open questions)
+        if (opts.some(o => o.includes('תשובה ריקה'))) continue;
 
         // Extract question stem (text before first option)
         const firstOptMatch = region.match(/[א-ט]\s*[.)]/);
@@ -525,10 +527,10 @@ export default async function handler(req, res) {
         if (next && next.page === pos.page) {
           endPct = Math.floor((next.yFromTop / pos.pageHeight) * 100) - 1;
         } else {
-          endPct = Math.min(startPct + 40, 95); // max 40% of page if last question
+          endPct = Math.min(startPct + 30, 95); // max 30% of page if last question
         }
         questionPos[pos.n].yPct = startPct;
-        questionPos[pos.n].heightPct = Math.max(endPct - startPct, 15); // min 15%
+        questionPos[pos.n].heightPct = Math.min(Math.max(endPct - startPct, 15), 35); // 15-35% of page
       }
 
       console.log(`[upload] matched ${Object.keys(questionPos).length}/${questions.length} questions:`,
