@@ -437,6 +437,12 @@ export default async function handler(req, res) {
     // Render PDF pages as images and upload to Supabase Storage
     const admin = getAdmin();
     let pageImages = {}; // pageNum → public URL
+
+    // Auto-create storage bucket if needed (idempotent)
+    if (admin) {
+      try { await admin.storage.createBucket('exam-pages', { public: true }); } catch {}
+    }
+
     try {
       const { renderPageAsImage, getMeta } = await import('unpdf');
       const pdfData = new Uint8Array(examFile.data);
