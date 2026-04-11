@@ -589,13 +589,14 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 // Upload with real XHR byte-level progress tracking.
-// Returns { ok, status, data } where data is parsed JSON.
+// Returns { ok, status, data }. The returned promise has an .abort() method.
 function uploadWithProgress({ url, headers, body, onUploadProgress, onUploadDone, timeoutMs = 180000 }) {
-  return new Promise((resolve, reject) => {
+  let xhrRef = null;
+  const promise = new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    xhrRef = xhr;
     xhr.open('POST', url);
     for (const [k, v] of Object.entries(headers || {})) {
-      // Don't set Content-Type for FormData — browser adds boundary automatically
       if (k.toLowerCase() === 'content-type' && body instanceof FormData) continue;
       xhr.setRequestHeader(k, v);
     }
@@ -612,10 +613,13 @@ function uploadWithProgress({ url, headers, body, onUploadProgress, onUploadDone
       resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data: json });
     });
     xhr.addEventListener('error', () => reject(new Error('שגיאת רשת')));
+    xhr.addEventListener('abort', () => reject(new Error('__aborted__')));
     xhr.addEventListener('timeout', () => reject(new Error('ההעלאה נמשכה יותר מדי זמן')));
     xhr.timeout = timeoutMs;
     xhr.send(body);
   });
+  promise.abort = () => { if (xhrRef) xhrRef.abort(); };
+  return promise;
 }
 
 function pickRandom(arr, n) {
@@ -2438,9 +2442,38 @@ function showUploadPdfModal(courseId) {
   container.innerHTML = html;
   document.body.appendChild(container.firstElementChild);
   const modal = document.getElementById('upload-pdf-modal');
-  const close = () => modal.remove();
-  document.getElementById('up-close').addEventListener('click', close);
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  let _uploading = false;
+  let _uploadRequest = null; // holds the abort-able promise
+  const close = () => { _uploading = false; modal.remove(); };
+
+  // Guard: confirm before closing during upload
+  function guardedClose() {
+    if (!_uploading) return close();
+    showConfirmModal({
+      title: 'העלאה בתהליך',
+      body: 'ההעלאה עדיין פעילה. אם תצא עכשיו, הקובץ לא יועלה והתהליך ייעצר. לצאת בכל זאת?',
+      confirmLabel: 'כן, עצור העלאה',
+      danger: true,
+      onConfirm: () => {
+        if (_uploadRequest?.abort) _uploadRequest.abort();
+        close();
+      },
+    });
+  }
+  document.getElementById('up-close').addEventListener('click', guardedClose);
+  modal.addEventListener('click', (e) => { if (e.target === modal) guardedClose(); });
+
+  // Also warn on browser back/refresh during upload
+  const beforeUnloadHandler = (e) => { if (_uploading) { e.preventDefault(); e.returnValue = ''; } };
+  window.addEventListener('beforeunload', beforeUnloadHandler);
+  // Cleanup when modal is removed
+  const observer = new MutationObserver(() => {
+    if (!document.getElementById('upload-pdf-modal')) {
+      window.removeEventListener('beforeunload', beforeUnloadHandler);
+      observer.disconnect();
+    }
+  });
+  observer.observe(document.body, { childList: true });
 
   // --- Drag & drop wiring ---
   function wireDropZone(zoneId, inputId, nameId) {
@@ -2566,7 +2599,8 @@ function showUploadPdfModal(courseId) {
       const totalSize = examFile.size + (solFile?.size || 0);
 
       // Phase 1: Real XHR upload progress (0-50%)
-      const res = await uploadWithProgress({
+      _uploading = true;
+      _uploadRequest = uploadWithProgress({
         url: '/api/upload',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: form,
@@ -2586,7 +2620,9 @@ function showUploadPdfModal(courseId) {
           startProcessingPhase();
         },
       });
+      const res = await _uploadRequest;
 
+      _uploading = false;
       if (processingInterval) clearInterval(processingInterval);
 
       if (!res.ok) {
@@ -2628,7 +2664,12 @@ function showUploadPdfModal(courseId) {
         if (metricSubs[0]) metricSubs[0].textContent = `${exs.length} מבחנים`;
       }
     } catch (err) {
+      _uploading = false;
       if (processingInterval) clearInterval(processingInterval);
+      if (err.message === '__aborted__') {
+        toast('ההעלאה בוטלה', 'warning');
+        return; // modal already closed by guardedClose
+      }
       errEl.textContent = err.message;
     } finally {
       btn.disabled = false;
