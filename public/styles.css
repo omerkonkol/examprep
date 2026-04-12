@@ -1561,6 +1561,14 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
   min-height: 18px; text-align: center; font-weight: 500;
 }
 .auth-error.success { color: var(--emerald-600); }
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  20%,60%  { transform: translateX(-6px); }
+  40%,80%  { transform: translateX(6px); }
+}
+.auth-error.shake { animation: shake 0.4s ease; }
+.auth-form input.input-error { border-color: var(--rose-500) !important; }
+.auth-form input.input-ok   { border-color: var(--emerald-500) !important; }
 
 .auth-switch {
   text-align: center; font-size: 14px;

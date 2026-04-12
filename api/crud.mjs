@@ -104,8 +104,11 @@ function matchRoute(method, url) {
     if (s.length === 3 && s[2] === 'exams' && method === 'GET') return { r: 'list-exams', cid };
     if (s.length === 3 && s[2] === 'questions' && method === 'GET') return { r: 'list-questions', cid };
     if (s.length === 3 && s[2] === 'review-queue' && method === 'GET') return { r: 'review-queue', cid };
+    if (s.length === 3 && s[2] === 'trash' && method === 'GET') return { r: 'list-trash', cid };
     if (s.length === 4 && s[2] === 'exams' && method === 'DELETE') return { r: 'delete-exam', cid, eid: parseInt(s[3], 10) || s[3] };
     if (s.length === 4 && s[2] === 'questions' && method === 'DELETE') return { r: 'delete-question', cid, qid: parseInt(s[3], 10) || s[3] };
+    if (s.length === 4 && s[2] === 'trash' && s[3] === 'restore-exam' && method === 'POST') return { r: 'restore-exam', cid };
+    if (s.length === 4 && s[2] === 'trash' && s[3] === 'restore-question' && method === 'POST') return { r: 'restore-question', cid };
   }
 
   if (s[0] === 'study' && s[1] === 'packs' && s.length === 3) {
@@ -195,16 +198,24 @@ export default async function handler(req, res) {
       return res.json({ ok: true });
     }
     case 'list-exams': {
+      // Auto-purge items deleted more than 3 days ago
+      const purgeDate = new Date(Date.now() - 3 * 86400000).toISOString();
+      await auth.db.from('ep_exams').delete()
+        .eq('course_id', m.cid).not('deleted_at', 'is', null).lt('deleted_at', purgeDate);
       const { data, error } = await auth.db.from('ep_exams').select('*')
-        .eq('course_id', m.cid).order('created_at', { ascending: false });
+        .eq('course_id', m.cid).is('deleted_at', null).order('created_at', { ascending: false });
       if (error) return dbErr(res, 'list exams', error);
       return res.json(data || []);
     }
     case 'list-questions': {
       try {
+        // Auto-purge questions deleted more than 3 days ago
+        const purgeDate = new Date(Date.now() - 3 * 86400000).toISOString();
+        await auth.db.from('ep_questions').delete()
+          .eq('course_id', m.cid).not('deleted_at', 'is', null).lt('deleted_at', purgeDate);
         const { data, error } = await auth.db.from('ep_questions')
           .select('id, exam_id, course_id, user_id, question_number, section_label, image_path, num_options, correct_idx, option_labels, general_explanation, topic, created_at')
-          .eq('course_id', m.cid)
+          .eq('course_id', m.cid).is('deleted_at', null)
           .order('exam_id', { ascending: true }).order('question_number', { ascending: true });
         if (error) return dbErr(res, 'list-questions', error);
         return res.json(data || []);
@@ -212,6 +223,21 @@ export default async function handler(req, res) {
         console.error('[list-questions] exception:', e?.message || e);
         return res.status(500).json({ error: 'שגיאה פנימית בשרת. נסה שוב.' });
       }
+    }
+    case 'list-trash': {
+      const cutoff = new Date(Date.now() - 3 * 86400000).toISOString();
+      const [examsRes, questionsRes] = await Promise.all([
+        auth.db.from('ep_exams').select('id, name, question_count, deleted_at')
+          .eq('course_id', m.cid).not('deleted_at', 'is', null).gte('deleted_at', cutoff)
+          .order('deleted_at', { ascending: false }),
+        auth.db.from('ep_questions').select('id, question_number, exam_id, deleted_at')
+          .eq('course_id', m.cid).not('deleted_at', 'is', null).gte('deleted_at', cutoff)
+          .order('deleted_at', { ascending: false }),
+      ]);
+      return res.json({
+        exams: examsRes.data || [],
+        questions: questionsRes.data || [],
+      });
     }
     case 'review-queue': {
       const { data, error } = await auth.db.from('ep_review_queue').select('question_id').eq('course_id', m.cid);
@@ -221,21 +247,45 @@ export default async function handler(req, res) {
     case 'delete-exam': {
       try {
         const { data: exam, error: fe } = await auth.db.from('ep_exams').select('*')
-          .eq('id', m.eid).eq('course_id', m.cid).maybeSingle();
+          .eq('id', m.eid).eq('course_id', m.cid).is('deleted_at', null).maybeSingle();
         if (fe) return dbErr(res, 'fetch exam', fe);
         if (!exam) return res.status(404).json({ error: 'מבחן לא נמצא' });
-        // Allow deleting exams in any status (including stuck 'processing')
-        const { error: de } = await auth.db.from('ep_exams').delete().eq('id', m.eid).eq('course_id', m.cid);
-        if (de) return dbErr(res, 'delete exam', de);
+        // Soft-delete: mark exam and all its questions with deleted_at timestamp
+        const now = new Date().toISOString();
+        const [{ error: de }, { error: dq }] = await Promise.all([
+          auth.db.from('ep_exams').update({ deleted_at: now }).eq('id', m.eid).eq('course_id', m.cid),
+          auth.db.from('ep_questions').update({ deleted_at: now }).eq('exam_id', m.eid).eq('course_id', m.cid),
+        ]);
+        if (de) return dbErr(res, 'soft-delete exam', de);
         const [{ count: qc }, { count: pc }] = await Promise.all([
-          auth.db.from('ep_questions').select('id', { count: 'exact', head: true }).eq('course_id', m.cid),
-          auth.db.from('ep_exams').select('id', { count: 'exact', head: true }).eq('course_id', m.cid),
+          auth.db.from('ep_questions').select('id', { count: 'exact', head: true }).eq('course_id', m.cid).is('deleted_at', null),
+          auth.db.from('ep_exams').select('id', { count: 'exact', head: true }).eq('course_id', m.cid).is('deleted_at', null),
         ]);
         await auth.db.from('ep_courses').update({ total_questions: qc, total_pdfs: pc }).eq('id', m.cid);
         return res.json({ ok: true, deleted_questions: exam.question_count || 0 });
       } catch (err) {
         console.error('[delete exam]', err?.message || err);
         return res.status(500).json({ error: 'שגיאה במחיקת המבחן' });
+      }
+    }
+    case 'restore-exam': {
+      try {
+        const { examId } = req.body || {};
+        if (!examId) return res.status(400).json({ error: 'חסר examId' });
+        const { error: re } = await auth.db.from('ep_exams')
+          .update({ deleted_at: null }).eq('id', examId).eq('course_id', m.cid);
+        if (re) return dbErr(res, 'restore exam', re);
+        // Restore its questions too
+        await auth.db.from('ep_questions').update({ deleted_at: null }).eq('exam_id', examId).eq('course_id', m.cid);
+        const [{ count: qc }, { count: pc }] = await Promise.all([
+          auth.db.from('ep_questions').select('id', { count: 'exact', head: true }).eq('course_id', m.cid).is('deleted_at', null),
+          auth.db.from('ep_exams').select('id', { count: 'exact', head: true }).eq('course_id', m.cid).is('deleted_at', null),
+        ]);
+        await auth.db.from('ep_courses').update({ total_questions: qc, total_pdfs: pc }).eq('id', m.cid);
+        return res.json({ ok: true });
+      } catch (err) {
+        console.error('[restore exam]', err?.message || err);
+        return res.status(500).json({ error: 'שגיאה בשחזור המבחן' });
       }
     }
     case 'delete-course': {
@@ -263,13 +313,30 @@ export default async function handler(req, res) {
       return res.json({ ok: true });
     }
     case 'delete-question': {
+      const now = new Date().toISOString();
       const { error } = await auth.db.from('ep_questions')
-        .delete().eq('id', m.qid).eq('course_id', m.cid);
+        .update({ deleted_at: now }).eq('id', m.qid).eq('course_id', m.cid).is('deleted_at', null);
       if (error) return dbErr(res, 'delete question', error);
       const { count } = await auth.db.from('ep_questions').select('id', { count: 'exact', head: true })
-        .eq('course_id', m.cid);
+        .eq('course_id', m.cid).is('deleted_at', null);
       await auth.db.from('ep_courses').update({ total_questions: count }).eq('id', m.cid);
       return res.json({ ok: true });
+    }
+    case 'restore-question': {
+      try {
+        const { questionId } = req.body || {};
+        if (!questionId) return res.status(400).json({ error: 'חסר questionId' });
+        const { error: rq } = await auth.db.from('ep_questions')
+          .update({ deleted_at: null }).eq('id', questionId).eq('course_id', m.cid);
+        if (rq) return dbErr(res, 'restore question', rq);
+        const { count } = await auth.db.from('ep_questions').select('id', { count: 'exact', head: true })
+          .eq('course_id', m.cid).is('deleted_at', null);
+        await auth.db.from('ep_courses').update({ total_questions: count }).eq('id', m.cid);
+        return res.json({ ok: true });
+      } catch (err) {
+        console.error('[restore question]', err?.message || err);
+        return res.status(500).json({ error: 'שגיאה בשחזור השאלה' });
+      }
     }
     case 'list-packs': {
       const { data, error } = await auth.db.from('ep_study_packs')

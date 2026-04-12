@@ -661,6 +661,37 @@ Return ONLY a JSON array. Be complete — if the exam has 10 questions, return 1
   return null;
 }
 
+// Quick document-type classifier — called only when 0 MCQs detected.
+// Returns { type: 'exam'|'solution'|'notes'|'blank'|'other', reason: string } or null.
+async function classifyPdfWithGemini(pdfBase64) {
+  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
+  if (!apiKey) return null;
+  const prompt = `Look at this PDF and classify it. Reply with ONLY a JSON object (no markdown):
+{ "type": "exam" | "solution" | "notes" | "blank" | "other", "reason": "one short sentence in Hebrew" }
+exam = university exam with questions students must answer
+solution = answer key / פתרון / answers to an exam
+notes = lecture slides, notes, textbook pages
+blank = empty or unreadable
+other = anything else`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'application/pdf', data: pdfBase64 } }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 256, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    return JSON.parse(cleaned);
+  } catch { return null; }
+}
+
 // Normalize a raw Gemini MCQ array into the same shape used by the text-layer
 // detector, so the two result sets can be merged cleanly.
 function normalizeGeminiMcqs(raw) {
@@ -718,6 +749,12 @@ export default async function handler(req, res) {
     // Verify course ownership
     const { data: course } = await auth.db.from('ep_courses').select('id').eq('id', courseIdInt).maybeSingle();
     if (!course) return res.status(403).json({ error: 'אין גישה לקורס' });
+
+    // Duplicate name check
+    const { count: dupCount } = await auth.db.from('ep_exams')
+      .select('id', { count: 'exact', head: true })
+      .eq('course_id', courseIdInt).eq('name', name).is('deleted_at', null);
+    if (dupCount > 0) return res.status(409).json({ error: `מבחן בשם "${name}" כבר קיים בקורס זה`, guidance: 'שנה את שם המבחן או מחק את המבחן הקיים מניהול הקבצים.' });
 
     // Create exam record
     const { data: exam, error: examErr } = await auth.db.from('ep_exams')
@@ -801,6 +838,20 @@ export default async function handler(req, res) {
     mcqs.sort((a, b) => (a.number || 0) - (b.number || 0));
     console.log(`[upload] ${mcqs.length} unique MCQs after dedup`);
 
+    // Hard stop: 0 MCQs detected — classify and give a specific error
+    if (mcqs.length === 0) {
+      const cls = await classifyPdfWithGemini(examBase64).catch(() => null);
+      // Clean up the placeholder exam record
+      await auth.db.from('ep_exams').delete().eq('id', exam.id);
+      examId = null;
+      const hint = cls?.type === 'solution'
+        ? 'נראה שהעלית קובץ פתרון. השתמש בו בשדה "קובץ פתרון" ולא כקובץ הבחינה.'
+        : cls?.type === 'notes'
+        ? 'נראה שהעלית חומר לימוד ולא בחינה. העלה קובץ שמכיל שאלות רב-ברירה.'
+        : 'הקובץ לא מכיל שאלות אמריקאיות שניתן לזהות. ודא שיש שאלות עם אפשרויות 1/2/3/4 או א/ב/ג/ד.';
+      return res.status(422).json({ error: 'לא זוהו שאלות אמריקאיות בקובץ', guidance: hint });
+    }
+
     // ===== Answers: ask Gemini to parse the solution PDF in parallel =====
     // (Only when we have a solution and didn't already get answers from the fallback path.)
     let answers = {};
@@ -811,6 +862,19 @@ export default async function handler(req, res) {
         if (parsed) answers = parsed;
       } catch (e) {
         console.warn('[upload] answer extraction failed:', e.message);
+      }
+    }
+
+    // Solution mismatch hard stop: if solution was provided but 0 answers matched, it's likely the wrong file
+    if (solBase64 && mcqs.length > 0) {
+      const answered = mcqs.filter(q => answers[String(q.number)] || q._geminiCorrect).length;
+      if (answered === 0) {
+        await auth.db.from('ep_exams').delete().eq('id', exam.id);
+        examId = null;
+        return res.status(422).json({
+          error: 'קובץ הפתרון אינו מתאים לבחינה',
+          guidance: 'לא נמצאו תשובות מסומנות שתואמות לשאלות שזוהו. ודא שהעלית את קובץ הפתרון הנכון לבחינה זו, או הסר אותו ונסה שוב ללא פתרון.',
+        });
       }
     }
 

@@ -2054,36 +2054,57 @@ function renderAuth(signupMode = false) {
   // Google OAuth
   const oauthBtn = document.getElementById('oauth-google');
   if (oauthBtn) oauthBtn.addEventListener('click', async () => {
+    oauthBtn.disabled = true;
+    const originalContent = oauthBtn.innerHTML;
+    oauthBtn.innerHTML = '<span>מתחבר עם Google...</span>';
     try {
       await Auth.loginWithGoogle();
+      // If redirect happens, button stays disabled — that's fine
     } catch (err) {
+      oauthBtn.disabled = false;
+      oauthBtn.innerHTML = originalContent;
       const errEl = document.getElementById('auth-error');
-      errEl.textContent = err.message || 'שגיאה בכניסה עם Google';
+      showAuthError(err.message || 'שגיאה בכניסה עם Google');
     }
   });
+
+  // Helper: shake the error element and highlight a specific input field
+  function showAuthError(msg, fieldEl) {
+    const errEl = document.getElementById('auth-error');
+    errEl.textContent = msg;
+    errEl.classList.remove('success', 'shake');
+    void errEl.offsetWidth; // force reflow for animation restart
+    errEl.classList.add('shake');
+    if (fieldEl) {
+      fieldEl.classList.add('input-error');
+      fieldEl.addEventListener('input', () => fieldEl.classList.remove('input-error'), { once: true });
+    }
+  }
 
   // Form submit
   document.getElementById('auth-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = document.getElementById('auth-email').value.trim();
+    const emailInput = document.getElementById('auth-email');
+    const nameInput = document.getElementById('auth-name');
+    const email = emailInput.value.trim();
     const password = passInput.value;
-    const name = document.getElementById('auth-name').value.trim();
+    const name = nameInput.value.trim();
     const errEl = document.getElementById('auth-error');
     const btn = document.getElementById('auth-submit');
     errEl.textContent = '';
-    errEl.classList.remove('success');
-    if (!email || !password) { errEl.textContent = 'חובה למלא אימייל וסיסמה'; return; }
-    if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email) || email.includes('..')) { errEl.textContent = 'כתובת האימייל לא תקינה'; return; }
+    errEl.classList.remove('success', 'shake');
+    if (!email || !password) { showAuthError('חובה למלא אימייל וסיסמה', !email ? emailInput : passInput); return; }
+    if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email) || email.includes('..')) { showAuthError('כתובת האימייל לא תקינה', emailInput); return; }
     if (mode === 'signup') {
-      if (password.length < 8) { errEl.textContent = 'סיסמה חייבת להיות לפחות 8 תווים'; return; }
-      if (!/[A-Za-z]/.test(password)) { errEl.textContent = 'סיסמה חייבת להכיל לפחות אות אחת'; return; }
-      if (!/\d/.test(password)) { errEl.textContent = 'סיסמה חייבת להכיל לפחות ספרה אחת'; return; }
+      if (password.length < 8) { showAuthError('סיסמה חייבת להיות לפחות 8 תווים', passInput); return; }
+      if (!/[A-Za-z]/.test(password)) { showAuthError('סיסמה חייבת להכיל לפחות אות אחת', passInput); return; }
+      if (!/\d/.test(password)) { showAuthError('סיסמה חייבת להכיל לפחות ספרה אחת', passInput); return; }
       const passwordConfirm = passConfirmInput ? passConfirmInput.value : '';
-      if (!passwordConfirm) { errEl.textContent = 'נא לאמת את הסיסמה'; return; }
-      if (password !== passwordConfirm) { errEl.textContent = 'הסיסמאות לא תואמות'; return; }
-      if (!name) { errEl.textContent = 'נא להזין שם מלא'; return; }
+      if (!passwordConfirm) { showAuthError('נא לאמת את הסיסמה', passConfirmInput); return; }
+      if (password !== passwordConfirm) { showAuthError('הסיסמאות לא תואמות', passConfirmInput); return; }
+      if (!name) { showAuthError('נא להזין שם מלא', nameInput); return; }
     } else {
-      if (password.length < 6) { errEl.textContent = 'סיסמה לא תקינה'; return; }
+      if (password.length < 6) { showAuthError('סיסמה לא תקינה', passInput); return; }
     }
     btn.disabled = true;
     btn.textContent = mode === 'signup' ? 'יוצר חשבון...' : 'מתחבר...';
@@ -2106,7 +2127,18 @@ function renderAuth(signupMode = false) {
       }
       setTimeout(() => navigate('/dashboard'), 300);
     } catch (err) {
-      errEl.textContent = err.message || 'שגיאה לא ידועה';
+      // Translate common Supabase server errors to Hebrew
+      const msg = err.message || '';
+      const hebrewMsg = msg.includes('rate limit') || msg.includes('too many')
+        ? 'יותר מדי ניסיונות. נסה שוב בעוד מספר דקות.'
+        : msg.includes('Email not confirmed') || msg.includes('not confirmed')
+        ? 'יש לאשר את כתובת האימייל. בדוק את תיבת הדואר שלך.'
+        : msg.includes('already registered') || msg.includes('User already')
+        ? 'כתובת האימייל כבר רשומה. נסה להתחבר.'
+        : msg.includes('Password should be') || msg.includes('password is too short')
+        ? 'הסיסמה קצרה מדי. בחר סיסמה ארוכה יותר.'
+        : msg || 'שגיאה לא ידועה';
+      showAuthError(hebrewMsg);
     } finally {
       btn.disabled = false;
       btn.textContent = mode === 'signup' ? 'יצירת חשבון' : 'כניסה';
@@ -2661,8 +2693,11 @@ function showExamManagementModal(courseId) {
   modal.innerHTML = `
     <div class="modal" style="max-width:640px;">
       <button class="modal-close" id="em-close">✕</button>
-      <h2>${isBuiltin ? 'בנק השאלות' : 'ניהול מבחנים'}</h2>
-      <p class="modal-sub">${isBuiltin ? 'לחץ על מבחן כדי לצפות בשאלות' : 'לחץ על מבחן לצפייה · גרור למחיקה'}</p>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+        <h2 style="margin:0;">${isBuiltin ? 'בנק השאלות' : 'ניהול קבצים'}</h2>
+        ${!isBuiltin ? `<button id="em-trash-btn" class="btn btn-ghost btn-sm" title="סל מחזור" style="font-family:inherit;display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);">🗑️ סל מחזור</button>` : ''}
+      </div>
+      <p class="modal-sub">${isBuiltin ? 'לחץ על מבחן כדי לצפות בשאלות' : 'לחץ על מבחן לצפייה ועריכה'}</p>
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
         ${!isBuiltin ? `<button class="btn btn-primary btn-sm" id="em-upload-btn">📤 העלאת מבחן</button>` : ''}
         <select id="em-sort" class="btn btn-ghost btn-sm" style="font-family:inherit;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;">
@@ -2682,6 +2717,9 @@ function showExamManagementModal(courseId) {
 
   // Upload button
   document.getElementById('em-upload-btn')?.addEventListener('click', () => { close(); showUploadPdfModal(courseId); });
+
+  // Trash button
+  document.getElementById('em-trash-btn')?.addEventListener('click', () => showTrashModal(courseId));
 
   const listEl = document.getElementById('em-list');
 
@@ -2778,8 +2816,9 @@ function showExamManagementModal(courseId) {
           thumb.addEventListener('click', (ev) => {
             ev.stopPropagation();
             const qid = thumb.dataset.qid;
-            const q = ex.questions.find(x => x.id === qid);
-            if (q) showQuestionViewer({ image_path: q.image, question_number: q.section, id: q.id }, courseId);
+            const idx = ex.questions.findIndex(x => x.id === qid);
+            const normalizedQs = ex.questions.map(x => ({ image_path: x.image, question_number: x.section, id: x.id }));
+            if (idx !== -1) showQuestionViewer(normalizedQs, idx, courseId);
           });
         });
       });
@@ -2884,14 +2923,17 @@ function showExamManagementModal(courseId) {
 
             // Images load automatically via <img> tags — Cloudinary URLs are regular image URLs
 
-            // Wire question click → open viewer
+            // Wire question click → open viewer with full array for navigation
             grid.querySelectorAll('.em-q-thumb').forEach(thumb => {
               thumb.style.cursor = 'pointer';
               thumb.addEventListener('click', (ev) => {
                 if (ev.target.closest('.em-q-delete')) return;
                 const qId = thumb.dataset.qId;
-                const q = examQs.find(x => String(x.id) === String(qId));
-                if (q) showQuestionViewer(q, courseId, () => thumb.remove());
+                const idx = examQs.findIndex(x => String(x.id) === String(qId));
+                if (idx !== -1) showQuestionViewer(examQs, idx, courseId, (deletedIdx) => {
+                  const thumbs = grid.querySelectorAll('.em-q-thumb');
+                  if (thumbs[deletedIdx]) thumbs[deletedIdx].remove();
+                });
               });
             });
 
@@ -2901,16 +2943,16 @@ function showExamManagementModal(courseId) {
                 ev.stopPropagation();
                 const qId = btn.dataset.qId;
                 showConfirmModal({
-                  title: 'מחיקת שאלה',
-                  body: `למחוק את שאלה #${btn.dataset.qNum}?`,
-                  confirmLabel: 'מחק', danger: true,
+                  title: 'הסרת שאלה',
+                  body: `להסיר את שאלה #${btn.dataset.qNum}?\nהשאלה תועבר לסל המחזור ותימחק סופית לאחר 3 ימים.`,
+                  confirmLabel: 'הסר לסל המחזור', danger: true,
                   onConfirm: async () => {
                     const t2 = await Auth.getToken();
                     const dr = await fetch(`/api/courses/${courseId}/questions/${qId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${t2}` } });
                     if (dr.ok) {
                       btn.closest('.em-q-thumb')?.remove();
-                      toast('שאלה נמחקה', 'success');
-                    } else toast('שגיאה במחיקה', 'error');
+                      toast('השאלה הועברה לסל המחזור', 'success');
+                    } else toast('שגיאה בהסרה', 'error');
                   },
                 });
               });
@@ -2927,17 +2969,17 @@ function showExamManagementModal(courseId) {
           const examName = btn.dataset.examName;
           const qCount = btn.dataset.qCount;
           showConfirmModal({
-            title: 'מחיקת מבחן',
-            body: `למחוק את "${examName}"? ${qCount} שאלות יימחקו לצמיתות.`,
-            confirmLabel: 'מחק לצמיתות', danger: true,
+            title: 'הסרת מבחן',
+            body: `להסיר את "${examName}"?\n${qCount} שאלות יועברו לסל המחזור ויימחקו סופית לאחר 3 ימים.`,
+            confirmLabel: 'הסר לסל המחזור', danger: true,
             onConfirm: async () => {
               const t2 = await Auth.getToken();
               const r = await fetch(`/api/courses/${courseId}/exams/${examId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${t2}` } });
               if (r.ok) {
                 btn.closest('.em-exam-row')?.remove();
-                toast('המבחן נמחק בהצלחה', 'success');
+                toast('המבחן הועבר לסל המחזור — ניתן לשחזרו תוך 3 ימים', 'success', 6000);
                 Data._loadedSet.delete(courseId);
-              } else toast('שגיאה במחיקה', 'error');
+              } else toast('שגיאה בהסרה', 'error');
             },
           });
         });
@@ -2960,44 +3002,200 @@ function showExamManagementModal(courseId) {
   });
 }
 
-// Question viewer lightbox — full-size image with delete option
-function showQuestionViewer(q, courseId, onDelete) {
-  const isTextOnly = q.image_path === 'text-only';
-  const imgSrc = isTextOnly ? null : (q.image_path?.startsWith('http') ? q.image_path : Data.imageUrl(q.image_path, courseId));
+// Trash/recycle bin modal — shows soft-deleted items for a course
+async function showTrashModal(courseId) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:540px;">
+      <button class="modal-close" id="trash-close">✕</button>
+      <h2>🗑️ סל מחזור</h2>
+      <p class="modal-sub">פריטים שנמחקו — ניתן לשחזר תוך 3 ימים</p>
+      <div id="trash-list" style="max-height:55vh;overflow-y:auto;"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('#trash-close').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  const listEl = modal.querySelector('#trash-list');
+  listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">טוען...</p>';
+
+  try {
+    const tk = await Auth.getToken();
+    const r = await fetch(`/api/courses/${courseId}/trash`, { headers: tk ? { Authorization: `Bearer ${tk}` } : {} });
+    if (!r.ok) { listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">שגיאה בטעינה</p>'; return; }
+    const { exams, questions } = await r.json();
+
+    if (!exams.length && !questions.length) {
+      listEl.innerHTML = '<p class="muted" style="text-align:center;padding:30px;">סל המחזור ריק</p>';
+      return;
+    }
+
+    const daysLeft = (deletedAt) => {
+      const d = Math.ceil((new Date(deletedAt).getTime() + 3 * 86400000 - Date.now()) / 86400000);
+      return Math.max(0, d);
+    };
+
+    let html = '';
+    if (exams.length) {
+      html += `<div style="font-size:12px;font-weight:600;color:var(--text-muted);padding:8px 0 4px;text-transform:uppercase;letter-spacing:.5px;">מבחנים</div>`;
+      html += exams.map(ex => `
+        <div class="em-exam-row" style="border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:12px;padding:10px 4px;">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ex.name)}</div>
+            <div style="font-size:12px;color:var(--text-muted);">${ex.question_count || 0} שאלות · נמחק ${daysLeft(ex.deleted_at)} ימים לפני מחיקה סופית</div>
+          </div>
+          <button class="btn btn-sm trash-restore-exam" data-exam-id="${ex.id}" style="font-family:inherit;white-space:nowrap;">↩ שחזר</button>
+        </div>
+      `).join('');
+    }
+    if (questions.length) {
+      html += `<div style="font-size:12px;font-weight:600;color:var(--text-muted);padding:12px 0 4px;text-transform:uppercase;letter-spacing:.5px;">שאלות בודדות</div>`;
+      html += questions.map(q => `
+        <div style="border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:12px;padding:10px 4px;">
+          <span style="font-size:13px;color:var(--text-muted);min-width:60px;">שאלה #${q.question_number}</span>
+          <div style="flex:1;font-size:12px;color:var(--text-muted);">${daysLeft(q.deleted_at)} ימים לפני מחיקה סופית</div>
+          <button class="btn btn-sm trash-restore-q" data-q-id="${q.id}" style="font-family:inherit;white-space:nowrap;">↩ שחזר</button>
+        </div>
+      `).join('');
+    }
+
+    listEl.innerHTML = html;
+
+    listEl.querySelectorAll('.trash-restore-exam').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true; btn.textContent = 'משחזר...';
+        const t2 = await Auth.getToken();
+        const r2 = await fetch(`/api/courses/${courseId}/trash/restore-exam`, {
+          method: 'POST', headers: { Authorization: `Bearer ${t2}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ examId: btn.dataset.examId }),
+        });
+        if (r2.ok) {
+          btn.closest('.em-exam-row')?.remove();
+          toast('המבחן שוחזר בהצלחה', 'success');
+          Data._loadedSet.delete(courseId);
+          if (!listEl.querySelector('.em-exam-row,.trash-restore-q'))
+            listEl.innerHTML = '<p class="muted" style="text-align:center;padding:30px;">סל המחזור ריק</p>';
+        } else { btn.disabled = false; btn.textContent = '↩ שחזר'; toast('שגיאה בשחזור', 'error'); }
+      });
+    });
+
+    listEl.querySelectorAll('.trash-restore-q').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true; btn.textContent = 'משחזר...';
+        const t2 = await Auth.getToken();
+        const r2 = await fetch(`/api/courses/${courseId}/trash/restore-question`, {
+          method: 'POST', headers: { Authorization: `Bearer ${t2}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ questionId: btn.dataset.qId }),
+        });
+        if (r2.ok) {
+          btn.closest('div')?.remove();
+          toast('השאלה שוחזרה בהצלחה', 'success');
+        } else { btn.disabled = false; btn.textContent = '↩ שחזר'; toast('שגיאה בשחזור', 'error'); }
+      });
+    });
+  } catch {
+    listEl.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">שגיאה בטעינת סל המחזור</p>';
+  }
+}
+
+// Question viewer lightbox — full-size image with prev/next navigation + keyboard arrows
+// questions: array of question objects (all in same exam), startIndex: which one to open
+function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, maybeOnDelete) {
+  // Normalize overloaded signature:
+  // Old: showQuestionViewer(q, courseId, onDelete)
+  // New: showQuestionViewer(questions[], startIndex, courseId, onDelete?)
+  let questions, currentIndex, courseId, onDelete;
+  if (Array.isArray(qOrArr)) {
+    questions = qOrArr;
+    currentIndex = typeof courseIdOrStartIndex === 'number' ? courseIdOrStartIndex : 0;
+    courseId = onDeleteOrCourseId;
+    onDelete = maybeOnDelete;
+  } else {
+    questions = [qOrArr];
+    currentIndex = 0;
+    courseId = courseIdOrStartIndex;
+    onDelete = onDeleteOrCourseId;
+  }
+
   const viewer = document.createElement('div');
   viewer.className = 'modal-backdrop';
   viewer.style.cssText = 'z-index:10000;display:flex;align-items:center;justify-content:center;';
   viewer.innerHTML = `
-    <div style="background:#fff;border-radius:16px;max-width:90vw;max-height:90vh;overflow:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:0;">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-soft);position:sticky;top:0;background:#fff;z-index:1;border-radius:16px 16px 0 0;">
-        <span style="font-weight:600;font-size:15px;">שאלה #${q.question_number || q.section || ''}</span>
+    <div style="background:#fff;border-radius:16px;max-width:90vw;max-height:90vh;overflow:hidden;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:0;display:flex;flex-direction:column;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-soft);background:#fff;z-index:1;border-radius:16px 16px 0 0;flex-shrink:0;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="qv-prev" class="btn btn-ghost btn-sm" style="font-family:inherit;font-size:18px;padding:4px 10px;" title="שאלה קודמת (←)">‹</button>
+          <span id="qv-title" style="font-weight:600;font-size:15px;"></span>
+          <button id="qv-next" class="btn btn-ghost btn-sm" style="font-family:inherit;font-size:18px;padding:4px 10px;" title="שאלה הבאה (→)">›</button>
+        </div>
         <div style="display:flex;gap:8px;">
-          ${onDelete ? `<button id="qv-delete" class="btn btn-sm" style="color:#dc2626;border:1px solid #fecaca;background:#fef2f2;font-family:inherit;">🗑️ מחק מהמאגר</button>` : ''}
-          <button id="qv-close" class="btn btn-ghost btn-sm" style="font-family:inherit;">✕ סגור</button>
+          <span id="qv-counter" style="font-size:12px;color:var(--text-muted);align-self:center;"></span>
+          <button id="qv-delete" class="btn btn-sm" style="color:#dc2626;border:1px solid #fecaca;background:#fef2f2;font-family:inherit;display:none;">🗑️ הסר</button>
+          <button id="qv-close" class="btn btn-ghost btn-sm" style="font-family:inherit;">✕</button>
         </div>
       </div>
-      ${isTextOnly
-        ? `<div style="padding:24px;font-size:15px;line-height:1.8;direction:rtl;">${escapeHtml(q.general_explanation || 'שאלה ללא תמונה')}</div>`
-        : `<img src="${imgSrc}" alt="שאלה" style="width:100%;display:block;border-radius:0 0 16px 16px;" />`}
+      <div id="qv-body" style="overflow:auto;flex:1;"></div>
     </div>
   `;
   document.body.appendChild(viewer);
-  viewer.querySelector('#qv-close').addEventListener('click', () => viewer.remove());
-  viewer.addEventListener('click', (e) => { if (e.target === viewer) viewer.remove(); });
 
+  const titleEl = viewer.querySelector('#qv-title');
+  const counterEl = viewer.querySelector('#qv-counter');
+  const bodyEl = viewer.querySelector('#qv-body');
+  const prevBtn = viewer.querySelector('#qv-prev');
+  const nextBtn = viewer.querySelector('#qv-next');
   const delBtn = viewer.querySelector('#qv-delete');
+
+  function render() {
+    const q = questions[currentIndex];
+    const isTextOnly = q.image_path === 'text-only';
+    const imgSrc = isTextOnly ? null : (q.image_path?.startsWith('http') ? q.image_path : Data.imageUrl(q.image_path, courseId));
+    titleEl.textContent = `שאלה #${q.question_number || q.section || ''}`;
+    counterEl.textContent = questions.length > 1 ? `${currentIndex + 1} / ${questions.length}` : '';
+    prevBtn.disabled = currentIndex === 0;
+    nextBtn.disabled = currentIndex === questions.length - 1;
+    prevBtn.style.opacity = currentIndex === 0 ? '0.3' : '1';
+    nextBtn.style.opacity = currentIndex === questions.length - 1 ? '0.3' : '1';
+    bodyEl.innerHTML = isTextOnly
+      ? `<div style="padding:24px;font-size:15px;line-height:1.8;direction:rtl;">${escapeHtml(q.general_explanation || 'שאלה ללא תמונה')}</div>`
+      : `<img src="${imgSrc}" alt="שאלה" style="width:100%;display:block;" />`;
+    if (onDelete) { delBtn.style.display = ''; } else { delBtn.style.display = 'none'; }
+  }
+
+  render();
+
+  prevBtn.addEventListener('click', () => { if (currentIndex > 0) { currentIndex--; render(); } });
+  nextBtn.addEventListener('click', () => { if (currentIndex < questions.length - 1) { currentIndex++; render(); } });
+
+  const close = () => { document.removeEventListener('keydown', onKey); viewer.remove(); };
+  viewer.querySelector('#qv-close').addEventListener('click', close);
+  viewer.addEventListener('click', (e) => { if (e.target === viewer) close(); });
+
+  // Keyboard navigation
+  function onKey(e) {
+    if (e.key === 'Escape') { close(); return; }
+    if (e.key === 'ArrowLeft') { if (currentIndex < questions.length - 1) { currentIndex++; render(); } }
+    if (e.key === 'ArrowRight') { if (currentIndex > 0) { currentIndex--; render(); } }
+  }
+  document.addEventListener('keydown', onKey);
+
   if (delBtn && onDelete) {
     delBtn.addEventListener('click', () => {
-      viewer.remove();
+      const q = questions[currentIndex];
+      close();
       showConfirmModal({
-        title: 'מחיקת שאלה',
-        body: `למחוק את שאלה #${q.question_number}?`,
-        confirmLabel: 'מחק', danger: true,
+        title: 'הסרת שאלה',
+        body: `להסיר את שאלה #${q.question_number}?\nהשאלה תועבר לסל המחזור ותימחק סופית לאחר 3 ימים.`,
+        confirmLabel: 'הסר לסל המחזור', danger: true,
         onConfirm: async () => {
           const tk = await Auth.getToken();
           const r = await fetch(`/api/courses/${courseId}/questions/${q.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tk}` } });
-          if (r.ok) { onDelete(); toast('שאלה נמחקה', 'success'); }
-          else toast('שגיאה במחיקה', 'error');
+          if (r.ok) { onDelete(currentIndex); toast('השאלה הועברה לסל המחזור', 'success'); }
+          else toast('שגיאה בהסרה', 'error');
         },
       });
     });
@@ -3168,6 +3366,12 @@ function showUploadPdfModal(courseId) {
     }
     if (!name || name.length < 2) { errEl.textContent = 'שם המבחן חייב להיות לפחות 2 תווים'; return; }
     if (!examFile) { errEl.textContent = 'חסר קובץ PDF של המבחן'; return; }
+    // Client-side: warn if exam name contains solution keywords
+    const SOLUTION_KW = ['פתרון', 'solution', 'תשובות', 'answers', 'answer key', 'מפתח'];
+    if (SOLUTION_KW.some(k => name.toLowerCase().includes(k.toLowerCase()))) {
+      errEl.textContent = 'שם המבחן נראה כמו פתרון — אם זה קובץ הבחינה, שנה את השם. קובץ פתרון מועלה בשדה הנפרד למטה.';
+      return;
+    }
 
     // Client-side file size check
     const plan = state.user?.plan || 'free';
@@ -3258,7 +3462,7 @@ function showUploadPdfModal(courseId) {
       if (processingInterval) clearInterval(processingInterval);
 
       if (!res.ok) {
-        if (res.status === 422 && res.data.guidance) {
+        if ((res.status === 422 || res.status === 409) && res.data.guidance) {
           errEl.textContent = res.data.error;
           const guide = document.createElement('p');
           guide.className = 'upload-guidance';
