@@ -212,18 +212,37 @@ function findSectionHeadings(pages, parentQ) {
 
 // Find standalone numbered question headings ("שאלה 1", "שאלה 2", ...).
 // Requires that the line STARTS with "שאלה" (not embedded in a paragraph)
-// and sits near the right edge of the page (RTL heading position). Skips
-// page 1 because most exams put instructions / title there.
+// and sits near the right edge of the page (RTL heading position).
+//
+// Page 1 is scanned unless it's clearly an instructions page (has the word
+// "הוראות" / "כללי" near the top and no "שאלה N" headings). We decide that
+// per-PDF by actually looking at what page 1 contains.
 function findStandaloneQuestions(pages) {
   const results = [];
   const seen = new Set();
+  // Decide whether to skip page 1: only if it looks like an instructions page
+  // AND has no שאלה-N heading on it. Otherwise include it.
+  let skipPage1 = false;
+  if (pages.length > 1) {
+    const p1 = pages.find(p => p.page === 1);
+    if (p1) {
+      const lines = buildLines(p1);
+      const hasQHeading = lines.some(l => /^\s*שאלה\s*\d/.test(l.text));
+      const looksLikeInstructions = lines.slice(0, 15).some(l =>
+        /(הוראות\s+כלליות|משך\s+הבחינה|חומר\s+עזר|מהלך\s+הבחינה)/.test(l.text));
+      skipPage1 = !hasQHeading && looksLikeInstructions;
+    }
+  }
   for (const page of pages) {
-    if (page.page === 1 && pages.length > 3) continue;
+    if (page.page === 1 && skipPage1) continue;
     const lines = buildLines(page);
     for (const line of lines) {
-      // Heading lines are short — "שאלה N (X נקודות)" is ~15–30 chars.
-      if (line.text.length > 60) continue;
-      const m = line.text.match(/^\s*שאלה\s*(\d+)\b/);
+      // Skip only the absolute outliers — real headings can include the full
+      // question stem on the same visual line ("שאלה 2 נאמר ששפה L מסכימה...").
+      if (line.text.length > 300) continue;
+      // Match "שאלה N" at line start. Don't use \b — Hebrew + digit boundary is
+      // tricky; use an explicit "not a digit" lookahead instead.
+      const m = line.text.match(/^\s*שאלה\s*(\d{1,3})(?!\d)/);
       if (!m) continue;
       const num = parseInt(m[1], 10);
       if (num < 1 || num > 100 || seen.has(num)) continue;
@@ -237,27 +256,102 @@ function findStandaloneQuestions(pages) {
 }
 
 // Given a heading and the following heading, find where the current question
-// actually ends — prefer a "נימוק" line (the empty justification box that
-// tohna1-style exams place after each MCQ); otherwise use the next heading's
-// top; otherwise use the page bottom.
+// actually ends.
+//
+// The returned `yFromTop` is the PRE-MARGIN bottom — buildCropUrl will still
+// add CROP_MARGIN_BOTTOM_PT on top. So we cap at (hardUpper - safety) where
+// safety ≥ CROP_MARGIN_BOTTOM_PT to guarantee the crop never spills into the
+// next heading after the aesthetic margin is added.
+//
+// Priority order:
+//  A. A "נימוק" line (justification box) on the starting page — tohna1 sections
+//     mode puts this after each MCQ.
+//  B. The LAST option line (1./2./3./4. or א./ב./ג./ד.) on the starting page,
+//     within the region before the next heading. This is the most reliable
+//     signal for MCQs — stops us cropping into the next question when there's
+//     no explicit structural marker.
+//  C. The next heading on the same page (minus a safety margin).
+//  D. The page bottom.
 function findBottomBoundary(pages, fromHeading, nextHeading) {
   const startPage = fromHeading.page;
   const startY = fromHeading.yFromTop;
   const page = pages.find(p => p.page === startPage);
-  if (page) {
-    const lines = buildLines(page);
-    for (const line of lines) {
-      if (line.yFromTop <= startY) continue;
-      if (/^נימוק\s*[:.]?\s*$/.test(line.text)) {
-        return { page: startPage, yFromTop: line.yFromTop - 10 };
+  if (!page) return null;
+
+  // Upper Y bound — never scan past the next heading (if it's on the same page).
+  const hardUpper = (nextHeading && nextHeading.page === startPage)
+    ? nextHeading.yFromTop
+    : page.height;
+
+  // Safety margin between our returned bottom and the next heading. We need
+  // at least CROP_MARGIN_BOTTOM_PT + a few points to absorb the crop padding.
+  const SAFETY = CROP_MARGIN_BOTTOM_PT + 6;
+  const safeCap = hardUpper - SAFETY;
+
+  const lines = buildLines(page);
+
+  // A. "נימוק" line
+  for (const line of lines) {
+    if (line.yFromTop <= startY || line.yFromTop >= hardUpper) continue;
+    if (/^נימוק\s*[:.]?\s*$/.test(line.text)) {
+      return { page: startPage, yFromTop: Math.min(safeCap, line.yFromTop - 10) };
+    }
+  }
+
+  // B. Last sequential option line in the region
+  let lastOptionY = null;
+  let numSeen = 0, hebSeen = 0;
+  for (const line of lines) {
+    if (line.yFromTop <= startY || line.yFromTop >= hardUpper) continue;
+    const t = line.text.replace(/^[\s•·]+/, '');
+    const mNum = t.match(/^\.?\s*([1-9])\s*[.)]/);
+    if (mNum) {
+      const n = parseInt(mNum[1], 10);
+      if (n === numSeen + 1 && n <= 6) {
+        numSeen = n;
+        lastOptionY = line.yFromTop;
+        continue;
+      }
+    }
+    const mHeb = t.match(/^\.?\s*([א-ט])\s*[.)]/);
+    if (mHeb) {
+      const idx = 'אבגדהוזח'.indexOf(mHeb[1]);
+      if (idx === hebSeen && hebSeen < 6) {
+        hebSeen = idx + 1;
+        lastOptionY = line.yFromTop;
+        continue;
       }
     }
   }
-  if (nextHeading && nextHeading.page === startPage) {
-    return { page: startPage, yFromTop: nextHeading.yFromTop - 8 };
+  if (lastOptionY !== null && Math.max(numSeen, hebSeen) >= 2) {
+    // Extend past the last option marker to capture any wrapped continuation
+    // lines — stop at the next structural element (new heading, new option,
+    // נימוק) or a big vertical gap.
+    let includeY = lastOptionY;
+    const tail = lines
+      .filter(l => l.yFromTop > lastOptionY && l.yFromTop < hardUpper)
+      .sort((a, b) => a.yFromTop - b.yFromTop);
+    for (const line of tail) {
+      if (/^נימוק\s*[:.]?\s*$/.test(line.text)) break;
+      if (/^\s*שאלה\s*\d/.test(line.text)) break;
+      const t = line.text.replace(/^[\s•·]+/, '');
+      if (/^\.?\s*[1-9]\s*[.)]/.test(t)) break;
+      if (/^\.?\s*[א-ט]\s*[.)]/.test(t)) break;
+      if (line.yFromTop - includeY > 25) break;
+      includeY = line.yFromTop;
+    }
+    // +6pt accounts for the baseline → descender of the last included line;
+    // CROP_MARGIN_BOTTOM_PT below adds the rest of the line height.
+    return { page: startPage, yFromTop: Math.min(safeCap, includeY + 6) };
   }
-  if (page) return { page: startPage, yFromTop: page.height - 30 };
-  return null;
+
+  // C. Next heading on the same page
+  if (nextHeading && nextHeading.page === startPage) {
+    return { page: startPage, yFromTop: safeCap };
+  }
+
+  // D. Page bottom
+  return { page: startPage, yFromTop: page.height - 30 };
 }
 
 // Does the region between heading and bottom look like an MCQ?
@@ -562,6 +656,27 @@ Return a JSON array only.`;
   return null;
 }
 
+// Normalize a raw Gemini MCQ array into the same shape used by the text-layer
+// detector, so the two result sets can be merged cleanly.
+function normalizeGeminiMcqs(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    // Accept both number (7) and string ("7") — Gemini sometimes returns strings.
+    .filter(q => q && (typeof q.n === 'number' || typeof q.n === 'string') && String(q.n).trim() !== '' && !isNaN(parseInt(q.n, 10)))
+    .map(q => ({
+      section: String(q.n),
+      number: typeof q.n === 'number' ? q.n : parseInt(q.n, 10),
+      page: q.page || 2,
+      yTop: ((q.y_top ?? 0) / 100) * (q.page_h || 842),
+      yBottom: ((q.y_bottom ?? Math.min((q.y_top ?? 0) + 25, 100)) / 100) * (q.page_h || 842),
+      pageWidth: q.page_w || 595,
+      pageHeight: q.page_h || 842,
+      numOptions: 4,
+      _geminiCorrect: q.correct ?? null,
+      _fromGemini: true,
+    }));
+}
+
 // =====================================================
 // Handler
 // =====================================================
@@ -618,7 +733,7 @@ export default async function handler(req, res) {
     const examBase64 = Buffer.from(examFile.data).toString('base64');
     const solBase64 = solFile ? Buffer.from(solFile.data).toString('base64') : null;
 
-    // ===== Run in parallel: Cloudinary upload + text-layer analysis =====
+    // ===== Run in parallel: Cloudinary upload + text-layer analysis + Gemini verify =====
     const cloudinaryPromise = hasCloudinary
       ? uploadPdfToCloudinary({
           cloudName, apiKey: cloudKey, apiSecret: cloudSecret,
@@ -630,39 +745,49 @@ export default async function handler(req, res) {
     const positionsPromise = extractPositions(examFile.data)
       .catch(e => { console.error('[upload] positions error:', e.message); return null; });
 
-    const [cloudinaryId, positions] = await Promise.all([cloudinaryPromise, positionsPromise]);
+    // Always run Gemini in parallel so it can fill any gaps the text-layer misses.
+    const geminiVerifyPromise = analyzeExamWithGemini(examBase64, solBase64)
+      .catch(e => { console.warn('[upload] gemini-verify failed:', e.message); return null; });
 
-    // ===== Detect MCQs from text layer =====
+    const [cloudinaryId, positions, geminiVerifyRaw] = await Promise.all([
+      cloudinaryPromise, positionsPromise, geminiVerifyPromise,
+    ]);
+
+    // ===== Detect MCQs: text-layer + Gemini verify/fill =====
     let mcqs = [];
     let mode = 'text-layer';
     let usedGeminiFallback = false;
 
+    // Text-layer detection (free, accurate crop coords).
+    let textLayerMcqs = [];
+    let textLayerMode = 'none';
     if (positions && positions.length) {
       const detected = detectMCQsFromPositions(positions);
-      mcqs = detected.mcqs;
-      mode = `text-layer:${detected.mode}`;
-      console.log(`[upload] text-layer detected ${mcqs.length} MCQs via ${detected.mode}`);
+      textLayerMcqs = detected.mcqs;
+      textLayerMode = detected.mode;
+      console.log(`[upload] text-layer detected ${textLayerMcqs.length} MCQs via ${textLayerMode}`);
     }
 
-    // Fallback: if text layer found nothing, send the whole PDF to Gemini.
-    if (mcqs.length === 0) {
-      console.log('[upload] text layer found 0 MCQs — falling back to Gemini Vision');
-      usedGeminiFallback = true;
+    // Normalize Gemini results (ran in parallel above).
+    console.log(`[upload] gemini-verify raw n-values: ${JSON.stringify((geminiVerifyRaw || []).map(q => q?.n))}`);
+    const geminiMcqs = normalizeGeminiMcqs(geminiVerifyRaw);
+    console.log(`[upload] gemini-verify found ${geminiMcqs.length} MCQs`);
+
+    // Merge: text-layer is authoritative for coordinates; Gemini fills gaps.
+    if (textLayerMcqs.length > 0) {
+      const textNums = new Set(textLayerMcqs.map(q => q.number));
+      const geminiFill = geminiMcqs.filter(q => !textNums.has(q.number));
+      mcqs = [...textLayerMcqs, ...geminiFill];
+      mode = geminiFill.length > 0
+        ? `text-layer:${textLayerMode}+gemini-fill(${geminiFill.length})`
+        : `text-layer:${textLayerMode}`;
+      console.log(`[upload] merged: ${textLayerMcqs.length} text-layer + ${geminiFill.length} gemini-fill`);
+    } else if (geminiMcqs.length > 0) {
+      // Scanned/image-only PDF — pure Gemini fallback.
+      mcqs = geminiMcqs;
       mode = 'gemini-fallback';
-      const geminiMcqs = await analyzeExamWithGemini(examBase64, solBase64);
-      if (geminiMcqs && geminiMcqs.length) {
-        mcqs = geminiMcqs.map((q) => ({
-          section: String(q.n || ''),
-          number: q.n,
-          page: q.page || 2,
-          yTop: ((q.y_top ?? 0) / 100) * (q.page_h || 842),
-          yBottom: ((q.y_bottom ?? Math.min((q.y_top ?? 0) + 25, 100)) / 100) * (q.page_h || 842),
-          pageWidth: q.page_w || 595,
-          pageHeight: q.page_h || 842,
-          numOptions: 4,
-          _geminiCorrect: q.correct,
-        }));
-      }
+      usedGeminiFallback = true;
+      console.log(`[upload] pure gemini-fallback: ${mcqs.length} MCQs`);
     }
 
     // Dedup by number and sort
@@ -749,6 +874,12 @@ export default async function handler(req, res) {
       exam_id: exam.id,
       question_count: mcqs.length,
       mode,
+      _debug: {
+        textLayerCount: textLayerMcqs.length,
+        geminiCount: geminiMcqs.length,
+        geminiNumbers: geminiMcqs.map(q => q.number),
+        textLayerNumbers: textLayerMcqs.map(q => q.number),
+      },
       ...(warnings.length && { warnings }),
     });
   } catch (err) {

@@ -7,6 +7,58 @@
 // real users.
 // =====================================================
 
+// ===== Error telemetry =====
+// Captures uncaught errors and unhandled rejections and POSTs them to
+// /api/client-error. Minimal, no deps, fire-and-forget. Max 20 reports per
+// page load to prevent noise. This is the FIRST thing we set up — if anything
+// below crashes during parse/execute, we still get visibility.
+(function setupErrorReporter() {
+  let sent = 0;
+  const MAX = 20;
+  function report(type, payload) {
+    if (sent++ >= MAX) return;
+    try {
+      const body = JSON.stringify({
+        type,
+        ...payload,
+        ua: navigator.userAgent || '',
+        url: location.href || '',
+        t: Date.now(),
+      });
+      if (navigator.sendBeacon) {
+        const blob = new Blob([body], { type: 'application/json' });
+        navigator.sendBeacon('/api/client-error', blob);
+      } else {
+        fetch('/api/client-error', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+  window.addEventListener('error', (e) => {
+    report('error', {
+      msg: (e && e.message) || 'unknown error',
+      stack: (e && e.error && e.error.stack) || '',
+      extra: e && e.filename ? { file: e.filename, line: e.lineno, col: e.colno } : null,
+    });
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    let msg = '';
+    let stack = '';
+    try {
+      const reason = e.reason;
+      msg = String(reason && reason.message ? reason.message : reason);
+      stack = reason && reason.stack ? String(reason.stack) : '';
+    } catch { msg = 'unhandledrejection'; }
+    report('unhandled', { msg, stack });
+  });
+  // Expose for intentional one-off reports from elsewhere in the app.
+  window.__reportClientError = report;
+})();
+
 // ===== Globals =====
 const $app = document.getElementById('app');
 
@@ -35,19 +87,25 @@ const Data = {
   get explanations() { return (this._cache[state.course?.id || 'tohna1'] || {}).explanations || {}; },
 
   _loadedSet: new Set(),
+  // Per-exam explanation promise cache for tohna1. Each entry is a Promise<object>
+  // keyed by the exam id (e.g. "moed_a_sem_a_2026"). When a quiz starts we call
+  // ensureExplanationsForExam() so reveal() can access them synchronously via
+  // the `explanations` getter.
+  _explanationPromises: {},
 
   async ensureLoaded(courseId) {
     const cid = courseId || state.course?.id || 'tohna1';
     if (this._loadedSet.has(cid)) return;
 
     if (cid === 'tohna1') {
-      // Built-in course: load from static JSON files
-      const [meta, ans, exp] = await Promise.all([
+      // Built-in course: metadata + answers only. explanations.json was ~192KB
+      // and used to block the dashboard — it's now loaded lazily per-exam via
+      // ensureExplanationsForExam() just before a quiz reveal needs them.
+      const [meta, ans] = await Promise.all([
         fetch('/public/data/metadata.json').then(r => r.json()),
         fetch('/public/data/answers.json').then(r => r.json()),
-        fetch('/public/data/explanations.json').then(r => r.json()).catch(() => ({})),
       ]);
-      this._cache[cid] = { metadata: meta, answers: ans.answers || {}, explanations: exp || {} };
+      this._cache[cid] = { metadata: meta, answers: ans.answers || {}, explanations: {} };
     } else {
       // Cloud course: fetch questions + exams from API
       const token = await Auth.getToken();
@@ -107,6 +165,41 @@ const Data = {
       topic: a.topic || null,
       groupId: a.groupId || null,
     };
+  },
+  // Lazy-load explanations for a single tohna1 exam. Returns a Promise that
+  // resolves once the per-exam map is merged into the main cache, so
+  // reveal()/explanations-getter callers can access it synchronously.
+  ensureExplanationsForExam(examId) {
+    if (!examId) return Promise.resolve(null);
+    const cid = 'tohna1'; // only built-in course uses per-exam shards today
+    const entry = this._cache[cid];
+    if (!entry) return Promise.resolve(null);
+    // Already loaded? Check for any key prefixed with this examId.
+    const prefix = examId + '__';
+    for (const k of Object.keys(entry.explanations || {})) {
+      if (k.startsWith(prefix)) return Promise.resolve(entry.explanations);
+    }
+    if (this._explanationPromises[examId]) return this._explanationPromises[examId];
+    const p = fetch(`/public/data/explanations/${encodeURIComponent(examId)}.json`)
+      .then(r => r.ok ? r.json() : {})
+      .then(map => {
+        // Merge under the full "<exam>__<num>" keys the rest of the app expects.
+        for (const [num, val] of Object.entries(map || {})) {
+          entry.explanations[`${examId}__${num}`] = val;
+        }
+        return entry.explanations;
+      })
+      .catch(() => entry.explanations);
+    this._explanationPromises[examId] = p;
+    return p;
+  },
+  // Prefetch explanations for every exam in a quiz batch. Called at quiz start
+  // so the reveal button is instant for every question in the batch.
+  prefetchExplanationsForQuestions(questions) {
+    if (!Array.isArray(questions) || !questions.length) return Promise.resolve();
+    const examIds = new Set();
+    for (const q of questions) { if (q && q.examId) examIds.add(q.examId); }
+    return Promise.all([...examIds].map(id => this.ensureExplanationsForExam(id)));
   },
   reveal(qid) {
     const a = this.answers[qid] || {};
@@ -235,25 +328,147 @@ const Theme = {
 
 // ===== Auth via Supabase =====
 const _sbConfig = window.APP_CONFIG || {};
+
+// supabase-js is NEVER on the critical path. The hot paths (login, getToken,
+// restoreSession, fetchProfile) go through raw fetch directly to GoTrue/REST.
+// The library is only dynamically imported for: signup (signUp), Google OAuth
+// (signInWithOAuth), password reset, and onAuthStateChange — all of which run
+// AFTER first paint and/or only on user interaction.
 let _sbClient = null;
-function getSbClient() {
+let _sbClientPromise = null;
+async function getSbClient() {
   if (_sbClient) return _sbClient;
-  if (_sbConfig.SUPABASE_URL && _sbConfig.SUPABASE_ANON_KEY && window.supabase) {
-    _sbClient = window.supabase.createClient(_sbConfig.SUPABASE_URL, _sbConfig.SUPABASE_ANON_KEY, {
+  if (_sbClientPromise) return _sbClientPromise;
+  if (!_sbConfig.SUPABASE_URL || !_sbConfig.SUPABASE_ANON_KEY) return null;
+  _sbClientPromise = (async () => {
+    const mod = await import('https://esm.sh/@supabase/supabase-js@2?bundle');
+    _sbClient = mod.createClient(_sbConfig.SUPABASE_URL, _sbConfig.SUPABASE_ANON_KEY, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        // No-op lock: bypass Supabase's navigator.locks-based serialization.
-        // The default lock implementation has deadlocked in some browser states
-        // (incognito, strict storage policies, multi-tab races), leaving
-        // getSession() pending forever and blocking every subsequent auth call —
-        // including signInWithPassword — behind the same lock.
+        // No-op lock bypasses navigator.locks deadlock on iOS Safari private mode.
         lock: (name, acquireTimeout, fn) => fn(),
       },
     });
-  }
-  return _sbClient;
+    return _sbClient;
+  })();
+  return _sbClientPromise;
+}
+
+// Raw-fetch helpers — used by every hot path so we never touch supabase-js.
+function _sbProjectRef() {
+  return _sbConfig.SUPABASE_URL?.match(/https:\/\/([^.]+)\./)?.[1] || null;
+}
+function _sbStorageKey() {
+  const ref = _sbProjectRef();
+  return ref ? `sb-${ref}-auth-token` : null;
+}
+function _readSession() {
+  try {
+    const k = _sbStorageKey();
+    if (!k) return null;
+    const raw = localStorage.getItem(k);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    // Normalize both shapes: current flat shape and legacy { currentSession }
+    if (s?.currentSession) return s.currentSession;
+    return s || null;
+  } catch { return null; }
+}
+function _writeSession(s) {
+  try {
+    const k = _sbStorageKey();
+    if (!k || !s) return;
+    localStorage.setItem(k, JSON.stringify(s));
+  } catch {}
+}
+function _clearSession() {
+  try {
+    const k = _sbStorageKey();
+    if (k) localStorage.removeItem(k);
+  } catch {}
+}
+async function _withTimeout(p, ms) {
+  return Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+  ]);
+}
+async function _sbRefreshToken(refreshToken) {
+  if (!refreshToken) return null;
+  const ctrl = new AbortController();
+  const killer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(`${_sbConfig.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': _sbConfig.SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${_sbConfig.SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+      signal: ctrl.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(killer);
+    if (!res.ok) return null;
+    const body = await res.json();
+    const session = {
+      access_token: body.access_token,
+      refresh_token: body.refresh_token,
+      expires_at: Math.floor(Date.now() / 1000) + (body.expires_in || 3600),
+      expires_in: body.expires_in,
+      token_type: body.token_type || 'bearer',
+      user: body.user,
+    };
+    _writeSession(session);
+    return session;
+  } catch { clearTimeout(killer); return null; }
+}
+async function _sbFetchProfileRaw(accessToken, userId) {
+  if (!accessToken || !userId) return null;
+  const ctrl = new AbortController();
+  const killer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const res = await fetch(`${_sbConfig.SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=*`, {
+      headers: {
+        'apikey': _sbConfig.SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      signal: ctrl.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(killer);
+    if (!res.ok) return null;
+    const arr = await res.json();
+    return arr[0] || null;
+  } catch { clearTimeout(killer); return null; }
+}
+// Parse OAuth callback (Google) from URL hash. Supabase normally does this via
+// detectSessionInUrl; we replicate the minimum here so we don't need the library
+// on the first paint path.
+function _consumeOAuthHash() {
+  try {
+    const hash = window.location.hash || '';
+    if (!hash.includes('access_token=')) return null;
+    const params = new URLSearchParams(hash.replace(/^#\/?/, ''));
+    const access_token = params.get('access_token');
+    const refresh_token = params.get('refresh_token');
+    const expires_in = parseInt(params.get('expires_in') || '3600', 10);
+    if (!access_token) return null;
+    const session = {
+      access_token, refresh_token,
+      expires_at: Math.floor(Date.now() / 1000) + expires_in,
+      expires_in,
+      token_type: params.get('token_type') || 'bearer',
+      user: null,
+    };
+    _writeSession(session);
+    // Strip the hash so we don't re-consume it on reload.
+    history.replaceState(null, '', window.location.pathname + window.location.search + '#/');
+    return session;
+  } catch { return null; }
 }
 
 const Auth = {
@@ -268,7 +483,29 @@ const Auth = {
   // Use from inside the onAuthStateChange('SIGNED_OUT') handler to avoid an
   // infinite loop (signOut → SIGNED_OUT → clear → signOut → ...).
   clearLocal() { localStorage.removeItem(this.KEY); },
-  clear() { localStorage.removeItem(this.KEY); const sb = getSbClient(); if (sb) sb.auth.signOut(); },
+  clear() {
+    localStorage.removeItem(this.KEY);
+    _clearSession();
+    // Best-effort signOut to invalidate the refresh token server-side. Raw fetch
+    // with a hard timeout — we never block UI on this.
+    try {
+      const cfg = window.APP_CONFIG || {};
+      if (!cfg.SUPABASE_URL) return;
+      const token = (function () { try { return _readSession()?.access_token; } catch { return null; } })();
+      if (!token) return;
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 3000);
+      fetch(`${cfg.SUPABASE_URL}/auth/v1/logout`, {
+        method: 'POST',
+        headers: {
+          'apikey': cfg.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${token}`,
+        },
+        signal: ctrl.signal,
+        cache: 'no-store',
+      }).catch(() => {});
+    } catch {}
+  },
 
   async login(email, password) {
     // Direct REST call to GoTrue, bypassing supabase-js entirely. Any stale
@@ -356,32 +593,85 @@ const Auth = {
   },
 
   async signup(email, password, name) {
-    const sb = getSbClient();
-    if (!sb) throw new Error('מערכת האימות לא זמינה כרגע');
-    const { data, error } = await sb.auth.signUp({
-      email,
-      password,
-      options: { data: { username: name } },
-    });
-    if (error) {
-      if (error.message.includes('already registered')) throw new Error('שגיאה בהרשמה. אם כבר יש לך חשבון, נסה להתחבר.');
-      throw new Error(error.message);
+    // Raw fetch to /auth/v1/signup — keeps supabase-js off the critical path.
+    const cfg = window.APP_CONFIG || {};
+    if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) {
+      throw new Error('מערכת האימות לא זמינה כרגע');
     }
-    // Create profile row
-    if (data.user) {
-      const trialExpiry = new Date(Date.now() + 14 * 86400000).toISOString();
-      await sb.from('profiles').upsert({
-        id: data.user.id,
-        email,
-        display_name: name,
-        plan: 'trial',
-        is_admin: false,
-        trial_started_at: new Date().toISOString(),
-        plan_expires_at: trialExpiry,
-      }, { onConflict: 'id' });
+    const ctrl = new AbortController();
+    const killer = setTimeout(() => ctrl.abort(), 15000);
+    let res;
+    try {
+      res = await fetch(`${cfg.SUPABASE_URL}/auth/v1/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': cfg.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          data: { username: name },
+        }),
+        signal: ctrl.signal,
+        cache: 'no-store',
+      });
+    } catch (e) {
+      clearTimeout(killer);
+      if (e.name === 'AbortError') throw new Error('שרת האימות לא הגיב — נסה שוב');
+      throw new Error('שגיאת רשת — בדוק חיבור לאינטרנט');
+    }
+    clearTimeout(killer);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = (body.error_description || body.msg || body.error || '').toLowerCase();
+      if (msg.includes('already') || msg.includes('registered')) {
+        throw new Error('שגיאה בהרשמה. אם כבר יש לך חשבון, נסה להתחבר.');
+      }
+      throw new Error(body.error_description || body.msg || 'שגיאת הרשמה');
+    }
+    // Persist session if signup returned tokens (confirm-off flow).
+    const userId = body.user?.id || body.id;
+    if (body.access_token) {
+      const session = {
+        access_token: body.access_token,
+        refresh_token: body.refresh_token,
+        expires_at: Math.floor(Date.now() / 1000) + (body.expires_in || 3600),
+        expires_in: body.expires_in,
+        token_type: body.token_type || 'bearer',
+        user: body.user,
+      };
+      _writeSession(session);
+      // Best-effort profile upsert (raw fetch, 5s cap).
+      try {
+        const trialExpiry = new Date(Date.now() + 14 * 86400000).toISOString();
+        const profCtrl = new AbortController();
+        setTimeout(() => profCtrl.abort(), 5000);
+        await fetch(`${cfg.SUPABASE_URL}/rest/v1/profiles`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': cfg.SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${body.access_token}`,
+            'Prefer': 'resolution=merge-duplicates,return=minimal',
+          },
+          body: JSON.stringify({
+            id: userId,
+            email,
+            display_name: name,
+            plan: 'trial',
+            is_admin: false,
+            trial_started_at: new Date().toISOString(),
+            plan_expires_at: trialExpiry,
+          }),
+          signal: profCtrl.signal,
+          cache: 'no-store',
+        });
+      } catch {}
     }
     const u = {
-      id: data.user?.id,
+      id: userId,
       email,
       name: name || email.split('@')[0],
       plan: 'trial',
@@ -393,7 +683,9 @@ const Auth = {
   },
 
   async loginWithGoogle() {
-    const sb = getSbClient();
+    // Lazy-load supabase-js only when Google OAuth is actually requested — this
+    // is a user interaction, so paying the dynamic-import cost is acceptable.
+    const sb = await getSbClient();
     if (!sb) throw new Error('מערכת האימות לא זמינה כרגע');
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
@@ -403,30 +695,48 @@ const Auth = {
   },
 
   async _fetchProfile(userId) {
-    const sb = getSbClient();
-    if (!sb) return null;
-    const { data } = await sb.from('profiles').select('*').eq('id', userId).single();
-    return data;
+    // Pure raw fetch — no library dependency.
+    const s = _readSession();
+    return _sbFetchProfileRaw(s?.access_token, userId);
   },
 
-  // Restore session on page load (check Supabase session)
+  // Restore session on page load — pure raw fetch, never touches supabase-js.
   async restoreSession() {
-    const sb = getSbClient();
-    if (!sb) return this.current();
-    // 10s cap — if getSession() hangs (common on mobile with flaky network),
-    // we must not leave the user stuck on a blank/loading page indefinitely.
-    const withTimeout = (p, ms) => Promise.race([
-      p,
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
-    ]);
-    let session;
-    try {
-      const { data } = await withTimeout(sb.auth.getSession(), 10000);
-      session = data?.session;
-    } catch { return this.current(); }
-    if (!session) { this.clear(); return null; }
+    // Consume OAuth hash fragment if we just came back from a Google redirect.
+    _consumeOAuthHash();
+    let session = _readSession();
+    if (!session) { return this.current(); }
+    // If token is expired or about to expire, refresh via raw fetch.
+    const now = Math.floor(Date.now() / 1000);
+    if ((session.expires_at || 0) < now + 60) {
+      const refreshed = await _withTimeout(
+        _sbRefreshToken(session.refresh_token),
+        8000,
+      ).catch(() => null);
+      if (refreshed) session = refreshed;
+      else {
+        // Refresh failed — fall back to whatever we have in localStorage.
+        return this.current();
+      }
+    }
+    // Fetch profile with raw fetch (5s hard cap).
     let profile = null;
-    try { profile = await withTimeout(this._fetchProfile(session.user.id), 5000); } catch {}
+    try {
+      profile = await _withTimeout(
+        _sbFetchProfileRaw(session.access_token, session.user?.id),
+        5000,
+      );
+    } catch {}
+    if (!session.user) {
+      // OAuth callback returned tokens but not a user object — decode it from
+      // the JWT payload (base64 URL-safe, no verification needed client-side).
+      try {
+        const payload = JSON.parse(atob(session.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        session.user = { id: payload.sub, email: payload.email, user_metadata: payload.user_metadata || {} };
+        _writeSession(session);
+      } catch {}
+    }
+    if (!session.user) return this.current();
     let daysLeft = null;
     if (profile?.plan === 'trial' && profile?.plan_expires_at) {
       daysLeft = Math.max(0, Math.ceil((new Date(profile.plan_expires_at) - Date.now()) / 86400000));
@@ -434,7 +744,7 @@ const Auth = {
     const u = {
       id: session.user.id,
       email: session.user.email,
-      name: profile?.display_name || session.user.user_metadata?.username || session.user.email.split('@')[0],
+      name: profile?.display_name || session.user.user_metadata?.username || session.user.email?.split('@')[0],
       plan: profile?.plan || 'free',
       isAdmin: profile?.is_admin || false,
       daysLeft,
@@ -445,33 +755,19 @@ const Auth = {
   },
 
   async getToken() {
-    // Read the access token directly from the localStorage key supabase-js
-    // writes to, bypassing sb.auth.getSession(). getSession() can hang in some
-    // browser states (orphaned navigator.locks, pending refresh-token network
-    // calls) and this is the path every API call goes through — any hang here
-    // freezes the dashboard and every subsequent screen.
+    // Pure raw-fetch refresh — NO supabase-js, NO navigator.locks, NO hang risk.
+    // This is on the hot path for every /api/* call, so it must never block.
     try {
-      const cfg = window.APP_CONFIG || {};
-      const ref = cfg.SUPABASE_URL?.match(/https:\/\/([^.]+)\./)?.[1];
-      if (!ref) return null;
-      const raw = localStorage.getItem(`sb-${ref}-auth-token`);
-      if (!raw) return null;
-      const session = JSON.parse(raw);
-      const token = session?.access_token || session?.currentSession?.access_token || null;
+      const session = _readSession();
+      const token = session?.access_token;
       if (!token) return null;
-      // If the token is expired, fall back to supabase-js (which handles refresh),
-      // but with a 5s hard cap via Promise.race so we never block the UI.
-      const expiresAt = session?.expires_at || session?.currentSession?.expires_at || 0;
+      const expiresAt = session?.expires_at || 0;
       if (expiresAt && expiresAt * 1000 < Date.now() + 10000) {
-        const sb = getSbClient();
-        if (!sb) return token;
-        try {
-          const refreshed = await Promise.race([
-            sb.auth.getSession().then(r => r.data?.session?.access_token || null),
-            new Promise((res) => setTimeout(() => res(null), 5000)),
-          ]);
-          return refreshed || token;
-        } catch { return token; }
+        const refreshed = await _withTimeout(
+          _sbRefreshToken(session.refresh_token),
+          5000,
+        ).catch(() => null);
+        return refreshed?.access_token || token;
       }
       return token;
     } catch { return null; }
@@ -654,7 +950,57 @@ const Progress = {
     try { return JSON.parse(localStorage.getItem(key)) || {}; }
     catch { return { attempts: [], reviewQueue: [], batches: [] }; }
   },
-  save(uid, data, courseId) { localStorage.setItem(this.KEY(uid, courseId), JSON.stringify(data)); },
+  // Maximum number of attempts to keep per course. Beyond this we drop the
+  // oldest entries on save. iOS Safari private mode has a ~5MB localStorage
+  // quota and a heavy user could otherwise hit it and fail every subsequent
+  // save silently.
+  MAX_ATTEMPTS_PER_COURSE: 1000,
+  MAX_BATCHES_PER_COURSE: 200,
+  _trim(data) {
+    if (data.attempts && data.attempts.length > this.MAX_ATTEMPTS_PER_COURSE) {
+      data.attempts = data.attempts.slice(-this.MAX_ATTEMPTS_PER_COURSE);
+    }
+    if (data.batches && data.batches.length > this.MAX_BATCHES_PER_COURSE) {
+      data.batches = data.batches.slice(-this.MAX_BATCHES_PER_COURSE);
+    }
+    return data;
+  },
+  save(uid, data, courseId) {
+    const key = this.KEY(uid, courseId);
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      if (e && (e.name === 'QuotaExceededError' || e.code === 22 || /quota/i.test(e.message || ''))) {
+        // Trim progressively: first to the configured max, then half, then 1/4.
+        const trims = [1, 0.5, 0.25];
+        for (const factor of trims) {
+          const trimmed = {
+            ...data,
+            attempts: (data.attempts || []).slice(-Math.floor(this.MAX_ATTEMPTS_PER_COURSE * factor)),
+            batches: (data.batches || []).slice(-Math.floor(this.MAX_BATCHES_PER_COURSE * factor)),
+          };
+          try {
+            localStorage.setItem(key, JSON.stringify(trimmed));
+            if (typeof toast === 'function') {
+              toast('זיכרון מקומי מתמלא — נמחקו נתוני תרגול ישנים', '');
+            }
+            if (window.__reportClientError) {
+              window.__reportClientError('quota-trim', {
+                msg: `Progress localStorage quota hit — trimmed to ${factor * 100}%`,
+              });
+            }
+            return;
+          } catch {}
+        }
+        // Last resort — silently drop the write. Never throw.
+        if (window.__reportClientError) {
+          window.__reportClientError('quota-fail', { msg: 'Progress.save: quota even at 25% trim' });
+        }
+        return;
+      }
+      throw e;
+    }
+  },
   recordAttempt(uid, attempt, courseId) {
     const cid = courseId || state.course?.id || 'tohna1';
     const p = this.load(uid, cid);
@@ -1672,12 +2018,35 @@ function renderAuth(signupMode = false) {
       toast('הזן כתובת אימייל תקינה בשדה למעלה ואז לחץ שוב.', '');
       return;
     }
-    const _sb = getSbClient();
-    if (_sb) {
-      const { error } = await _sb.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin + '/#/settings?tab=profile',
-      });
-      if (error) { toast('שגיאה: ' + error.message, 'error'); return; }
+    // Raw fetch to /auth/v1/recover — no library dependency.
+    const cfg = window.APP_CONFIG || {};
+    if (cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY) {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 10000);
+      try {
+        const res = await fetch(`${cfg.SUPABASE_URL}/auth/v1/recover`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': cfg.SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            email,
+            options: { redirectTo: window.location.origin + '/#/settings?tab=profile' },
+          }),
+          signal: ctrl.signal,
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          toast('שגיאה: ' + (body.error_description || body.msg || 'לא ניתן לשלוח קישור'), 'error');
+          return;
+        }
+      } catch (e) {
+        toast('שגיאת רשת — נסה שוב', 'error');
+        return;
+      }
     }
     toast('קישור לאיפוס סיסמה נשלח ל-' + email, 'success');
   });
@@ -3081,6 +3450,9 @@ function startQuiz({ questions, timerSeconds, examMode }) {
     batchId: 'b_' + Date.now(),
     startedAt: Date.now(),
   };
+  // Prefetch per-exam explanation shards in the background so reveal() is
+  // instant. Non-blocking — the quiz can start rendering immediately.
+  try { Data.prefetchExplanationsForQuestions(questions); } catch {}
   navigate(`/course/${state.course?.id || 'tohna1'}/quiz`);
 }
 
@@ -3178,8 +3550,20 @@ function renderQuiz() {
   // Track question start time
   if (!state.quiz.questionStartedAt[q.id]) state.quiz.questionStartedAt[q.id] = Date.now();
 
-  // Show solution if already revealed (and not in exam mode)
-  if (state.quiz.revealed[q.id] && !state.quiz.examMode) showSolutionPanel(q);
+  // Show solution if already revealed (and not in exam mode). The per-exam
+  // explanation shard may not be loaded yet on direct navigation — we fire the
+  // fetch and re-render the panel when it arrives.
+  if (state.quiz.revealed[q.id] && !state.quiz.examMode) {
+    showSolutionPanel(q);
+    if (q.examId && !Data.explanations?.[q.id]) {
+      Data.ensureExplanationsForExam(q.examId).then(() => {
+        // Only re-render if we're still on this question
+        if (state.quiz && state.quiz.questions[state.quiz.idx]?.id === q.id) {
+          showSolutionPanel(q);
+        }
+      }).catch(() => {});
+    }
+  }
 
   renderQuizNav();
 }
@@ -3236,10 +3620,14 @@ function selectAnswer(i) {
   renderQuizNav();
 }
 
-function revealSolution() {
+async function revealSolution() {
   if (state.quiz.examMode) return; // disabled in exam mode
   const q = state.quiz.questions[state.quiz.idx];
   if (state.quiz.revealed[q.id]) return;
+  // Ensure the per-exam explanation shard is loaded. The background prefetch
+  // at quiz start usually covers this, so the await resolves instantly from
+  // cache; on the first click it may wait ~100ms for the network.
+  try { await Data.ensureExplanationsForExam(q.examId); } catch {}
   const data = Data.reveal(q.id);
   state.quiz.revealed[q.id] = true;
   state.quiz.correctIdxByQ[q.id] = data.correctIdx;
@@ -4748,11 +5136,27 @@ const StudyStore = {
     const all = this.list();
     const idx = all.findIndex(p => p.id === pack.id);
     if (idx >= 0) all[idx] = pack; else all.unshift(pack);
-    localStorage.setItem(this.KEY, JSON.stringify(all));
+    try {
+      localStorage.setItem(this.KEY, JSON.stringify(all));
+    } catch (e) {
+      if (e && (e.name === 'QuotaExceededError' || e.code === 22)) {
+        // Drop the oldest pack and retry once.
+        const trimmed = all.slice(0, Math.max(1, Math.floor(all.length * 0.75)));
+        try {
+          localStorage.setItem(this.KEY, JSON.stringify(trimmed));
+          if (typeof toast === 'function') toast('זיכרון מקומי מתמלא — נמחקו חבילות ישנות', '');
+        } catch {}
+        if (window.__reportClientError) {
+          window.__reportClientError('quota-trim', { msg: 'StudyStore.save quota hit' });
+        }
+        return;
+      }
+      throw e;
+    }
   },
   remove(id) {
     const all = this.list().filter(p => String(p.id) !== String(id));
-    localStorage.setItem(this.KEY, JSON.stringify(all));
+    try { localStorage.setItem(this.KEY, JSON.stringify(all)); } catch {}
   },
   usedTotal() {
     return parseInt(localStorage.getItem(this.USED_KEY) || '0', 10) || 0;
@@ -5465,45 +5869,72 @@ function updateSelfTestResult(answers) {
     }).catch(() => {});
   }
 
-  // Listen for Supabase auth state changes (e.g., OAuth redirect back)
-  const _sbBoot = getSbClient();
-  if (_sbBoot) {
-    _sbBoot.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        const profile = await Auth._fetchProfile(session.user.id);
-        const u = {
-          id: session.user.id,
-          email: session.user.email,
-          name: profile?.display_name || session.user.user_metadata?.username || session.user.email.split('@')[0],
-          plan: profile?.plan || 'free',
-          isAdmin: profile?.is_admin || false,
-        };
-        Auth.save(u);
-        state.user = u;
-        // Create profile if it doesn't exist (first Google login → start trial)
-        if (!profile) {
-          const now = new Date();
-          const expires = new Date(now); expires.setDate(expires.getDate() + 14);
-          await getSbClient().from('profiles').upsert({
+  // Defer supabase-js auth state subscription until AFTER first paint. The
+  // library is dynamically imported (~80KB), so we don't want to block page
+  // interactivity waiting for it. If it never loads, the app still works —
+  // _consumeOAuthHash() in restoreSession() already handles the OAuth redirect
+  // back, and login/signup/getToken go through raw fetch.
+  const _attachAuthSubscription = async () => {
+    try {
+      const sb = await getSbClient();
+      if (!sb) return;
+      sb.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          const profile = await Auth._fetchProfile(session.user.id).catch(() => null);
+          const u = {
             id: session.user.id,
             email: session.user.email,
-            display_name: u.name,
-            plan: 'trial',
-            plan_expires_at: expires.toISOString(),
-            trial_started_at: now.toISOString(),
-            trial_used: false,
-            is_admin: false,
-          }, { onConflict: 'id' });
-          u.plan = 'trial';
+            name: profile?.display_name || session.user.user_metadata?.username || session.user.email.split('@')[0],
+            plan: profile?.plan || 'free',
+            isAdmin: profile?.is_admin || false,
+          };
+          Auth.save(u);
+          state.user = u;
+          // Create profile if missing (first Google login → start trial).
+          if (!profile) {
+            const now = new Date();
+            const expires = new Date(now); expires.setDate(expires.getDate() + 14);
+            try {
+              await fetch(`${_sbConfig.SUPABASE_URL}/rest/v1/profiles`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'apikey': _sbConfig.SUPABASE_ANON_KEY,
+                  'Authorization': `Bearer ${session.access_token}`,
+                  'Prefer': 'resolution=merge-duplicates,return=minimal',
+                },
+                body: JSON.stringify({
+                  id: session.user.id,
+                  email: session.user.email,
+                  display_name: u.name,
+                  plan: 'trial',
+                  plan_expires_at: expires.toISOString(),
+                  trial_started_at: now.toISOString(),
+                  trial_used: false,
+                  is_admin: false,
+                }),
+                cache: 'no-store',
+              });
+            } catch {}
+            u.plan = 'trial';
+          }
+          if (getRoute() === '/' || getRoute().startsWith('/login')) {
+            navigate('/dashboard');
+          }
+        } else if (event === 'SIGNED_OUT') {
+          Auth.clearLocal();
+          state.user = null;
+          navigate('/');
         }
-        if (getRoute() === '/' || getRoute().startsWith('/login')) {
-          navigate('/dashboard');
-        }
-      } else if (event === 'SIGNED_OUT') {
-        Auth.clearLocal();
-        state.user = null;
-        navigate('/');
-      }
-    });
+      });
+    } catch (e) {
+      console.warn('[auth] subscription attach failed:', e?.message || e);
+    }
+  };
+  // Schedule after first paint: requestIdleCallback if available, else setTimeout.
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(_attachAuthSubscription, { timeout: 3000 });
+  } else {
+    setTimeout(_attachAuthSubscription, 1500);
   }
 })();
