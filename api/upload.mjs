@@ -613,7 +613,7 @@ For EACH MCQ return:
 {
   "n": question number (integer as printed),
   "page": PDF page number (1-based integer),
-  "y_top": percentage from top where the "שאלה N" header starts (0-100),
+  "y_top": percentage from top where the "שאלה N" LABEL LINE starts — must be AT or ABOVE the top edge of the "שאלה X" text itself, not below it. If unsure, subtract ~2% from your estimate to ensure the label is included. (0-100),
   "y_bottom": percentage from top where the LAST option ends (0-100),
   "correct": correct answer index (1-4) if known, else null,
   "page_w": page width in points (usually 595),
@@ -672,7 +672,7 @@ function normalizeGeminiMcqs(raw) {
       section: String(q.n),
       number: typeof q.n === 'number' ? q.n : parseInt(q.n, 10),
       page: q.page || 2,
-      yTop: ((q.y_top ?? 0) / 100) * (q.page_h || 842),
+      yTop: Math.max(0, ((q.y_top ?? 0) / 100) * (q.page_h || 842) - 25),
       yBottom: ((q.y_bottom ?? Math.min((q.y_top ?? 0) + 25, 100)) / 100) * (q.page_h || 842),
       pageWidth: q.page_w || 595,
       pageHeight: q.page_h || 842,
