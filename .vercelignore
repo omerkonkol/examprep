@@ -12,4 +12,11 @@ data/app.db-*
 .DS_Store
 docs
 BUSINESS_PLAN.md
+MARKETING_PLAN.html
 README.md
+supabase/
+scripts/migrate-*.mjs
+scripts/setup-*.mjs
+scripts/run-schema-and-verify.mjs
+scripts/migrate-tohna1.mjs
+package-server.json
