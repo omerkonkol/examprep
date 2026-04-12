@@ -439,10 +439,36 @@ const Auth = {
   },
 
   async getToken() {
-    const sb = getSbClient();
-    if (!sb) return null;
-    const { data: { session } } = await sb.auth.getSession();
-    return session?.access_token || null;
+    // Read the access token directly from the localStorage key supabase-js
+    // writes to, bypassing sb.auth.getSession(). getSession() can hang in some
+    // browser states (orphaned navigator.locks, pending refresh-token network
+    // calls) and this is the path every API call goes through — any hang here
+    // freezes the dashboard and every subsequent screen.
+    try {
+      const cfg = window.APP_CONFIG || {};
+      const ref = cfg.SUPABASE_URL?.match(/https:\/\/([^.]+)\./)?.[1];
+      if (!ref) return null;
+      const raw = localStorage.getItem(`sb-${ref}-auth-token`);
+      if (!raw) return null;
+      const session = JSON.parse(raw);
+      const token = session?.access_token || session?.currentSession?.access_token || null;
+      if (!token) return null;
+      // If the token is expired, fall back to supabase-js (which handles refresh),
+      // but with a 5s hard cap via Promise.race so we never block the UI.
+      const expiresAt = session?.expires_at || session?.currentSession?.expires_at || 0;
+      if (expiresAt && expiresAt * 1000 < Date.now() + 10000) {
+        const sb = getSbClient();
+        if (!sb) return token;
+        try {
+          const refreshed = await Promise.race([
+            sb.auth.getSession().then(r => r.data?.session?.access_token || null),
+            new Promise((res) => setTimeout(() => res(null), 5000)),
+          ]);
+          return refreshed || token;
+        } catch { return token; }
+      }
+      return token;
+    } catch { return null; }
   },
 
   update(patch) {
