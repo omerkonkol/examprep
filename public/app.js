@@ -835,8 +835,12 @@ function renderRoute() {
     $app.innerHTML = `<div style="text-align:center;padding:60px 20px;direction:rtl;">
       <h2>משהו השתבש</h2>
       <p style="margin:16px 0;color:#666;">אירעה שגיאה בטעינת הדף.</p>
-      <button onclick="location.hash='#/dashboard';location.reload()" class="btn btn-primary">חזרה לדף הבית</button>
+      <button id="error-recover-btn" class="btn btn-primary">חזרה לדף הבית</button>
     </div>`;
+    document.getElementById('error-recover-btn')?.addEventListener('click', () => {
+      location.hash = '#/dashboard';
+      location.reload();
+    });
   }
 }
 
