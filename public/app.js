@@ -337,9 +337,20 @@ const Auth = {
   async restoreSession() {
     const sb = getSbClient();
     if (!sb) return this.current();
-    const { data: { session } } = await sb.auth.getSession();
+    // 10s cap — if getSession() hangs (common on mobile with flaky network),
+    // we must not leave the user stuck on a blank/loading page indefinitely.
+    const withTimeout = (p, ms) => Promise.race([
+      p,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+    ]);
+    let session;
+    try {
+      const { data } = await withTimeout(sb.auth.getSession(), 10000);
+      session = data?.session;
+    } catch { return this.current(); }
     if (!session) { this.clear(); return null; }
-    const profile = await this._fetchProfile(session.user.id);
+    let profile = null;
+    try { profile = await withTimeout(this._fetchProfile(session.user.id), 5000); } catch {}
     let daysLeft = null;
     if (profile?.plan === 'trial' && profile?.plan_expires_at) {
       daysLeft = Math.max(0, Math.ceil((new Date(profile.plan_expires_at) - Date.now()) / 86400000));

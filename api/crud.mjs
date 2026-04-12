@@ -48,17 +48,22 @@ const QUOTAS = {
   education: { pdfs_total: -1, pdfs_per_day: 50, pdfs_per_month: 500, ai_questions_per_day: 200, ai_questions_per_month: 2000, study_packs_total: -1, study_packs_per_month: -1, courses: -1, storage_mb: 20480, max_pdf_size_mb: 50, max_pages_per_pdf: 150 },
 };
 
-async function getUserProfile(userId) {
+async function getUserProfile(userId, userDb) {
   const admin = getAdmin();
-  if (!admin) return null;
-  try { await admin.rpc('reset_user_quotas_if_needed', { p_user_id: userId }); } catch {}
-  const { data, error } = await admin.from('profiles').select('*').eq('id', userId).single();
-  if (error) return null;
-  if (data.plan === 'trial' && data.plan_expires_at && new Date(data.plan_expires_at) < new Date()) {
-    await admin.from('profiles').update({ plan: 'free', trial_used: true }).eq('id', userId);
-    data.plan = 'free'; data.trial_used = true;
+  if (admin) {
+    try { await admin.rpc('reset_user_quotas_if_needed', { p_user_id: userId }); } catch {}
+    const { data, error } = await admin.from('profiles').select('*').eq('id', userId).single();
+    if (error) return null;
+    if (data.plan === 'trial' && data.plan_expires_at && new Date(data.plan_expires_at) < new Date()) {
+      await admin.from('profiles').update({ plan: 'free', trial_used: true }).eq('id', userId);
+      data.plan = 'free'; data.trial_used = true;
+    }
+    return data;
   }
-  return data;
+  // Fallback: use the user's own RLS-scoped client (skips quota reset and trial expiry enforcement)
+  if (!userDb) return null;
+  const { data } = await userDb.from('profiles').select('*').eq('id', userId).single();
+  return data || null;
 }
 
 function publicProfile(p) {
@@ -140,7 +145,7 @@ export default async function handler(req, res) {
 
   switch (m.r) {
     case 'me': {
-      const profile = await getUserProfile(auth.userId);
+      const profile = await getUserProfile(auth.userId, auth.db);
       if (!profile) return res.status(404).json({ error: 'profile not found' });
       return res.json({ profile: publicProfile(profile), quotas: QUOTAS[profile.plan || 'free'] });
     }
@@ -158,7 +163,7 @@ export default async function handler(req, res) {
       if (color != null && (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)))
         return res.status(400).json({ error: 'צבע לא תקין' });
 
-      const profile = await getUserProfile(auth.userId);
+      const profile = await getUserProfile(auth.userId, auth.db);
       if (profile) {
         const quota = QUOTAS[profile.plan || 'free'];
         const { count, error: ce } = await auth.db.from('ep_courses').select('id', { count: 'exact', head: true });
@@ -287,7 +292,7 @@ export default async function handler(req, res) {
       return res.json({ ok: true });
     }
     case 'admin-switch-plan': {
-      const profile = await getUserProfile(auth.userId);
+      const profile = await getUserProfile(auth.userId, auth.db);
       if (!profile || !profile.is_admin) return res.status(403).json({ error: 'אין הרשאות מנהל' });
       const { plan: newPlan } = req.body || {};
       if (!QUOTAS[newPlan]) return res.status(400).json({ error: `תוכנית לא תקינה` });
