@@ -13,7 +13,7 @@
   <meta property="og:image" content="/public/images/hero.webp" />
   <meta property="og:type" content="website" />
   <link rel="manifest" href="/public/manifest.json" />
-  <link rel="stylesheet" href="/public/styles.css?v=20260412-4" />
+  <link rel="stylesheet" href="/public/styles.css?v=20260412-5" />
   <script src="/public/config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -2019,10 +2019,31 @@
     })();
   </script>
 
-  <script src="/public/app.js?v=20260412-4" type="module"></script>
+  <script src="/public/app.js?v=20260412-5" type="module"></script>
   <script>
+    // SW cleanup: unregister any existing service worker and delete all caches.
+    // Old versions had a network-first fetch handler that broke mobile on slow
+    // networks (returned undefined on cache miss + network fail). Until we have
+    // a reliable offline story, we run the browser's native network stack.
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/public/sw.js').catch(function(){});
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        var reloadAfter = false;
+        for (var i = 0; i < regs.length; i++) {
+          regs[i].unregister();
+          reloadAfter = true;
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(keys) {
+            for (var i = 0; i < keys.length; i++) caches.delete(keys[i]);
+          });
+        }
+        // One-shot reload if we unregistered an old SW, so the current page
+        // stops being controlled by it. sessionStorage guards against a loop.
+        if (reloadAfter && !sessionStorage.getItem('sw_cleaned_v1')) {
+          sessionStorage.setItem('sw_cleaned_v1', '1');
+          location.reload();
+        }
+      }).catch(function(){});
     }
     // Capture beforeinstallprompt for later use
     window.__pwaPrompt = null;
