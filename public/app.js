@@ -2753,7 +2753,7 @@ function showExamManagementModal(courseId) {
             <div style="font-weight:600;font-size:14px;">${escapeHtml(ex.label)}</div>
             <div style="font-size:12px;color:var(--text-muted);">${ex.questions.length} שאלות</div>
           </div>
-          <button class="em-hide-btn" data-exam-id="${ex.id}" title="הסתר מבחן" style="flex-shrink:0;border:1px solid var(--border);background:#fff;color:var(--text-muted);border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px;font-family:inherit;">👁 הסתר</button>
+          <button class="em-hide-btn" data-exam-id="${ex.id}" title="הסר מהרשימה" style="flex-shrink:0;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px;font-family:inherit;">הסר</button>
           <svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
         <div class="em-questions-grid" style="display:none;padding:0 14px 12px;"></div>
@@ -2762,8 +2762,8 @@ function showExamManagementModal(courseId) {
 
     // Show hidden count with restore option
     if (hidden.length) {
-      html += `<div style="text-align:center;padding:12px;">
-        <button id="em-restore-hidden" class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--text-muted);">👁 הצג ${hidden.length} מבחנים מוסתרים</button>
+      html += `<div style="text-align:center;padding:12px;border-top:1px solid var(--border-soft);">
+        <button id="em-restore-hidden" class="btn btn-ghost btn-sm" style="font-size:13px;">↩ שחזר ${hidden.length} מבחנים מוסתרים</button>
       </div>`;
     }
 
@@ -2774,11 +2774,18 @@ function showExamManagementModal(courseId) {
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const id = btn.dataset.examId;
-        const h = getHiddenExams();
-        h.push(id);
-        setHiddenExams(h);
-        toast('המבחן הוסתר', 'success');
-        renderBuiltinExams(document.getElementById('em-sort').value);
+        showConfirmModal({
+          title: 'הסרת מבחן מהרשימה',
+          body: 'המבחן יוסר מהרשימה שלך. ניתן לשחזרו בכל עת דרך "שחזר מוסתרים".',
+          confirmLabel: 'הסר', danger: true,
+          onConfirm: async () => {
+            const h = getHiddenExams();
+            h.push(id);
+            setHiddenExams(h);
+            toast('המבחן הוסר מהרשימה — לחץ "שחזר מוסתרים" להחזרתו', 'success', 6000);
+            renderBuiltinExams(document.getElementById('em-sort').value);
+          },
+        });
       });
     });
 
