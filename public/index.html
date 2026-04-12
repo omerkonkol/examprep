@@ -2008,30 +2008,7 @@
       <button class="btn btn-primary btn-sm" id="cookie-accept">הבנתי</button>
     </div>
   </div>
-  <script>
-    (function() {
-      if (!localStorage.getItem('cookie-consent')) {
-        var b = document.getElementById('cookie-banner');
-        if (b) b.hidden = false;
-        document.getElementById('cookie-accept').addEventListener('click', function() {
-          localStorage.setItem('cookie-consent', '1');
-          b.hidden = true;
-        });
-      }
-    })();
-  </script>
-
-  <script src="/public/app.js?v=20260411-34" type="module"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/public/sw.js').catch(function(){});
-    }
-    // Capture beforeinstallprompt for later use
-    window.__pwaPrompt = null;
-    window.addEventListener('beforeinstallprompt', function(e) {
-      e.preventDefault();
-      window.__pwaPrompt = e;
-    });
-  </script>
+  <script src="/public/app.js?v=20260412-1" type="module"></script>
+  <script src="/public/bootstrap.js?v=20260412-1" defer></script>
 </body>
 </html>
