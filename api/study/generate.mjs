@@ -10,6 +10,8 @@
 // GEMINI_API_KEY must be set in Vercel env vars (free tier OK).
 // =====================================================
 
+import { checkIpThrottle } from '../../lib/ipThrottle.mjs';
+
 export const config = {
   api: { bodyParser: false },
   maxDuration: 60,
@@ -283,15 +285,31 @@ async function callGemini(summaryText, title) {
 }
 
 // ----- Main handler ----------------------------------------------------------
+// Restrict to our own origin(s). Wildcard CORS lets any site's JS burn our Gemini quota via a logged-in user's browser.
+const ALLOWED_ORIGINS = new Set([
+  'https://try-examprep.com',
+  'https://www.try-examprep.com',
+  'https://examprep.vercel.app',
+]);
+
 export default async function handler(req, res) {
-  // CORS for same-origin
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Study pack generation is our most token-heavy endpoint — strict limit
+  const throttle = await checkIpThrottle(req, 'study_generate', { maxDay: 8, maxWeek: 25, blockHours: 24 });
+  if (!throttle.allowed) {
+    return res.status(429).json({ error: 'הגעת למכסת הבקשות. נסה שוב מאוחר יותר.', reason: throttle.reason });
   }
 
   try {
