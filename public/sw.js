@@ -1,30 +1,18 @@
-const CACHE_NAME = 'examprep-v2';
-
-self.addEventListener('install', () => {
-  self.skipWaiting();
-});
+// Inert service worker. Previous versions had a network-first fetch handler
+// that intercepted EVERY request including cross-origin Supabase POSTs,
+// which caused login calls to hang in some browser states. This version does
+// NOT intercept fetches at all — all network traffic goes straight through.
+// On activate, it deletes ALL old caches so stale cached code cannot
+// resurrect itself.
+self.addEventListener('install', () => { self.skipWaiting(); });
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
+  e.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch {}
+    try { await self.clients.claim(); } catch {}
+  })());
 });
-
-self.addEventListener('fetch', (e) => {
-  // Network-first for everything — always try fresh, fall back to cache
-  e.respondWith(
-    fetch(e.request)
-      .then((res) => {
-        // Cache successful GET responses for offline fallback
-        if (e.request.method === 'GET' && res.status === 200) {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
-        }
-        return res;
-      })
-      .catch(() => caches.match(e.request))
-  );
-});
+// No fetch handler — the browser handles all requests natively.

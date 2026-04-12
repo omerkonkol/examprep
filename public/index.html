@@ -13,17 +13,15 @@
   <meta property="og:image" content="/public/images/hero.webp" />
   <meta property="og:type" content="website" />
   <link rel="manifest" href="/public/manifest.json" />
-  <link rel="stylesheet" href="/public/styles.css?v=20260411-34" />
+  <link rel="stylesheet" href="/public/styles.css?v=20260412-static" />
   <script src="/public/config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
-  <div id="app"></div>
-
-  <!-- ============================ -->
-  <!--          LANDING            -->
-  <!-- ============================ -->
-  <template id="tmpl-landing">
+  <!-- Landing is STATIC HTML inside #app so it paints on first network round-trip,
+       before any JavaScript runs. app.js's renderLanding() detects the existing
+       .landing node and skips the clone; it only wires enhancement listeners. -->
+  <div id="app">
     <div class="landing">
 
       <header class="navbar" id="navbar">
@@ -735,7 +733,7 @@
         </div>
       </footer>
     </div>
-  </template>
+  </div>
 
   <!-- ============================ -->
   <!--             AUTH            -->
@@ -833,14 +831,14 @@
           <div class="auth-divider"><span>או עם אימייל</span></div>
 
           <form class="auth-form" id="auth-form">
-            <div class="field" id="signup-name-field" hidden>
+            <div class="field" id="signup-name-field" style="display:none;">
               <label for="auth-name">שם מלא</label>
               <input type="text" id="auth-name" name="name" placeholder="לדוגמה: דניאל לוי" autocomplete="name" />
             </div>
             <div class="field">
               <label for="auth-email">כתובת אימייל</label>
               <input type="email" id="auth-email" name="email" placeholder="name@example.com" required autocomplete="email" />
-              <div class="email-hint" id="email-hint" hidden></div>
+              <div class="email-hint" id="email-hint" style="display:none;"></div>
             </div>
             <div class="field">
               <label for="auth-pass">
@@ -851,20 +849,20 @@
                 <input type="password" id="auth-pass" name="password" placeholder="הזן סיסמה" required minlength="6" autocomplete="current-password" />
                 <button type="button" class="input-eye" id="toggle-pass" aria-label="הצג סיסמה"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
               </div>
-              <div class="password-rules" id="password-rules" hidden>
+              <div class="password-rules" id="password-rules" style="display:none;">
                 <div class="rule" data-rule="len"><span class="rule-icon">○</span> לפחות 8 תווים</div>
                 <div class="rule" data-rule="letter"><span class="rule-icon">○</span> לפחות אות אחת (A-Z או a-z)</div>
                 <div class="rule" data-rule="digit"><span class="rule-icon">○</span> לפחות ספרה אחת (0-9)</div>
                 <div class="rule optional" data-rule="symbol"><span class="rule-icon">○</span> סימן מיוחד (!@#$%) — מומלץ</div>
               </div>
             </div>
-            <div class="field" id="signup-pass-confirm-field" hidden>
+            <div class="field" id="signup-pass-confirm-field" style="display:none;">
               <label for="auth-pass-confirm">אימות סיסמה</label>
               <div class="input-with-icon">
                 <input type="password" id="auth-pass-confirm" name="password_confirm" placeholder="הזן את הסיסמה שוב" autocomplete="new-password" />
                 <button type="button" class="input-eye" id="toggle-pass-confirm" aria-label="הצג סיסמה"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
               </div>
-              <div class="pass-match" id="pass-match" hidden></div>
+              <div class="pass-match" id="pass-match" style="display:none;"></div>
             </div>
 
             <div class="auth-options" id="login-options">
@@ -1014,7 +1012,7 @@
         </div>
         <div class="course-actions-grid cd-actions" id="cd-actions"></div>
 
-        <div id="cd-batches-header" class="section-h" hidden>
+        <div id="cd-batches-header" class="section-h" style="display:none">
           <h2>היסטוריית תרגול</h2>
         </div>
         <div class="cd-card-section" id="cd-batches"></div>
@@ -1091,7 +1089,7 @@
               <option value="unanswered">שאלות שעדיין לא ניסיתי</option>
             </select>
           </div>
-          <div class="field" id="exam-row" hidden>
+          <div class="field" id="exam-row" style="display:none;">
             <label>בחר מבחן</label>
             <select id="batch-exam"></select>
           </div>
@@ -1573,7 +1571,7 @@
         <div class="study-quota-banner" id="study-quota-banner"></div>
 
         <div class="study-list-grid" id="study-list-grid"></div>
-        <div class="study-empty" id="study-empty" hidden>
+        <div class="study-empty" id="study-empty" style="display:none;">
           <div class="study-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/></svg></div>
           <h2>עוד אין חבילות לימוד</h2>
           <p>תעלה את הסיכום הראשון שלך והבינה המלאכותית תייצר לך תוך דקה אחת חבילת לימוד שלמה: שאלות אמריקאיות, כרטיסיות, מתאר, מילון מושגים ומבחן עצמי.</p>
@@ -1640,7 +1638,7 @@
             </div>
           </div>
 
-          <div class="study-tab-panel" id="study-tab-pdf" hidden>
+          <div class="study-tab-panel" id="study-tab-pdf" style="display:none;">
             <div class="field">
               <label for="study-title-pdf">כותרת לחבילה (אופציונלי)</label>
               <input type="text" id="study-title-pdf" placeholder="ברירת מחדל: שם הקובץ" maxlength="120" />
@@ -1654,7 +1652,7 @@
                   <p><strong>גרור לכאן PDF</strong> או <button type="button" class="link-btn" id="study-pdf-pick">בחר קובץ</button></p>
                   <small>עד 15MB · עד 30 עמודים · רק טקסט (אנחנו לא מעבדים תמונות)</small>
                 </div>
-                <div class="study-pdf-selected" id="study-pdf-selected" hidden>
+                <div class="study-pdf-selected" id="study-pdf-selected" style="display:none;">
                   <div class="study-pdf-icon"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M42 21l-18 18a8 8 0 0 1-12-12l18-18a6 6 0 0 1 8 8l-18 18a4 4 0 0 1-6-6l16-16"/></svg></div>
                   <p><strong id="study-pdf-name"></strong></p>
                   <button type="button" class="link-btn" id="study-pdf-clear">הסר</button>
@@ -1667,7 +1665,7 @@
 
           <button class="btn btn-primary btn-block btn-lg" id="study-create-submit">
             <span class="btn-label"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/></svg>צור חבילת לימוד</span>
-            <span class="btn-spinner" hidden></span>
+            <span class="btn-spinner" style="display:none;"></span>
           </button>
 
           <div class="study-quota-hint" id="study-create-quota-hint"></div>
@@ -1723,11 +1721,11 @@
 
         <div class="study-pack-panels">
           <div class="pack-panel" data-panel="questions" id="pack-panel-questions"></div>
-          <div class="pack-panel" data-panel="flashcards" id="pack-panel-flashcards" hidden></div>
-          <div class="pack-panel" data-panel="outline" id="pack-panel-outline" hidden></div>
-          <div class="pack-panel" data-panel="glossary" id="pack-panel-glossary" hidden></div>
-          <div class="pack-panel" data-panel="open" id="pack-panel-open" hidden></div>
-          <div class="pack-panel" data-panel="selftest" id="pack-panel-selftest" hidden></div>
+          <div class="pack-panel" data-panel="flashcards" id="pack-panel-flashcards" style="display:none;"></div>
+          <div class="pack-panel" data-panel="outline" id="pack-panel-outline" style="display:none;"></div>
+          <div class="pack-panel" data-panel="glossary" id="pack-panel-glossary" style="display:none;"></div>
+          <div class="pack-panel" data-panel="open" id="pack-panel-open" style="display:none;"></div>
+          <div class="pack-panel" data-panel="selftest" id="pack-panel-selftest" style="display:none;"></div>
         </div>
       </main>
     </div>
@@ -2008,7 +2006,30 @@
       <button class="btn btn-primary btn-sm" id="cookie-accept">הבנתי</button>
     </div>
   </div>
-  <script src="/public/app.js?v=20260412-1" type="module"></script>
-  <script src="/public/bootstrap.js?v=20260412-1" defer></script>
+  <script>
+    (function() {
+      if (!localStorage.getItem('cookie-consent')) {
+        var b = document.getElementById('cookie-banner');
+        if (b) b.hidden = false;
+        document.getElementById('cookie-accept').addEventListener('click', function() {
+          localStorage.setItem('cookie-consent', '1');
+          b.hidden = true;
+        });
+      }
+    })();
+  </script>
+
+  <script src="/public/app.js?v=20260412-static" type="module"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/public/sw.js').catch(function(){});
+    }
+    // Capture beforeinstallprompt for later use
+    window.__pwaPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      window.__pwaPrompt = e;
+    });
+  </script>
 </body>
 </html>

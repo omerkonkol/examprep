@@ -7,71 +7,22 @@
 // real users.
 // =====================================================
 
-// ===== CSP-compatible inline style shim =====
-// Strict CSP blocks `style="..."` attributes (style-src without 'unsafe-inline').
-// This shim intercepts every `innerHTML = …` assignment, extracts the inline
-// style strings into a side table, replaces them with `data-xs="<idx>"`, lets
-// the browser parse the sanitized HTML, and then applies the captured styles
-// through the CSSStyleDeclaration API (which CSP does *not* gate). It also
-// sweeps any elements already in the DOM from the initial index.html parse.
-(function installStyleShim() {
-  const origDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
-  if (!origDesc?.set) return;
-
-  function applyStyleString(el, styleText) {
-    for (const rule of styleText.split(';')) {
-      const colonIdx = rule.indexOf(':');
-      if (colonIdx === -1) continue;
-      const prop = rule.slice(0, colonIdx).trim();
-      const val = rule.slice(colonIdx + 1).trim();
-      if (!prop || !val) continue;
-      if (prop.startsWith('--')) {
-        el.style.setProperty(prop, val);
-      } else {
-        try { el.style[prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = val; } catch {}
-      }
-    }
-  }
-
-  Object.defineProperty(Element.prototype, 'innerHTML', {
-    set(html) {
-      const extracted = [];
-      const processed = String(html).replace(/style=(?:"([^"]*)"|'([^']*)')/g, (_, dq, sq) => {
-        const idx = extracted.length;
-        extracted.push(dq != null ? dq : sq);
-        return 'data-xs="' + idx + '"';
-      });
-      origDesc.set.call(this, processed);
-      if (!extracted.length) return;
-      const toProcess = this.querySelectorAll('[data-xs]');
-      for (const el of toProcess) {
-        const idx = Number(el.getAttribute('data-xs'));
-        const style = extracted[idx];
-        if (style != null) applyStyleString(el, style);
-        el.removeAttribute('data-xs');
-      }
-    },
-    get: origDesc.get,
-    configurable: true,
-  });
-
-  // One-shot sweep for any inline styles already present from the initial HTML parse.
-  // Runs as early as possible — module scripts are deferred, so the DOM is built
-  // by now, but first paint typically hasn't happened yet.
-  const sweepExisting = () => {
-    for (const el of document.querySelectorAll('[style]')) {
-      const s = el.getAttribute('style');
-      if (s) applyStyleString(el, s);
-    }
-  };
-  sweepExisting();
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', sweepExisting, { once: true });
-  }
-})();
-
 // ===== Globals =====
 const $app = document.getElementById('app');
+
+// The landing page is pre-rendered as static HTML inside #app (see index.html).
+// It is the single most-visited page — having it paint before JS runs means
+// the user sees the real site on first paint, no matter what happens to the
+// JS bundle, service worker, or cache. We snapshot its outerHTML at module
+// load so renderLanding() can restore it after the user navigates away
+// (e.g. to /login) and back to /. This MUST run before anything mutates #app.
+let _landingHtmlCache = null;
+(function captureLandingHtml() {
+  try {
+    const existing = $app && $app.querySelector && $app.querySelector('.landing');
+    if (existing && existing.outerHTML) _landingHtmlCache = existing.outerHTML;
+  } catch {}
+})();
 
 const Data = {
   // Per-course data cache. Each entry: { metadata, answers, explanations }
@@ -300,9 +251,23 @@ const Auth = {
   async login(email, password) {
     const sb = getSbClient();
     if (!sb) throw new Error('מערכת האימות לא זמינה כרגע');
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    // Hard 15s timeout on the auth call — if gotrue-js's navigator.locks gets
+    // orphaned, the underlying promise can hang forever. This wrapper forces
+    // the button to revert to an actionable state instead of "מתחבר..." stuck.
+    const withTimeout = (p, ms, label) => Promise.race([
+      p,
+      new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' לא הגיב — נסה שוב')), ms)),
+    ]);
+    const { data, error } = await withTimeout(
+      sb.auth.signInWithPassword({ email, password }),
+      15000, 'שרת האימות'
+    );
     if (error) throw new Error(error.message === 'Invalid login credentials' ? 'אימייל או סיסמה שגויים' : error.message);
-    const profile = await this._fetchProfile(data.user.id);
+    // Profile fetch is best-effort with a 5s cap — failure must NOT block login.
+    let profile = null;
+    try {
+      profile = await withTimeout(this._fetchProfile(data.user.id), 5000, 'טעינת פרופיל');
+    } catch (e) { console.warn('[auth] profile fetch failed:', e.message); }
     const u = {
       id: data.user.id,
       email: data.user.email,
@@ -326,11 +291,18 @@ const Auth = {
       if (error.message.includes('already registered')) throw new Error('שגיאה בהרשמה. אם כבר יש לך חשבון, נסה להתחבר.');
       throw new Error(error.message);
     }
-    // If Supabase requires email confirmation, session will be null
-    const needsConfirmation = !data.session && !!data.user;
-    // Update display_name on the profile (trigger already created it with plan/trial data)
-    if (data.user && data.session) {
-      await sb.from('profiles').update({ display_name: name, email }).eq('id', data.user.id);
+    // Create profile row
+    if (data.user) {
+      const trialExpiry = new Date(Date.now() + 14 * 86400000).toISOString();
+      await sb.from('profiles').upsert({
+        id: data.user.id,
+        email,
+        display_name: name,
+        plan: 'trial',
+        is_admin: false,
+        trial_started_at: new Date().toISOString(),
+        plan_expires_at: trialExpiry,
+      }, { onConflict: 'id' });
     }
     const u = {
       id: data.user?.id,
@@ -340,8 +312,8 @@ const Auth = {
       isAdmin: false,
       daysLeft: 14,
     };
-    if (!needsConfirmation) this.save(u);
-    return { user: u, needsConfirmation };
+    this.save(u);
+    return u;
   },
 
   async loginWithGoogle() {
@@ -898,12 +870,8 @@ function renderRoute() {
     $app.innerHTML = `<div style="text-align:center;padding:60px 20px;direction:rtl;">
       <h2>משהו השתבש</h2>
       <p style="margin:16px 0;color:#666;">אירעה שגיאה בטעינת הדף.</p>
-      <button id="error-recover-btn" class="btn btn-primary">חזרה לדף הבית</button>
+      <button onclick="location.hash='#/dashboard';location.reload()" class="btn btn-primary">חזרה לדף הבית</button>
     </div>`;
-    document.getElementById('error-recover-btn')?.addEventListener('click', () => {
-      location.hash = '#/dashboard';
-      location.reload();
-    });
   }
 }
 
@@ -1226,8 +1194,18 @@ function generateTips(questions, attempts, batches, mastery) {
 
 // ===== Render: Landing =====
 function renderLanding() {
-  $app.innerHTML = '';
-  $app.appendChild(tmpl('tmpl-landing'));
+  // The landing is pre-rendered as static HTML in index.html inside #app.
+  // First boot: .landing is already there — do nothing, just wire listeners.
+  // After navigating away (/login replaces #app) and back: restore from cache.
+  if (!$app.querySelector('.landing')) {
+    if (_landingHtmlCache) {
+      $app.innerHTML = _landingHtmlCache;
+    } else {
+      // No cache — should never happen unless index.html was modified in flight.
+      // Fall back to empty #app; the page will still be navigable via hash routes.
+      $app.innerHTML = '';
+    }
+  }
 
   // Wire up internal route links
   document.querySelectorAll('[data-route]').forEach(link => {
@@ -1521,11 +1499,15 @@ function renderAuth(signupMode = false) {
   const EYE_OFF  = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
   function bindEyeToggle(btn, input) {
     if (!btn || !input) return;
+    // Icon reflects the CURRENT state: crossed eye = hidden, open eye = visible.
+    // Paint the initial icon to match the input's starting type (password → hidden).
+    btn.innerHTML = input.type === 'password' ? EYE_OFF : EYE_OPEN;
+    btn.setAttribute('aria-label', input.type === 'password' ? 'הצג סיסמה' : 'הסתר סיסמה');
     btn.addEventListener('click', () => {
-      const nowShowing = input.type === 'password';
-      input.type = nowShowing ? 'text' : 'password';
-      btn.innerHTML = nowShowing ? EYE_OFF : EYE_OPEN;
-      btn.setAttribute('aria-label', nowShowing ? 'הסתר סיסמה' : 'הצג סיסמה');
+      const wasHidden = input.type === 'password';
+      input.type = wasHidden ? 'text' : 'password';
+      btn.innerHTML = wasHidden ? EYE_OPEN : EYE_OFF;
+      btn.setAttribute('aria-label', wasHidden ? 'הסתר סיסמה' : 'הצג סיסמה');
     });
   }
   bindEyeToggle(togglePass, passInput);
@@ -1626,29 +1608,21 @@ function renderAuth(signupMode = false) {
     try {
       let user;
       if (mode === 'signup') {
-        const result = await Auth.signup(email, password, name);
-        if (result.needsConfirmation) {
-          errEl.classList.add('success');
-          errEl.textContent = 'נשלח אליך מייל אישור! לחץ על הקישור במייל כדי להפעיל את החשבון.';
-          btn.disabled = false;
-          btn.textContent = 'יצירת חשבון';
-          return;
-        }
-        user = result.user;
+        user = await Auth.signup(email, password, name);
       } else {
         user = await Auth.login(email, password);
       }
       state.user = user;
       errEl.classList.add('success');
       errEl.textContent = mode === 'signup' ? 'נרשמת בהצלחה — מעבירים אותך...' : 'התחברת בהצלחה — מעבירים אותך...';
-      // Seed demo data for admin on first login
+      // Seed demo data for admin — fire-and-forget so a slow JSON load can't
+      // pin the login button. It runs after we navigate to the dashboard.
       if (user.isAdmin) {
-        await Data.ensureLoaded();
-        if (DemoSeed.shouldSeed(user.email)) {
-          DemoSeed.build(user.email);
-        }
+        Data.ensureLoaded().then(() => {
+          if (DemoSeed.shouldSeed(user.email)) DemoSeed.build(user.email);
+        }).catch(e => console.warn('[auth] post-login demo seed skipped:', e.message));
       }
-      setTimeout(() => navigate('/dashboard'), 600);
+      setTimeout(() => navigate('/dashboard'), 300);
     } catch (err) {
       errEl.textContent = err.message || 'שגיאה לא ידועה';
     } finally {
@@ -1809,12 +1783,7 @@ async function renderDashboard() {
         <button class="course-action-item danger" data-act="delete">🗑️ מחק קורס</button>
       `;
       // Position near button
-      Object.assign(menu.style, {
-        position: 'absolute', top: '100%', left: '8px', zIndex: '100',
-        background: '#fff', border: '1px solid var(--border)',
-        borderRadius: '10px', boxShadow: 'var(--shadow-lg)',
-        padding: '4px', minWidth: '160px',
-      });
+      menu.style.cssText = 'position:absolute;top:100%;left:8px;z-index:100;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);padding:4px;min-width:160px;';
       btn.style.position = 'relative';
       btn.appendChild(menu);
 
@@ -2515,10 +2484,7 @@ function showQuestionViewer(q, courseId, onDelete) {
   const imgSrc = isTextOnly ? null : (q.image_path?.startsWith('http') ? q.image_path : Data.imageUrl(q.image_path, courseId));
   const viewer = document.createElement('div');
   viewer.className = 'modal-backdrop';
-  Object.assign(viewer.style, {
-    zIndex: '10000', display: 'flex',
-    alignItems: 'center', justifyContent: 'center',
-  });
+  viewer.style.cssText = 'z-index:10000;display:flex;align-items:center;justify-content:center;';
   viewer.innerHTML = `
     <div style="background:#fff;border-radius:16px;max-width:90vw;max-height:90vh;overflow:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:0;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-soft);position:sticky;top:0;background:#fff;z-index:1;border-radius:16px 16px 0 0;">

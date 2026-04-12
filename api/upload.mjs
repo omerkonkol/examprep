@@ -1,7 +1,15 @@
 // =====================================================
 // Vercel Serverless Function — POST /api/upload
 // =====================================================
-// Upload exam PDF → extract questions via Gemini → store in DB
+// Pipeline:
+//  1. Upload exam PDF to Cloudinary (as PDF; we use pg_ / c_crop to serve pages)
+//  2. Extract text-layer positions via unpdf (pdf.js) — locate "שאלה N" headings
+//  3. Filter to MCQs (regions with א./ב./ג./ד. or 1./2./3./4. options)
+//  4. Compute exact Cloudinary crop pixels from the REAL page dimensions
+//     (fixes the old hardcoded RENDER_H=2070 that broke A4 PDFs)
+//  5. In parallel, send solution PDF to Gemini to extract {question → answer}
+//  6. Fallback: if text layer found no MCQs (image-only / scanned PDF) — use
+//     Gemini Vision on the exam PDF
 // =====================================================
 
 import { createClient } from '@supabase/supabase-js';
@@ -9,6 +17,13 @@ import { createClient } from '@supabase/supabase-js';
 export const config = { api: { bodyParser: false }, maxDuration: 120 };
 
 const MAX_PDF_BYTES = 15 * 1024 * 1024;
+
+// Cloudinary renders the PDF at this width. Height is computed per-page
+// from the actual page dimensions, so A4 vs Letter no longer matters.
+const CLOUDINARY_RENDER_W = 1600;
+// PDF-coordinate margins around each question so the crop isn't flush to text.
+const CROP_MARGIN_TOP_PT = 12;
+const CROP_MARGIN_BOTTOM_PT = 18;
 
 // ===== Supabase =====
 let _admin = null;
@@ -80,60 +95,448 @@ function isPdf(buf) {
     buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46;
 }
 
-// ===== Gemini Vision: send PDF directly, get MCQ data back =====
+// =====================================================
+// PDF text-layer analysis (pdf.js via unpdf)
+// =====================================================
+
+// Extract per-item text positions for every page.
+// Each item carries x, y in PDF native coords, and yFromTop (flipped so 0
+// is at the top of the page, matching how we'll crop the rendered image).
+async function extractPositions(pdfBytes) {
+  const { getDocumentProxy } = await import('unpdf');
+  const doc = await getDocumentProxy(new Uint8Array(pdfBytes));
+  const pages = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: 1.0 });
+    const tc = await page.getTextContent();
+    const items = tc.items
+      .filter(it => it && it.str !== undefined)
+      .map(it => ({
+        str: it.str,
+        x: it.transform[4],
+        y: it.transform[5],
+        yFromTop: viewport.height - it.transform[5],
+        width: it.width,
+        height: it.height,
+      }));
+    pages.push({ page: i, width: viewport.width, height: viewport.height, items });
+  }
+  return pages;
+}
+
+// Group items into visual lines (items whose yFromTop is within yTol of each
+// other). Returns each line with its concatenated text + left/right X extents.
+function buildLines(page, yTol = 3) {
+  const items = page.items.filter(it => it.str && it.str.trim() !== '');
+  if (!items.length) return [];
+  const sorted = [...items].sort((a, b) => a.yFromTop - b.yFromTop);
+  const lines = [];
+  for (const it of sorted) {
+    const line = lines.find(l => Math.abs(l.yFromTop - it.yFromTop) < yTol);
+    if (line) {
+      line.items.push(it);
+      line.yFromTop = (line.yFromTop * (line.items.length - 1) + it.yFromTop) / line.items.length;
+    } else {
+      lines.push({ yFromTop: it.yFromTop, items: [it] });
+    }
+  }
+  for (const line of lines) {
+    // RTL: rightmost item first when building visual text.
+    line.items.sort((a, b) => b.x - a.x);
+    const parts = [];
+    let lastX = null;
+    for (const it of line.items) {
+      if (lastX !== null && lastX - (it.x + (it.width || 0)) > 2) parts.push(' ');
+      parts.push(it.str);
+      lastX = it.x;
+    }
+    line.text = parts.join('').replace(/\s+/g, ' ').trim();
+    line.leftX = Math.min(...line.items.map(it => it.x));
+    line.rightX = Math.max(...line.items.map(it => it.x + (it.width || 0)));
+  }
+  return lines;
+}
+
+// Find the page range for a parent question (used by sections mode).
+function findQuestionRange(pages, parentQ) {
+  let startPage = null, startY = null, endPage = null, endY = null;
+  for (const page of pages) {
+    const lines = buildLines(page);
+    for (const line of lines) {
+      const m = line.text.match(/שאלה\s*(\d+)|(\d+)\s*שאלה/);
+      if (m) {
+        const num = parseInt((m[1] || m[2]), 10);
+        if (num === parentQ && startPage === null) {
+          startPage = page.page; startY = line.yFromTop;
+        } else if (num === parentQ + 1 && startPage !== null && endPage === null) {
+          endPage = page.page; endY = line.yFromTop;
+        }
+      }
+    }
+  }
+  return { startPage, startY, endPage, endY };
+}
+
+const ALL_LETTERS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י'];
+
+// Find sub-section headings (סעיף א/ב/ג...) within a parent question.
+function findSectionHeadings(pages, parentQ) {
+  const range = findQuestionRange(pages, parentQ);
+  const results = [];
+  if (range.startPage === null) return { headings: results, range };
+  const seen = new Set();
+  for (const page of pages) {
+    if (page.page < range.startPage) continue;
+    if (range.endPage !== null && page.page > range.endPage) break;
+    const lines = buildLines(page);
+    for (const line of lines) {
+      if (range.endPage === page.page && line.yFromTop >= range.endY) continue;
+      for (const letter of ALL_LETTERS) {
+        if (seen.has(letter)) continue;
+        const re1 = new RegExp(`(^|\\s)סעיף\\s*${letter}['\u2019\u05F3\`]?(\\s|$|\\()`);
+        const re2 = new RegExp(`(^|\\s)${letter}['\u2019\u05F3\`]\\s*\\(\\s*\\d+\\s*נק`);
+        if (re1.test(line.text) || re2.test(line.text)) {
+          if (line.rightX > page.width - 110) {
+            seen.add(letter);
+            results.push({ section: letter, page: page.page, yFromTop: line.yFromTop });
+            break;
+          }
+        }
+      }
+    }
+  }
+  results.sort((a, b) => a.page - b.page || a.yFromTop - b.yFromTop);
+  return { headings: results, range };
+}
+
+// Find standalone numbered question headings ("שאלה 1", "שאלה 2", ...).
+// Requires that the line STARTS with "שאלה" (not embedded in a paragraph)
+// and sits near the right edge of the page (RTL heading position). Skips
+// page 1 because most exams put instructions / title there.
+function findStandaloneQuestions(pages) {
+  const results = [];
+  const seen = new Set();
+  for (const page of pages) {
+    if (page.page === 1 && pages.length > 3) continue;
+    const lines = buildLines(page);
+    for (const line of lines) {
+      // Heading lines are short — "שאלה N (X נקודות)" is ~15–30 chars.
+      if (line.text.length > 60) continue;
+      const m = line.text.match(/^\s*שאלה\s*(\d+)\b/);
+      if (!m) continue;
+      const num = parseInt(m[1], 10);
+      if (num < 1 || num > 100 || seen.has(num)) continue;
+      if (line.rightX <= page.width - 110) continue;
+      seen.add(num);
+      results.push({ section: String(num), page: page.page, yFromTop: line.yFromTop });
+    }
+  }
+  results.sort((a, b) => a.page - b.page || a.yFromTop - b.yFromTop);
+  return results;
+}
+
+// Given a heading and the following heading, find where the current question
+// actually ends — prefer a "נימוק" line (the empty justification box that
+// tohna1-style exams place after each MCQ); otherwise use the next heading's
+// top; otherwise use the page bottom.
+function findBottomBoundary(pages, fromHeading, nextHeading) {
+  const startPage = fromHeading.page;
+  const startY = fromHeading.yFromTop;
+  const page = pages.find(p => p.page === startPage);
+  if (page) {
+    const lines = buildLines(page);
+    for (const line of lines) {
+      if (line.yFromTop <= startY) continue;
+      if (/^נימוק\s*[:.]?\s*$/.test(line.text)) {
+        return { page: startPage, yFromTop: line.yFromTop - 10 };
+      }
+    }
+  }
+  if (nextHeading && nextHeading.page === startPage) {
+    return { page: startPage, yFromTop: nextHeading.yFromTop - 8 };
+  }
+  if (page) return { page: startPage, yFromTop: page.height - 30 };
+  return null;
+}
+
+// Does the region between heading and bottom look like an MCQ?
+// Signals:
+//   + "הקיפו" / "בחרו" / "איזו מהטענות" → explicit circle-one-answer = MCQ
+//   + ≥3 sequential numbered (1.2.3.4) or lettered (א.ב.ג.ד.) option lines
+//   - explicit open-question commands at sentence start (הוכיחו / השלימו / ...)
+//
+// `strict=true` (standalone mode) requires a concrete positive signal.
+// `strict=false` (sections mode) defaults to MCQ — the parent question is
+// typically dedicated to MCQs, so unclear cases are kept rather than dropped.
+function classifyRegion(pages, heading, bottom, strict = false) {
+  const page = pages.find(p => p.page === heading.page);
+  if (!page) return { isMCQ: false, numOptions: 0 };
+  const lines = buildLines(page);
+  const regionLines = lines.filter(l =>
+    l.yFromTop > heading.yFromTop && l.yFromTop < (bottom ? bottom.yFromTop : page.height));
+  if (regionLines.length === 0) return { isMCQ: false, numOptions: 0 };
+
+  const regionText = regionLines.map(l => l.text).join(' ');
+
+  // Count sequential option markers (".1", "1.", ".א", "א." at line start).
+  let num = 0, heb = 0;
+  for (const l of regionLines) {
+    const t = l.text.replace(/^[\s•·]+/, '');
+    const mNum = t.match(/^\.?\s*([1-9])\s*[.)]?/);
+    if (mNum) {
+      const n = parseInt(mNum[1], 10);
+      if (n === num + 1 && n <= 6) num = n;
+    }
+    const mHeb = t.match(/^\.?\s*([א-ט])\s*[.)]?/);
+    if (mHeb) {
+      const letterIdx = 'אבגדהוזח'.indexOf(mHeb[1]);
+      if (letterIdx === heb && heb < 6) heb = letterIdx + 1;
+    }
+  }
+  const numOptions = Math.max(num, heb);
+  const hasCirclePhrase = /(הקיפו|איזו\s+מהטענות|איזה\s+מהבא|בחרו\s+את|סמנו\s+את)/.test(regionText);
+
+  // Strong positive: explicit "circle" instruction — always an MCQ, even for
+  // 2-option true/false variants like "הקיפו: מתקמפל / לא מתקמפל".
+  if (hasCirclePhrase) {
+    return { isMCQ: true, numOptions: Math.max(numOptions, 2) };
+  }
+
+  // Strong negative: the stem opens with a clear write-an-answer command.
+  const openMarkers = /(הוכיחו|הפריכו|השלימו\s+את|כתבו\s+את|מימשו\s+את|ממשו\s+את|חשבו\s+את|תכננו\s+את|סרטטו|ציירו|תארו\s+את|הסבירו|פתרו\s+את|נמקו\s+את)/;
+  if (openMarkers.test(regionText) && numOptions < 3) {
+    return { isMCQ: false, numOptions: 0 };
+  }
+
+  // ≥3 numbered options is a reliable positive.
+  if (numOptions >= 3) return { isMCQ: true, numOptions };
+
+  // Standalone mode: require a concrete positive signal above. Unclear = reject.
+  if (strict) return { isMCQ: false, numOptions };
+
+  // Sections mode: default to MCQ (permissive — parent Q is typically MCQ-only).
+  return { isMCQ: true, numOptions: numOptions || 4 };
+}
+
+// Top-level MCQ detection: auto-picks between sections mode (a single parent
+// question with sub-sections) and standalone mode (each שאלה N is its own MCQ).
+function detectMCQsFromPositions(pages) {
+  // Sections mode: try parent questions 1..6 and keep the one with the most
+  // sub-sections that actually look like MCQs.
+  let best = { mode: 'none', mcqs: [] };
+  for (let pq = 1; pq <= 6; pq++) {
+    const { headings } = findSectionHeadings(pages, pq);
+    if (headings.length < 3) continue;
+    const mcqs = [];
+    for (let i = 0; i < headings.length; i++) {
+      const h = headings[i];
+      const next = headings[i + 1];
+      const bottom = findBottomBoundary(pages, h, next);
+      if (!bottom) continue;
+      const cls = classifyRegion(pages, h, bottom);
+      if (!cls.isMCQ) continue;
+      const pageMeta = pages.find(p => p.page === h.page);
+      mcqs.push({
+        section: h.section,
+        number: i + 1,
+        page: h.page,
+        yTop: h.yFromTop,
+        yBottom: bottom.yFromTop,
+        pageWidth: pageMeta.width,
+        pageHeight: pageMeta.height,
+        numOptions: cls.numOptions,
+      });
+    }
+    if (mcqs.length > best.mcqs.length) {
+      best = { mode: `sections(parent=${pq})`, mcqs };
+    }
+  }
+
+  // Standalone mode: "שאלה N" at the right edge of the page.
+  // Strict classifier — standalone "שאלה N" could easily be an open question
+  // (proofs, design, programming), so we require concrete MCQ evidence.
+  const standalone = findStandaloneQuestions(pages);
+  if (standalone.length >= 3) {
+    const mcqs = [];
+    for (let i = 0; i < standalone.length; i++) {
+      const h = standalone[i];
+      const next = standalone[i + 1];
+      const bottom = findBottomBoundary(pages, h, next);
+      if (!bottom) continue;
+      const cls = classifyRegion(pages, h, bottom, /* strict */ true);
+      if (!cls.isMCQ) continue;
+      const pageMeta = pages.find(p => p.page === h.page);
+      mcqs.push({
+        section: h.section,
+        number: parseInt(h.section, 10),
+        page: h.page,
+        yTop: h.yFromTop,
+        yBottom: bottom.yFromTop,
+        pageWidth: pageMeta.width,
+        pageHeight: pageMeta.height,
+        numOptions: cls.numOptions,
+      });
+    }
+    if (mcqs.length > best.mcqs.length) {
+      best = { mode: 'standalone', mcqs };
+    }
+  }
+
+  return best;
+}
+
+// Build a Cloudinary URL that crops page `page` of `publicId` to exactly the
+// rectangle containing this MCQ. `pageWidth` / `pageHeight` must be the real
+// PDF page dimensions (in points) — we derive the rendered height from them
+// instead of assuming a hardcoded 2070.
+function buildCropUrl(cloudName, publicId, mcq) {
+  const scale = CLOUDINARY_RENDER_W / mcq.pageWidth;
+  const renderH = Math.round(CLOUDINARY_RENDER_W * (mcq.pageHeight / mcq.pageWidth));
+  const yPx = Math.max(0, Math.round((mcq.yTop - CROP_MARGIN_TOP_PT) * scale));
+  const rawH = Math.round((mcq.yBottom - mcq.yTop + CROP_MARGIN_TOP_PT + CROP_MARGIN_BOTTOM_PT) * scale);
+  const hPx = Math.max(150, Math.min(renderH - yPx, rawH));
+  return `https://res.cloudinary.com/${cloudName}/image/upload/pg_${mcq.page},w_${CLOUDINARY_RENDER_W}/c_crop,w_${CLOUDINARY_RENDER_W},h_${hPx},y_${yPx},g_north/q_auto/${publicId}.png`;
+}
+
+// =====================================================
+// Cloudinary upload
+// =====================================================
+async function uploadPdfToCloudinary({ cloudName, apiKey, apiSecret, pdfBase64, publicId }) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const { createHash } = await import('node:crypto');
+  const signature = createHash('sha1')
+    .update(`public_id=${publicId}&timestamp=${timestamp}${apiSecret}`)
+    .digest('hex');
+  const r = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file: `data:application/pdf;base64,${pdfBase64}`,
+      public_id: publicId,
+      api_key: apiKey,
+      timestamp,
+      signature,
+    }),
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => '');
+    console.error(`[cloudinary] ${r.status}:`, errText.slice(0, 200));
+    return null;
+  }
+  const d = await r.json();
+  return d.public_id;
+}
+
+// =====================================================
+// Gemini — answer extraction from solution PDF
+// =====================================================
+// Returns { "1": 3, "2": 1, ... } or null on failure.
+async function extractAnswersWithGemini(solutionPdfBase64, questionNumbers) {
+  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
+  if (!apiKey) return null;
+
+  const list = questionNumbers.join(', ');
+  const prompt = `Below is a Hebrew exam solution PDF. For each multiple-choice question listed, find the correct answer.
+
+Questions to find: ${list}
+
+An MCQ has 4 options labeled either 1/2/3/4 or א/ב/ג/ד. The solution PDF may mark the correct answer with a circle, highlight, bullet, "תשובה: X", or similar.
+
+Return ONLY a JSON object mapping question number (as string) to answer index (1-4, where 1=א, 2=ב, 3=ג, 4=ד). If you cannot find an answer for a question, omit it.
+
+Example: {"1": 3, "2": 1, "3": 4}`;
+
+  const parts = [
+    { text: prompt },
+    { inlineData: { mimeType: 'application/pdf', data: solutionPdfBase64 } },
+  ];
+
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+  for (const model of models) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: { temperature: 0.0, maxOutputTokens: 1024, responseMimeType: 'application/json' },
+        }),
+        signal: AbortSignal.timeout(45000),
+      });
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '');
+        console.warn(`[gemini-answers] ${model} ${r.status}:`, errText.slice(0, 200));
+        continue;
+      }
+      const j = await r.json();
+      const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+      const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (parsed && typeof parsed === 'object') {
+        const normalized = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          const n = parseInt(v, 10);
+          if (n >= 1 && n <= 10) normalized[String(parseInt(k, 10))] = n;
+        }
+        console.log(`[gemini-answers] ${model} found ${Object.keys(normalized).length}/${questionNumbers.length} answers`);
+        return normalized;
+      }
+    } catch (e) {
+      console.warn(`[gemini-answers] ${model} failed:`, e.message);
+    }
+  }
+  return null;
+}
+
+// =====================================================
+// Gemini fallback — full exam extraction (scanned/image-only PDFs)
+// =====================================================
 async function analyzeExamWithGemini(examPdfBase64, solPdfBase64) {
   const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
   if (!apiKey) return null;
 
-  const prompt = `Analyze this Hebrew university exam PDF. Extract ONLY multiple-choice questions (שאלות סגורות / שאלות בחירה / שאלות אמריקאיות).
+  const prompt = `Analyze this Hebrew university exam PDF. Extract ONLY multiple-choice questions (שאלות סגורות / שאלות אמריקאיות).
 
-WHAT IS A MULTIPLE-CHOICE QUESTION:
-- Has "שאלה X:" header
-- Has exactly 4 options: א. ב. ג. ד.
+WHAT IS AN MCQ:
+- Has "שאלה X:" or "סעיף X" header
+- Has 3-5 options labeled 1-4 or א-ד
 - Student picks ONE answer
 
-WHAT IS NOT A MULTIPLE-CHOICE QUESTION (SKIP THESE):
-- Anything under "שאלות פתוחות" section
-- Proof questions ("הוכיחו", "הראו", "הפריכו")
-- Definition questions ("נגדיר", "תהא")
-- Questions with blank answer lines or "תשובה ריקה"
+SKIP:
+- Open questions (הוכיחו, הראו, הפריכו, חשבו, השלימו, הסבירו)
+- Proof/design questions
 - Instructions page (page 1)
-- Sub-sections (סעיף א/ב) that are NOT multiple choice
+- Blank answer-box questions
 
-IMPORTANT: If the exam has two versions (גרסה 1, גרסה 2), only use גרסה 1.
-
-For EACH multiple-choice question, return:
+For EACH MCQ return:
 {
   "n": question number as printed,
   "page": PDF page number (1-based),
   "y_top": percentage from top of page where the question HEADER starts (0-100),
-  "y_bottom": percentage from top of page where the LAST option (ד.) ends (0-100),
-  "correct": correct answer (1=א, 2=ב, 3=ג, 4=ד) or null if unknown,
-  "explanation": "one line explanation in Hebrew"
+  "y_bottom": percentage from top of page where the LAST option ends (0-100),
+  "correct": correct answer index (1-4) if known, else null,
+  "page_w": page width in points (typically 595 for A4),
+  "page_h": page height in points (typically 842 for A4)
 }
 
-The y_top and y_bottom MUST be precise — y_top starts AT the "שאלה X:" line, y_bottom ends right AFTER option ד. Do NOT include any content from neighboring questions.
+Return a JSON array only.`;
 
-Return ONLY a JSON array. If solution PDF attached, use it for answers.`;
-
-  const parts = [{ text: prompt }];
-  // Add exam PDF as inline data
-  parts.push({
-    inlineData: { mimeType: 'application/pdf', data: examPdfBase64 }
-  });
-  // Add solution PDF if provided
+  const parts = [
+    { text: prompt },
+    { inlineData: { mimeType: 'application/pdf', data: examPdfBase64 } },
+  ];
   if (solPdfBase64) {
-    parts.push({ text: '\n\nSolution PDF:' });
-    parts.push({
-      inlineData: { mimeType: 'application/pdf', data: solPdfBase64 }
-    });
+    parts.push({ text: '\n\nSolution PDF (use for correct answers):' });
+    parts.push({ inlineData: { mimeType: 'application/pdf', data: solPdfBase64 } });
   }
 
   const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
   for (const model of models) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     try {
-      console.log(`[gemini-vision] trying ${model} with PDF...`);
+      console.log(`[gemini-fallback] trying ${model}...`);
       const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -141,264 +544,36 @@ Return ONLY a JSON array. If solution PDF attached, use it for answers.`;
           contents: [{ parts }],
           generationConfig: { temperature: 0.1, maxOutputTokens: 16384, responseMimeType: 'application/json' },
         }),
-        signal: AbortSignal.timeout(55000),
+        signal: AbortSignal.timeout(60000),
       });
-      if (!r.ok) {
-        const errText = await r.text().catch(() => '');
-        console.warn(`[gemini-vision] ${model} returned ${r.status}:`, errText.slice(0, 200));
-        continue;
-      }
+      if (!r.ok) { console.warn(`[gemini-fallback] ${model} ${r.status}`); continue; }
       const j = await r.json();
       const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
       const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
       const parsed = JSON.parse(cleaned);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        console.log(`[gemini-vision] ${model} found ${parsed.length} MCQs`);
+        console.log(`[gemini-fallback] ${model} found ${parsed.length} MCQs`);
         return parsed;
       }
     } catch (e) {
-      console.warn(`[gemini-vision] ${model} failed:`, e.message);
-      continue;
+      console.warn(`[gemini-fallback] ${model} failed:`, e.message);
     }
   }
   return null;
 }
 
-// ===== File validation helpers =====
-function extractYears(text) {
-  const matches = text.match(/\b(20[1-3]\d)\b/g);
-  return [...new Set(matches || [])];
-}
-
-function extractSemester(text) {
-  if (/סמסטר\s*[אa'׳]/i.test(text)) return 'א';
-  if (/סמסטר\s*[בb'׳]/i.test(text)) return 'ב';
-  if (/סמסטר\s*(?:קיץ|ג|c)/i.test(text)) return 'קיץ';
-  return null;
-}
-
-function extractMoed(text) {
-  if (/מועד\s*[אa'׳]/i.test(text)) return 'א';
-  if (/מועד\s*[בb'׳]/i.test(text)) return 'ב';
-  if (/מועד\s*(?:מיוחד|ג|c)/i.test(text)) return 'מיוחד';
-  return null;
-}
-
-function extractCourseName(text) {
-  const patterns = [
-    /(?:קורס|מקצוע|נושא)[:\s]+([^\n,]{3,40})/,
-    /(?:בחינה|מבחן)\s+ב([^\n,]{3,40})/,
-    /(?:course|subject)[:\s]+([^\n,]{3,40})/i,
-  ];
-  for (const p of patterns) { const m = text.match(p); if (m) return m[1].trim(); }
-  return null;
-}
-
-function extractQuestionCount(text) {
-  const m = text.match(/(\d+)\s*(?:שאלות|questions)/i);
-  return m ? parseInt(m[1]) : null;
-}
-
-function commonWords(a, b) {
-  const wordsA = new Set(a.split(/\s+/).filter(w => w.length > 2));
-  const wordsB = new Set(b.split(/\s+/).filter(w => w.length > 2));
-  let common = 0;
-  for (const w of wordsA) if (wordsB.has(w)) common++;
-  return wordsA.size > 0 ? common / wordsA.size : 0;
-}
-
-function validateFiles(name, examHeader, solHeader) {
-  const warnings = [];
-
-  const pdfYears = extractYears(examHeader);
-  const nameYears = extractYears(name);
-  const pdfMoed = extractMoed(examHeader);
-  const nameMoed = extractMoed(name);
-  const pdfCourse = extractCourseName(examHeader);
-
-  // 1. Year mismatch: name vs PDF
-  if (nameYears.length && pdfYears.length && !pdfYears.includes(nameYears[0])) {
-    warnings.push(`שים לב: רשמת "${nameYears[0]}" בשם, אבל בקובץ מופיעה השנה ${pdfYears.join('/')}.`);
-  }
-
-  // 2. Moed mismatch: name vs PDF
-  if (nameMoed && pdfMoed && nameMoed !== pdfMoed) {
-    warnings.push(`שים לב: רשמת "מועד ${nameMoed}" בשם, אבל בקובץ כתוב "מועד ${pdfMoed}".`);
-  }
-
-  // 3. Solution vs exam validation
-  if (solHeader) {
-    const solYears = extractYears(solHeader);
-    const solMoed = extractMoed(solHeader);
-    const solSem = extractSemester(solHeader);
-    const examSem = extractSemester(examHeader);
-    const solCourse = extractCourseName(solHeader);
-
-    // Year mismatch
-    if (pdfYears.length && solYears.length && !pdfYears.some(y => solYears.includes(y))) {
-      warnings.push(`שים לב: המבחן משנת ${pdfYears[0]} אבל הפתרון משנת ${solYears[0]}. ודא שהעלית את הפתרון הנכון.`);
-    }
-    // Moed mismatch
-    if (pdfMoed && solMoed && pdfMoed !== solMoed) {
-      warnings.push(`שים לב: המבחן ממועד ${pdfMoed} אבל הפתרון ממועד ${solMoed}.`);
-    }
-    // Semester mismatch
-    if (examSem && solSem && examSem !== solSem) {
-      warnings.push(`שים לב: המבחן מסמסטר ${examSem} אבל הפתרון מסמסטר ${solSem}.`);
-    }
-    // Course name mismatch — only warn if both names are clearly detected
-    // and are completely different (not just different phrasing)
-    if (pdfCourse && solCourse && pdfCourse.length > 5 && solCourse.length > 5
-        && commonWords(pdfCourse, solCourse) === 0) {
-      warnings.push(`שים לב: נראה שהמבחן בנושא "${pdfCourse}" אבל הפתרון בנושא "${solCourse}".`);
-    }
-  }
-
-  return warnings;
-}
-
-// ===== Robust MCQ parser — works on full text, not line-by-line =====
-// Handles messy PDF text extraction where line breaks may be missing or wrong.
-// Strategy 1: Find "שאלה X" headers, then extract options (א./ב./ג./ד.) after each.
-// Strategy 2: If no headers found, scan for groups of consecutive Hebrew-letter options.
-function parseQuestionsFromText(examText, solText) {
-  if (!examText || examText.length < 50) return [];
-  const questions = [];
-
-  // Strategy 1: Find "שאלה X" headers anywhere in text (not just line starts)
-  const qHeaders = [...examText.matchAll(/שאלה\s*(\d+)\s*[:.?]?\s*/g)];
-  console.log(`[parser] Found ${qHeaders.length} "שאלה" headers in ${examText.length} chars`);
-
-  if (qHeaders.length > 0) {
-    for (let i = 0; i < qHeaders.length; i++) {
-      const qNum = parseInt(qHeaders[i][1]);
-      const regionStart = qHeaders[i].index + qHeaders[i][0].length;
-      const regionEnd = i + 1 < qHeaders.length ? qHeaders[i + 1].index : Math.min(regionStart + 3000, examText.length);
-      const region = examText.slice(regionStart, regionEnd);
-
-      // Find Hebrew-letter options: א. / ב. / ג. / ד. (with flexible punctuation)
-      const opts = [];
-      const HEB_LETTERS = 'אבגדהוזחט';
-      for (const m of region.matchAll(/([א-ט])\s*[.)]\s*(.{2,}?)(?=\s*[א-ט]\s*[.)]|\s*שאלה\s*\d|$)/gs)) {
-        const letter = m[1];
-        const letterIdx = HEB_LETTERS.indexOf(letter);
-        // Accept if it's the expected next letter (sequential: א then ב then ג...)
-        if (letterIdx === opts.length) {
-          opts.push(m[2].replace(/\n/g, ' ').trim());
-        }
-      }
-
-      // Fallback: try numeric options (1. / 2. / 3. / 4.)
-      if (opts.length < 2) {
-        opts.length = 0;
-        for (const m of region.matchAll(/([1-9])\s*[.)]\s*(.{2,}?)(?=\s*[1-9]\s*[.)]|\s*שאלה\s*\d|$)/gs)) {
-          const num = parseInt(m[1]);
-          if (num === opts.length + 1) {
-            opts.push(m[2].replace(/\n/g, ' ').trim());
-          }
-        }
-      }
-
-      if (opts.length >= 3) { // MCQ needs at least 3 options (usually 4)
-        // Filter out open questions: sub-items like "הוכיחו כי..." aren't MCQ options
-        const openPatterns = /^(הוכיח|הפריכ|הראה|הראו|תנו דוגמ|הסביר|בנו מכונ|צייר|כתבו|מצאו|חשבו|הגדיר|נגדיר|תהא|נתון|פתרון|תאר|סדרו|ענו|פרקו|חשב)/;
-        const isOpen = opts.some(o => openPatterns.test(o.trim()));
-        if (isOpen) continue; // skip open questions
-        // Also skip if options contain "תשובה ריקה" (answer boxes for open questions)
-        if (opts.some(o => o.includes('תשובה ריקה'))) continue;
-
-        // Extract question stem (text before first option)
-        const firstOptMatch = region.match(/[א-ט]\s*[.)]/);
-        const stemEnd = firstOptMatch ? firstOptMatch.index : 200;
-        const stem = region.slice(0, stemEnd).replace(/\n/g, ' ').trim();
-
-        questions.push({
-          n: qNum,
-          q: stem || `שאלה ${qNum}`,
-          opts,
-          correct: null,
-        });
-      }
-    }
-  }
-
-  // Strategy 2: No "שאלה X" headers — find groups of consecutive א./ב./ג./ד. options
-  if (questions.length === 0) {
-    console.log('[parser] No headers found, trying option-group detection');
-    const HEB = 'אבגד';
-    // Find all Hebrew-letter option markers
-    const allOpts = [...examText.matchAll(/([א-ד])\s*[.)]\s*(.{2,}?)(?=\s*[א-ד]\s*[.)]|\n\n|$)/gs)];
-    let group = [];
-    for (const m of allOpts) {
-      const letterIdx = HEB.indexOf(m[1]);
-      if (letterIdx === 0 && group.length >= 2) {
-        // Start of new group — save previous
-        questions.push({ n: questions.length + 1, q: `שאלה ${questions.length + 1}`, opts: group.map(g => g.text), correct: null });
-        group = [{ letter: m[1], text: m[2].replace(/\n/g, ' ').trim() }];
-      } else if (letterIdx === group.length) {
-        group.push({ letter: m[1], text: m[2].replace(/\n/g, ' ').trim() });
-      } else {
-        if (group.length >= 2) {
-          questions.push({ n: questions.length + 1, q: `שאלה ${questions.length + 1}`, opts: group.map(g => g.text), correct: null });
-        }
-        group = letterIdx === 0 ? [{ letter: m[1], text: m[2].replace(/\n/g, ' ').trim() }] : [];
-      }
-    }
-    if (group.length >= 2) {
-      questions.push({ n: questions.length + 1, q: `שאלה ${questions.length + 1}`, opts: group.map(g => g.text), correct: null });
-    }
-  }
-
-  console.log(`[parser] Extracted ${questions.length} questions total`);
-
-  // Try to find correct answers from solution text
-  if (solText && questions.length > 0) {
-    // Common patterns in Hebrew solution PDFs
-    for (const q of questions) {
-      const patterns = [
-        new RegExp(`שאלה\\s*${q.n}\\s*[:.\\-–]\\s*(?:תשובה\\s*)?([1-9]|[א-ד])`, 'i'),
-        new RegExp(`(?:^|\\n)\\s*${q.n}\\s*[.):]\\s*([א-ד])`, 'm'),
-        new RegExp(`תשובה\\s*(?:נכונה\\s*)?(?:לשאלה\\s*)?${q.n}\\s*[:.\\-–]\\s*([1-9]|[א-ד])`, 'i'),
-      ];
-      for (const p of patterns) {
-        const m = solText.match(p);
-        if (m) {
-          const ans = parseInt(m[1]) || ('אבגד'.indexOf(m[1]) + 1);
-          if (ans >= 1 && ans <= q.opts.length) { q.correct = ans; break; }
-        }
-      }
-    }
-  }
-
-  return questions;
-}
-
-function buildExtractionPrompt(text, hasSolution) {
-  return `אתה מומחה בחילוץ שאלות אמריקאיות ממבחנים. חלץ את כל השאלות מהטקסט הבא.
-
-עבור כל שאלה, החזר:
-- מספר השאלה
-- טקסט השאלה
-- רשימת התשובות (מספר 1 עד N)
-- ${hasSolution ? 'אינדקס התשובה הנכונה (1-based)' : 'אינדקס התשובה הנכונה אם ניתן לזהות, אחרת 1'}
-
-החזר JSON בלבד, ללא markdown, בפורמט הבא:
-[{"n":1,"q":"טקסט השאלה","opts":["תשובה 1","תשובה 2","תשובה 3","תשובה 4"],"correct":2}]
-
-הטקסט:
-${text.slice(0, 50000)}`;
-}
-
+// =====================================================
+// Handler
+// =====================================================
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const auth = await authenticate(req);
   if (!auth) return res.status(401).json({ error: 'Missing or invalid authorization' });
 
-  let examId = null; // captured after exam creation for use in catch block
+  let examId = null;
 
   try {
-    // Parse multipart
     const buf = await rawBody(req);
     const ct = req.headers['content-type'] || '';
     if (!ct.includes('multipart')) return res.status(400).json({ error: 'Expected multipart/form-data' });
@@ -434,87 +609,104 @@ export default async function handler(req, res) {
     }
     examId = exam.id;
 
-    // ===== Run Cloudinary upload + Gemini Vision in PARALLEL =====
+    // Prep Cloudinary creds
     const cleanEnv = s => (s || '').replace(/\\n/g, '').replace(/\s+/g, '').trim();
     const cloudName = cleanEnv(process.env.CLOUDINARY_CLOUD_NAME);
     const cloudKey = cleanEnv(process.env.CLOUDINARY_API_KEY);
     const cloudSecret = cleanEnv(process.env.CLOUDINARY_API_SECRET);
-    let pdfCloudinaryId = null;
+    const hasCloudinary = !!(cloudName && cloudKey && cloudSecret);
     const examBase64 = Buffer.from(examFile.data).toString('base64');
     const solBase64 = solFile ? Buffer.from(solFile.data).toString('base64') : null;
 
-    // Start both tasks at the same time
-    const cloudinaryPromise = (async () => {
-      if (!cloudName || !cloudKey || !cloudSecret) return null;
+    // ===== Run in parallel: Cloudinary upload + text-layer analysis =====
+    const cloudinaryPromise = hasCloudinary
+      ? uploadPdfToCloudinary({
+          cloudName, apiKey: cloudKey, apiSecret: cloudSecret,
+          pdfBase64: examBase64,
+          publicId: `examprep/${auth.userId}/${exam.id}/exam`,
+        }).catch(e => { console.error('[upload] cloudinary error:', e.message); return null; })
+      : Promise.resolve(null);
+
+    const positionsPromise = extractPositions(examFile.data)
+      .catch(e => { console.error('[upload] positions error:', e.message); return null; });
+
+    const [cloudinaryId, positions] = await Promise.all([cloudinaryPromise, positionsPromise]);
+
+    // ===== Detect MCQs from text layer =====
+    let mcqs = [];
+    let mode = 'text-layer';
+    let usedGeminiFallback = false;
+
+    if (positions && positions.length) {
+      const detected = detectMCQsFromPositions(positions);
+      mcqs = detected.mcqs;
+      mode = `text-layer:${detected.mode}`;
+      console.log(`[upload] text-layer detected ${mcqs.length} MCQs via ${detected.mode}`);
+    }
+
+    // Fallback: if text layer found nothing, send the whole PDF to Gemini.
+    if (mcqs.length === 0) {
+      console.log('[upload] text layer found 0 MCQs — falling back to Gemini Vision');
+      usedGeminiFallback = true;
+      mode = 'gemini-fallback';
+      const geminiMcqs = await analyzeExamWithGemini(examBase64, solBase64);
+      if (geminiMcqs && geminiMcqs.length) {
+        mcqs = geminiMcqs.map((q) => ({
+          section: String(q.n || ''),
+          number: q.n,
+          page: q.page || 2,
+          yTop: ((q.y_top ?? 0) / 100) * (q.page_h || 842),
+          yBottom: ((q.y_bottom ?? Math.min((q.y_top ?? 0) + 25, 100)) / 100) * (q.page_h || 842),
+          pageWidth: q.page_w || 595,
+          pageHeight: q.page_h || 842,
+          numOptions: 4,
+          _geminiCorrect: q.correct,
+        }));
+      }
+    }
+
+    // Dedup by number and sort
+    const seen = new Set();
+    mcqs = mcqs.filter(q => { const k = q.number; if (seen.has(k)) return false; seen.add(k); return true; });
+    mcqs.sort((a, b) => (a.number || 0) - (b.number || 0));
+    console.log(`[upload] ${mcqs.length} unique MCQs after dedup`);
+
+    // ===== Answers: ask Gemini to parse the solution PDF in parallel =====
+    // (Only when we have a solution and didn't already get answers from the fallback path.)
+    let answers = {};
+    if (mcqs.length > 0 && solBase64 && !usedGeminiFallback) {
+      const nums = mcqs.map(q => q.number).filter(Boolean);
       try {
-        const publicId = `examprep/${auth.userId}/${exam.id}/exam`;
-        const timestamp = String(Math.floor(Date.now() / 1000));
-        const { createHash } = await import('node:crypto');
-        const signature = createHash('sha1').update(`public_id=${publicId}&timestamp=${timestamp}${cloudSecret}`).digest('hex');
-        console.log(`[upload] Cloudinary: uploading ${examFile.data.length} bytes...`);
-        const r = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file: `data:application/pdf;base64,${examBase64}`, public_id: publicId, api_key: cloudKey, timestamp, signature }),
-        });
-        if (r.ok) { const d = await r.json(); console.log(`[upload] Cloudinary OK: ${d.public_id}`); return d.public_id; }
-        console.error(`[upload] Cloudinary ${r.status}:`, (await r.text()).slice(0, 200));
-        return null;
-      } catch (e) { console.error('[upload] Cloudinary:', e.message); return null; }
-    })();
+        const parsed = await extractAnswersWithGemini(solBase64, nums);
+        if (parsed) answers = parsed;
+      } catch (e) {
+        console.warn('[upload] answer extraction failed:', e.message);
+      }
+    }
 
-    const geminiPromise = (async () => {
-      try {
-        const result = await analyzeExamWithGemini(examBase64, solBase64);
-        if (result?.length) { console.log(`[upload] Gemini: ${result.length} MCQs found`); return result; }
-      } catch (e) { console.error('[upload] Gemini error:', e.message); }
-      // Fallback: regex
-      try {
-        console.log('[upload] Gemini failed, trying regex fallback...');
-        const { extractText } = await import('unpdf');
-        const examText = (await extractText(new Uint8Array(examFile.data), { mergePages: true }))?.text?.trim() || '';
-        const solText = solFile ? (await extractText(new Uint8Array(solFile.data), { mergePages: true }))?.text?.trim() || '' : '';
-        const qs = parseQuestionsFromText(examText, solText);
-        console.log(`[upload] regex fallback: ${qs.length} questions`);
-        return qs;
-      } catch (e) { console.warn('[upload] regex fallback failed:', e.message); return []; }
-    })();
-
-    // Wait for both to complete
-    const [cloudinaryId, questions_raw] = await Promise.all([cloudinaryPromise, geminiPromise]);
-    pdfCloudinaryId = cloudinaryId;
-    let questions = questions_raw || [];
-
-    // ===== Step 3: USE GEMINI's y_top/y_bottom directly =====
-    // No more unpdf text parsing — trust AI's visual analysis
-    const RENDER_H = 2070; // Cloudinary renders letter PDF at w_1600 → ~2070px tall
-
-    // Dedup by question number
-    const seenNums = new Set();
-    questions = questions.filter(q => { if (seenNums.has(q.n)) return false; seenNums.add(q.n); return true; });
-    console.log(`[upload] ${questions.length} unique MCQs`);
-
-    // Build image URLs using Gemini's y_top/y_bottom + store in DB
-    if (questions.length > 0) {
-      const qRecords = questions.map((q, i) => {
-        const pageNum = q.page || 2;
+    // ===== Build DB rows =====
+    if (mcqs.length > 0) {
+      const qRecords = mcqs.map((q, i) => {
         let imagePath = 'text-only';
-        if (pdfCloudinaryId) {
-          const yTop = q.y_top ?? 0;
-          const yBottom = q.y_bottom ?? Math.min(yTop + 25, 100);
-          const yPx = Math.max(0, Math.round((yTop / 100) * RENDER_H));
-          const hPx = Math.max(Math.round(((yBottom - yTop) / 100) * RENDER_H), 150);
-          imagePath = `https://res.cloudinary.com/${cloudName}/image/upload/pg_${pageNum},w_1600/c_crop,w_1600,h_${hPx},y_${yPx},g_north/q_auto/${pdfCloudinaryId}.png`;
-          console.log(`[crop] q${q.n} p${pageNum}: ${yTop}%-${yBottom}% → y=${yPx} h=${hPx}`);
+        if (cloudinaryId) {
+          imagePath = buildCropUrl(cloudName, cloudinaryId, q);
         }
+        const correct = answers[String(q.number)] ?? q._geminiCorrect ?? null;
         return {
-          exam_id: exam.id, course_id: courseIdInt, user_id: auth.userId,
-          question_number: q.n || (i + 1), image_path: imagePath,
-          num_options: 4, correct_idx: q.correct || 1,
-          option_labels: null, general_explanation: q.explanation || null, is_ai_generated: true,
+          exam_id: exam.id,
+          course_id: courseIdInt,
+          user_id: auth.userId,
+          question_number: q.number || (i + 1),
+          section_label: q.section || null,
+          image_path: imagePath,
+          num_options: q.numOptions || 4,
+          correct_idx: correct || 1,
+          option_labels: null,
+          is_ai_generated: usedGeminiFallback,
         };
       });
-      console.log(`[upload] inserting ${qRecords.length} questions`);
+
+      console.log(`[upload] inserting ${qRecords.length} questions (mode=${mode})`);
       const { error: qErr } = await auth.db.from('ep_questions').insert(qRecords);
       if (qErr) {
         console.error('[upload] batch insert failed:', qErr.message);
@@ -524,38 +716,43 @@ export default async function handler(req, res) {
       }
     }
 
-    const fileWarnings = [];
-
     // Update exam status — always 'ready' after processing (even with 0 questions)
     await auth.db.from('ep_exams').update({
       status: 'ready',
-      question_count: questions.length,
+      question_count: mcqs.length,
+      total_pages: positions?.length || null,
       processed_at: new Date().toISOString(),
     }).eq('id', exam.id);
 
     // Update course counters
     const [{ count: qCount }, { count: pdfCount }] = await Promise.all([
-      auth.db.from('ep_questions').select('id', { count: 'exact', head: true })
-        .eq('course_id', courseIdInt),
+      auth.db.from('ep_questions').select('id', { count: 'exact', head: true }).eq('course_id', courseIdInt),
       auth.db.from('ep_exams').select('id', { count: 'exact', head: true }).eq('course_id', courseIdInt),
     ]);
     await auth.db.from('ep_courses').update({ total_questions: qCount, total_pdfs: pdfCount }).eq('id', courseIdInt);
 
     // Build warnings
-    if (questions.length === 0) {
-      fileWarnings.push('לא זוהו שאלות אמריקאיות בקובץ. ודא שהמבחן מכיל שאלות רב-ברירה בפורמט מוכר.');
+    const warnings = [];
+    if (mcqs.length === 0) {
+      warnings.push('לא זוהו שאלות אמריקאיות בקובץ. ודא שהמבחן מכיל שאלות רב-ברירה בפורמט מוכר.');
+    } else if (solBase64) {
+      const answered = mcqs.filter(q => answers[String(q.number)] || q._geminiCorrect).length;
+      if (answered === 0) {
+        warnings.push('לא זוהו תשובות מסומנות בקובץ הפתרון — ודא שהעלית את הפתרון הנכון.');
+      } else if (answered / mcqs.length < 0.5) {
+        warnings.push(`זוהו תשובות רק ל-${answered} מתוך ${mcqs.length} שאלות.`);
+      }
     }
 
     res.json({
       ok: true,
       exam_id: exam.id,
-      question_count: questions.length,
-      mode: 'gemini-vision',
-      ...(fileWarnings.length && { warnings: fileWarnings }),
+      question_count: mcqs.length,
+      mode,
+      ...(warnings.length && { warnings }),
     });
   } catch (err) {
     console.error('[upload] fatal:', err?.message || err, err?.stack?.split('\n')[1] || '');
-    // Mark the specific exam as failed so the user can retry/delete it
     try {
       if (auth?.db) {
         const q = auth.db.from('ep_exams').update({ status: 'failed' });
