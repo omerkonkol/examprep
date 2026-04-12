@@ -6,6 +6,8 @@
 // mirrors the style, difficulty, and topic mix of real exams.
 // =====================================================
 
+import { checkIpThrottle } from '../../lib/ipThrottle.mjs';
+
 export const config = {
   api: { bodyParser: true },
   maxDuration: 60,
@@ -73,12 +75,28 @@ async function callGemini(prompt, maxTokens = 16384) {
   throw lastErr || Object.assign(new Error('All models failed'), { http: 502 });
 }
 
+const ALLOWED_ORIGINS = new Set([
+  'https://try-examprep.com',
+  'https://www.try-examprep.com',
+  'https://examprep.vercel.app',
+]);
+
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Mock exams are the most expensive Gemini call — tighter limit
+  const throttle = await checkIpThrottle(req, 'lab_mock_exam', { maxDay: 10, maxWeek: 30, blockHours: 24 });
+  if (!throttle.allowed) {
+    return res.status(429).json({ error: 'הגעת למכסת הבקשות. נסה שוב מאוחר יותר.', reason: throttle.reason });
+  }
 
   try {
     const { size, courseName, topicDistribution, sampleQuestions, style } = req.body || {};

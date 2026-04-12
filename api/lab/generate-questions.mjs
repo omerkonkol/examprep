@@ -5,6 +5,8 @@
 // and course name, generates MCQ questions using Gemini.
 // =====================================================
 
+import { checkIpThrottle } from '../../lib/ipThrottle.mjs';
+
 export const config = {
   api: { bodyParser: true },
   maxDuration: 60,
@@ -73,12 +75,28 @@ async function callGemini(prompt) {
   throw lastErr || Object.assign(new Error('All models failed'), { http: 502 });
 }
 
+const ALLOWED_ORIGINS = new Set([
+  'https://try-examprep.com',
+  'https://www.try-examprep.com',
+  'https://examprep.vercel.app',
+]);
+
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '');
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Per-IP throttle: 30/day, 100/week, 24h block on breach
+  const throttle = await checkIpThrottle(req, 'lab_generate_questions', { maxDay: 30, maxWeek: 100, blockHours: 24 });
+  if (!throttle.allowed) {
+    return res.status(429).json({ error: 'הגעת למכסת הבקשות. נסה שוב מאוחר יותר.', reason: throttle.reason });
+  }
 
   try {
     const { topics, count, difficulty, courseName, language } = req.body || {};

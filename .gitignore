@@ -24,3 +24,5 @@ data/app.db-*
 .vercel
 .env.vercel
 .env.vercel
+
+.env*.local

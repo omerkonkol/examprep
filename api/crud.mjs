@@ -125,7 +125,7 @@ export default async function handler(req, res) {
         const { data: buckets } = await admin.storage.listBuckets();
         const exists = buckets?.some(b => b.name === 'exam-pages');
         if (!exists) {
-          const { error } = await admin.storage.createBucket('exam-pages', { public: true, fileSizeLimit: 52428800 });
+          const { error } = await admin.storage.createBucket('exam-pages', { public: false, fileSizeLimit: 52428800 });
           storageStatus = error ? `create failed: ${error.message}` : 'bucket created';
         } else {
           storageStatus = 'bucket exists';
