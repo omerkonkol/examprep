@@ -3,10 +3,8 @@
   "buildCommand": "node scripts/build-prod.mjs",
   "outputDirectory": ".",
   "functions": {
-    "api/study/generate.mjs": {
-      "maxDuration": 60,
-      "memory": 1024
-    }
+    "api/upload.mjs": { "maxDuration": 120, "memory": 1024 },
+    "api/study/generate.mjs": { "maxDuration": 60, "memory": 1024 }
   },
   "rewrites": [
     { "source": "/api/me", "destination": "/api/crud" },
@@ -34,7 +32,9 @@
     { "source": "/insights", "destination": "/public/index.html" },
     { "source": "/lab", "destination": "/public/index.html" },
     { "source": "/progress", "destination": "/public/index.html" },
-    { "source": "/courses/(.*)", "destination": "/public/index.html" }
+    { "source": "/courses/(.*)", "destination": "/public/index.html" },
+    { "source": "/vocab", "destination": "/vocab/index.html" },
+    { "source": "/vocab/", "destination": "/vocab/index.html" }
   ],
   "headers": [
     {
@@ -70,6 +70,12 @@
       "source": "/public/data/(.*).json",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=86400" }
+      ]
+    },
+    {
+      "source": "/vocab/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600" }
       ]
     }
   ]

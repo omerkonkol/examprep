@@ -395,6 +395,8 @@ export default async function handler(req, res) {
   const auth = await authenticate(req);
   if (!auth) return res.status(401).json({ error: 'Missing or invalid authorization' });
 
+  let examId = null; // captured after exam creation for use in catch block
+
   try {
     // Parse multipart
     const buf = await rawBody(req);
@@ -430,6 +432,7 @@ export default async function handler(req, res) {
       console.error('[upload] insert exam:', examErr.message);
       return res.status(500).json({ error: 'שגיאה ביצירת רשומת מבחן' });
     }
+    examId = exam.id;
 
     // ===== Run Cloudinary upload + Gemini Vision in PARALLEL =====
     const cleanEnv = s => (s || '').replace(/\\n/g, '').replace(/\s+/g, '').trim();
@@ -552,12 +555,15 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error('[upload] fatal:', err?.message || err, err?.stack?.split('\n')[1] || '');
-    // Mark exam as failed so it can be deleted
+    // Mark the specific exam as failed so the user can retry/delete it
     try {
       if (auth?.db) {
-        const examId = err?._examId;
-        // Try to find and update any 'processing' exam for this user
-        await auth.db.from('ep_exams').update({ status: 'failed' }).eq('user_id', auth.userId).eq('status', 'processing');
+        const q = auth.db.from('ep_exams').update({ status: 'failed' });
+        if (examId) {
+          await q.eq('id', examId);
+        } else {
+          await q.eq('user_id', auth.userId).eq('status', 'processing');
+        }
       }
     } catch {}
     res.status(500).json({ error: 'שגיאה פנימית בהעלאה' });

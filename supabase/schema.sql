@@ -523,6 +523,34 @@ CREATE INDEX IF NOT EXISTS ep_contact_messages_created_idx
 -- RLS on with no policies = only service_role can read/write.
 ALTER TABLE ep_contact_messages ENABLE ROW LEVEL SECURITY;
 
+-- ====== AUTO-PROFILE TRIGGER ======
+-- Automatically create a profiles row when any new user signs up,
+-- including Google OAuth users. Runs as SECURITY DEFINER to bypass RLS.
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, display_name, plan, trial_started_at, plan_expires_at)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(
+      NEW.raw_user_meta_data->>'full_name',
+      NEW.raw_user_meta_data->>'username',
+      split_part(NEW.email, '@', 1)
+    ),
+    'trial',
+    NOW(),
+    NOW() + INTERVAL '14 days'
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
 -- Lock these RPCs so only the service role + the owner can call them.
 REVOKE ALL ON FUNCTION reset_user_quotas_if_needed(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ep_reserve_pdf_slot(UUID, INTEGER, INTEGER, INTEGER, BIGINT) FROM PUBLIC;

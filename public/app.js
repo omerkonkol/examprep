@@ -263,18 +263,11 @@ const Auth = {
       if (error.message.includes('already registered')) throw new Error('שגיאה בהרשמה. אם כבר יש לך חשבון, נסה להתחבר.');
       throw new Error(error.message);
     }
-    // Create profile row
-    if (data.user) {
-      const trialExpiry = new Date(Date.now() + 14 * 86400000).toISOString();
-      await sb.from('profiles').upsert({
-        id: data.user.id,
-        email,
-        display_name: name,
-        plan: 'trial',
-        is_admin: false,
-        trial_started_at: new Date().toISOString(),
-        plan_expires_at: trialExpiry,
-      }, { onConflict: 'id' });
+    // If Supabase requires email confirmation, session will be null
+    const needsConfirmation = !data.session && !!data.user;
+    // Update display_name on the profile (trigger already created it with plan/trial data)
+    if (data.user && data.session) {
+      await sb.from('profiles').update({ display_name: name, email }).eq('id', data.user.id);
     }
     const u = {
       id: data.user?.id,
@@ -284,8 +277,8 @@ const Auth = {
       isAdmin: false,
       daysLeft: 14,
     };
-    this.save(u);
-    return u;
+    if (!needsConfirmation) this.save(u);
+    return { user: u, needsConfirmation };
   },
 
   async loginWithGoogle() {
@@ -1566,7 +1559,15 @@ function renderAuth(signupMode = false) {
     try {
       let user;
       if (mode === 'signup') {
-        user = await Auth.signup(email, password, name);
+        const result = await Auth.signup(email, password, name);
+        if (result.needsConfirmation) {
+          errEl.classList.add('success');
+          errEl.textContent = 'נשלח אליך מייל אישור! לחץ על הקישור במייל כדי להפעיל את החשבון.';
+          btn.disabled = false;
+          btn.textContent = 'יצירת חשבון';
+          return;
+        }
+        user = result.user;
       } else {
         user = await Auth.login(email, password);
       }
