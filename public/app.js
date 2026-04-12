@@ -118,8 +118,14 @@ const Data = {
   },
   imageUrl(relImage, courseId) {
     const cid = courseId || state.course?.id || 'tohna1';
-    if (cid === 'tohna1') return `https://tohna1-quiz.vercel.app/images/${encodeURI(relImage)}`;
-    // Cloud courses: images stored in Supabase storage, path is already a full URL or relative
+    // Built-in tohna1 images are shipped inside examprep itself at
+    // /public/images/tohna1/<exam_id>/<file>.png. Previously we pointed at
+    // the sibling tohna1-quiz.vercel.app deployment, but keeping examprep
+    // self-contained means the app can't break if that deployment is
+    // retired / paused / renamed.
+    if (cid === 'tohna1') return `/public/images/tohna1/${encodeURI(relImage)}`;
+    // Cloud courses: images stored in Cloudinary or Supabase, path is either
+    // a full URL or a relative storage key.
     if (relImage.startsWith('http')) return relImage;
     return `/storage/${encodeURI(relImage)}`;
   },
