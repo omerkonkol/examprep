@@ -929,45 +929,41 @@ Determine if the SOLUTION PDF is genuinely the answer key for THIS exam.
 - If the solution PDF looks like lecture notes, a different exam, a syllabus, a study guide, or unrelated content → that's a MISMATCH.
 - Only answer "match: true" when you are confident the two documents are paired. When in doubt, say unsure.
 
-PART B — ANSWER EXTRACTION (STRICT):
-For every exam question number you can find in the solution PDF, report the correct answer.
-You are ONLY extracting answers that are EXPLICITLY STATED in the solution PDF. You are NOT solving the questions yourself. You are NOT inferring the answer from context. You are NOT guessing.
+PART B — ANSWER EXTRACTION:
+For every exam question, determine the correct answer by reading the solution PDF carefully.
+The solution PDF is the authoritative answer key — the user uploaded it specifically to provide answers.
 
-⚠️ CRITICAL WARNING — DO NOT BE FOOLED BY EXPLANATION TEXT:
-Solution PDFs often contain detailed explanations that DISCUSS WRONG OPTIONS in order to explain why they are incorrect. For example: "ג שגויה כיוון ש...", "אפשרות ג אינה נכונה כי...", "ג אינה המחלקה הקטנה ביותר כי...". These sentences MENTION the letter of a wrong option — they are NOT the answer. If you pick up "ג" from such an explanation sentence, you will give the WRONG answer. Read the CONCLUSION of the solution, not the discussion.
+Answers can come from any of these sources in the solution PDF:
+  1. A SUMMARY TABLE ("שאלה | תשובה") — most reliable.
+  2. A DEDICATED ANSWER KEY: "1. ב", "1) א", "תשובה 1: ב", "ת. 1: ג".
+  3. AN EXPLICIT DECLARATION inline in the solution: "לכן התשובה היא ב", "התשובה הנכונה היא א", "התשובה הנכונה היתה ט'", "מסיח א הוסר, התשובה הנכונה היתה ט'", "הקיפו את אפשרות ב", "הפתרון: א".
+  4. AN EXPLANATION PARAGRAPH whose CONCLUSION matches ONE SPECIFIC OPTION. Example: if the solution explains "r ו-b הם אללים של גנים שונים" and option ד reads exactly "b ו-r הם אללים של גנים שונים" — that's ד. Match the concluding logic of the explanation to the option text that expresses the same conclusion.
+  5. A HIGHLIGHTED / CIRCLED option — colored highlight, hand-drawn circle, checkmark (✓), arrow (→). Also handwritten letter/digit in the margin.
 
-Only count a letter as the answer if it appears in one of these EXPLICIT final-answer formats:
-  1. PRIORITY: A SUMMARY TABLE on the last pages — e.g. a table with columns "שאלה | תשובה" listing each question with its answer letter. This is the most reliable source.
-  2. A DEDICATED ANSWER KEY section or ordered list: "1. ב", "1) א", "תשובה 1: ב", "ת. 1: ג".
-  3. A CONCLUSION / INLINE DECLARATION for a question: "לכן התשובה היא ב", "התשובה הנכונה היא א", "התשובה הנכונה היתה ט'", "הקיפו את אפשרות ב", "הפתרון: א", "מסיח א הוסר, התשובה הנכונה היתה ט'". The sentence must DECLARE the answer; it can appear at the END of a question's explanation block, right before the next question.
-  4. A HIGHLIGHTED or CIRCLED option — a colored highlight over one option letter, a hand-drawn circle, checkmark (✓), or arrow (→) pointing at one specific option. The correct option is the one that is marked/circled/highlighted, NOT the ones that are crossed out.
-  5. A LETTER or DIGIT written in the margin next to the question number.
+⚠️ AVOID THE WRONG-OPTION TRAP:
+Explanations often MENTION wrong options to dismiss them ("ג שגויה כי...", "אפשרות ב אינה נכונה"). DO NOT pick up the letter of a dismissed option — pick the one the explanation AFFIRMS as correct. If the explanation reviews several options and concludes with one affirmative statement, pick THAT one.
 
-IMPORTANT — 10-option exams: biology/genetics/chemistry exams commonly have 6–10 options labeled א,ב,ג,ד,ה,ו,ז,ח,ט,י. Map letters to indices as follows:
+IMPORTANT — 10-option exams: biology/genetics/chemistry exams commonly have 6–10 options labeled א,ב,ג,ד,ה,ו,ז,ח,ט,י. Map letters to indices:
   א=1, ב=2, ג=3, ד=4, ה=5, ו=6, ז=7, ח=8, ט=9, י=10
-Accept both Hebrew letters and digits in the source. Return the numeric index in "ans".
+Accept both Hebrew letters and digits. Return numeric index in "ans".
 
-CRITICAL INSTRUCTION — OMIT RATHER THAN GUESS:
-If you are NOT 100% sure of the answer for a specific question — if the solution PDF does not clearly state it with one of the 5 formats above, if you found the letter only in the middle of an explanation paragraph (not a conclusion), or if there is any ambiguity whatsoever — you MUST OMIT that question from the "answers" array entirely. Return nothing rather than a guess. Returning nothing is always correct; returning a wrong answer is always wrong.
-
-Do NOT solve questions. Do NOT infer. Do NOT pick up letters from explanation paragraphs. Only report what is EXPLICITLY declared as the final answer.
+Be EXHAUSTIVE — aim to return every question that has a determinable answer. Skip a question ONLY if the solution PDF genuinely does not cover it or the text is too ambiguous to identify a single winner. Returning nothing is better than returning a wrong answer, but returning an answer you're confident about is better than over-omitting.
 
 Return ONLY this JSON object (no markdown, no extra text):
 {
   "match": true | false | null,
-  "confidence": <float 0.0-1.0 indicating how confident you are in the match verdict>,
-  "reasoning": "<one short Hebrew sentence explaining the match verdict>",
+  "confidence": <float 0.0-1.0>,
+  "reasoning": "<one short Hebrew sentence>",
   "answers": [
-    {"q": <exam question number>, "ans": <integer 1..10>, "method": "<one of: table, list, conclusion, highlight, handwritten, margin>", "confidence": <0.0-1.0>, "source_quote": "<the exact text snippet or visual description from the solution PDF declaring this as the answer, max 100 chars>"}
+    {"q": <exam question number>, "ans": <integer 1..10>, "method": "<table|list|conclusion|explanation|highlight|handwritten|margin>", "confidence": <0.0-1.0>, "source_quote": "<brief quote or description from PDF, ≤120 chars>"}
   ]
 }
 
 Rules:
-- Skip any question where you cannot find the answer in one of the 5 explicit formats. Never guess.
-- "confidence" < 0.85 → omit the answer entirely.
-- "source_quote" is REQUIRED — quote the exact final-answer text (e.g. "התשובה: א" or "שאלה 2: ב") or describe the visual mark (e.g. "option א circled in red"). If your source_quote is a sentence from the middle of an explanation paragraph — OMIT the answer instead.
-- If the solution PDF clearly does not match the exam, still return "answers": [] and set "match": false.
-- Be exhaustive: scan every page. The answer key is often on the last page of the solution PDF.`;
+- "source_quote" is required — a concise quote or visual description.
+- "confidence" < 0.65 → omit that answer.
+- If the solution PDF clearly does not match the exam, return "answers": [] and set "match": false.
+- Scan EVERY page, including the last page where summary tables often live.`;
 
   async function callModel(model, apiKey) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -1047,7 +1043,10 @@ Rules:
             continue;
           }
           // Accept up to 10 options (biology/genetics exams have א–י).
-          if (q > 0 && ans >= 1 && ans <= 10 && conf >= 0.85) {
+          // 0.65 threshold — with strong prompt guidance, Gemini reports ~0.8
+          // for clear answers and ~0.6 for explanation-inferred ones. Both are
+          // useful; the user can still override via the "correct answer" UI.
+          if (q > 0 && ans >= 1 && ans <= 10 && conf >= 0.65) {
             answers[String(q)] = ans;
           }
         }
