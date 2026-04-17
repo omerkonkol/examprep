@@ -6,6 +6,45 @@
 // progress in localStorage. Cloud path comes later for
 // real users.
 // =====================================================
+//
+// TABLE OF CONTENTS — search for the "===== NAME =====" marker to jump.
+// Line numbers are approximate; they drift as the file grows.
+//
+//   Error telemetry ................................ ~line 11
+//   Globals ........................................ ~line 62
+//   State .......................................... ~line 235
+//   Course Registry ................................ ~line 246
+//   Theme (light / dark / auto) .................... ~line 359
+//   Auth (Supabase) ................................ ~line 398
+//   Demo data seeder ............................... ~line 860
+//   Local progress storage ......................... ~line 1002
+//   Plans / quotas ................................. ~line 1182
+//   Utility (escapeHtml, tmpl, etc.) ............... ~line 1191
+//   Trial countdown banner ......................... ~line 1370
+//   Router ......................................... ~line 1413
+//   Course-scoped data helpers ..................... ~line 1514
+//   Topic taxonomy + pattern analysis .............. ~line 1541
+//   Streak / time / trend / tips ................... ~line 1688
+//   RENDER: Landing ................................ ~line 1831
+//   RENDER: Auth (login + signup) .................. ~line 2043
+//   RENDER: Dashboard .............................. ~line 2338
+//   RENDER: Degree Dashboard ....................... ~line 2732
+//   Add-Course / Add-Sub-Course modals ............. ~line 2849
+//   RENDER: Course Dashboard ....................... ~line 3080
+//   Exam management modal .......................... ~line 3417
+//   Onboarding tour ................................ ~line 4449
+//   Upload PDF modal ............................... ~line 4576
+//   Batch creation modal ........................... ~line 5033
+//   Quiz session ................................... ~line 5100
+//   RENDER: Summary ................................ ~line 5496
+//   RENDER: Mistake Review ......................... ~line 5556
+//   Synthetic mock-exam generator .................. ~line 5666
+//   RENDER: Insights ............................... ~line 5757
+//   RENDER: Lab .................................... ~line 5880
+//   RENDER: Progress ............................... ~line 6220
+//   Shared topbar + user menu + batches dropdown ... ~line 6484
+//   Settings page .................................. search "Settings section"
+// =====================================================
 
 // ===== Error telemetry =====
 // Captures uncaught errors and unhandled rejections and POSTs them to
@@ -142,7 +181,9 @@ const Data = {
           optionLabels: q.option_labels || null,
           correctIdx: q.correct_idx,
           topic: q.topic || null,
-          groupId: null,
+          groupId: q.group_id || null,
+          instructorSolutionText: q.instructor_solution_text || null,
+          hasRichSolution: !!q.has_rich_solution,
         };
         if (q.general_explanation || q.option_explanations) {
           explanations[qid] = {
@@ -207,6 +248,8 @@ const Data = {
       correctIdx: a.correctIdx,
       explanation: this.explanations[qid] || null,
       topic: a.topic || null,
+      instructorSolutionText: a.instructorSolutionText || null,
+      hasRichSolution: !!a.hasRichSolution,
     };
   },
   imageUrl(relImage, courseId) {
@@ -1109,6 +1152,54 @@ const Progress = {
     p.batches = p.batches || [];
     p.batches.push(batch);
     this.save(uid, p, courseId);
+    // The row was created at startQuiz() via /api/batches/start. Final totals
+    // are pushed by finalizeBatch(). We intentionally don't POST here to avoid
+    // a duplicate primary-key error.
+  },
+  finalizeBatch(uid, batch, courseId) {
+    // Called when the session ends (user finishes or exits). Pushes final
+    // totals to the server so the cloud-synced row has accurate numbers.
+    if (!courseId || courseId === 'tohna1' || !batch?.batchId) return;
+    Auth.getToken().then(token => {
+      if (!token) return;
+      fetch('/api/batches/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          id: batch.batchId,
+          correct: batch.correct || 0,
+          wrong: batch.wrong || 0,
+          selections: batch.selections || {},
+          correctMap: batch.correctMap || {},
+          endedAt: batch.endedAt ? new Date(batch.endedAt).toISOString() : new Date().toISOString(),
+        }),
+      }).catch(() => {});
+    });
+  },
+  async fetchRemoteBatches(courseId, limit = 10) {
+    if (!courseId || courseId === 'tohna1') return [];
+    try {
+      const token = await Auth.getToken();
+      if (!token) return [];
+      const r = await fetch(`/api/courses/${encodeURIComponent(courseId)}/batches`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return [];
+      const rows = await r.json();
+      // Map server shape → client shape used by rendering.
+      return (rows || []).slice(0, limit).map(b => ({
+        batchId: b.id,
+        size: b.size,
+        correct: b.correct,
+        wrong: b.wrong,
+        examMode: !!b.exam_mode,
+        qids: b.qids || [],
+        selections: b.selections || {},
+        correctMap: b.correct_map || {},
+        startedAt: b.started_at ? +new Date(b.started_at) : null,
+        endedAt: b.ended_at ? +new Date(b.ended_at) : null,
+      }));
+    } catch { return []; }
   },
   stats(uid, courseId) {
     const p = this.load(uid, courseId);
@@ -1226,6 +1317,48 @@ function pickRandom(arr, n) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a.slice(0, Math.min(n, a.length));
+}
+
+// Keep questions that share a group_id (same passage/diagram/table) together,
+// always in their original order. Individual questions are shuffled; groups
+// are shuffled as a unit. Selects up to `n` questions total.
+function pickRandomGrouped(arr, n) {
+  if (!Array.isArray(arr) || arr.length === 0) return [];
+  const groups = new Map();   // group_id -> [questions in original order]
+  const singles = [];          // questions with no group_id
+  for (const q of arr) {
+    const gid = q && (q.group_id || q.groupId);
+    if (gid) {
+      if (!groups.has(gid)) groups.set(gid, []);
+      groups.get(gid).push(q);
+    } else {
+      singles.push(q);
+    }
+  }
+  // Sort each group by numeric question number so Q5→Q6→Q7 stay in order.
+  for (const list of groups.values()) {
+    list.sort((a, b) => {
+      const an = parseInt(a?.number || a?.q_number || 0, 10) || 0;
+      const bn = parseInt(b?.number || b?.q_number || 0, 10) || 0;
+      return an - bn;
+    });
+  }
+  // Build units: each group is a single unit; each single is also a unit.
+  const units = [...groups.values(), ...singles.map(q => [q])];
+  // Shuffle units
+  for (let i = units.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [units[i], units[j]] = [units[j], units[i]];
+  }
+  // Flatten until we have at least `n` questions; do NOT split a group.
+  const out = [];
+  for (const u of units) {
+    if (out.length >= n) break;
+    // If adding this group would exceed n, still add it (grouped questions
+    // must stay together, even if it means slightly overshooting the limit).
+    out.push(...u);
+  }
+  return out;
 }
 function toast(msg, type = '', duration = 3000) {
   let container = document.getElementById('toast-container');
@@ -2155,7 +2288,7 @@ function renderAuth(signupMode = false) {
   function showAuthError(msg, fieldEl) {
     const errEl = document.getElementById('auth-error');
     errEl.textContent = msg;
-    errEl.classList.remove('success', 'shake');
+    errEl.classList.remove('success', 'info', 'shake');
     void errEl.offsetWidth; // force reflow for animation restart
     errEl.classList.add('shake');
     if (fieldEl) {
@@ -2200,15 +2333,19 @@ function renderAuth(signupMode = false) {
       }
       if (user.needsConfirmation) {
         // Email confirmation required — show message, don't navigate
-        errEl.classList.add('success');
-        errEl.textContent = '📧 שלחנו לך אימייל אימות — לחץ על הקישור בדואר כדי להשלים את ההרשמה.';
+        errEl.classList.remove('shake');
+        errEl.classList.add('info');
+        errEl.textContent = 'שלחנו אימייל אימות לכתובת שציינת — לחצו על הקישור כדי להשלים את ההרשמה.';
         btn.disabled = false;
         btn.textContent = 'יצירת חשבון';
         return;
       }
       state.user = user;
+      errEl.classList.remove('shake');
       errEl.classList.add('success');
-      errEl.textContent = mode === 'signup' ? 'נרשמת בהצלחה — מעבירים אותך...' : 'התחברת בהצלחה — מעבירים אותך...';
+      errEl.textContent = mode === 'signup'
+        ? 'ברוכים הבאים ל-ExamPrep! מעבירים אותך לסביבת העבודה...'
+        : 'התחברת בהצלחה. מעבירים אותך לסביבת העבודה...';
       // Seed demo data for admin — fire-and-forget so a slow JSON load can't
       // pin the login button. It runs after we navigate to the dashboard.
       if (user.isAdmin) {
@@ -2395,6 +2532,7 @@ async function renderDashboard() {
           <span>כיסוי: ${covPct}%</span>
           ${hasProgress ? `<span>דיוק: ${accPct}%</span>` : ''}
         </div>` : ''}
+        ${!c.is_degree ? `<div class="ccard-batches" id="course-batches-${escapeHtml(cid)}"></div>` : ''}
         <div class="meta">
           ${c.is_degree
             ? `<span class="degree-courses-count">${childCount} קורסים</span><span class="ready-pill course-cta-pill">כנס לתחום ←</span>`
@@ -2404,13 +2542,45 @@ async function renderDashboard() {
     `;
   }
 
+  function renderDashBatches(batches, cid) {
+    if (!batches || batches.length === 0) return '';
+    return batches.slice(0, 2).map((b, i) => {
+      const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
+      const cls = score >= 80 ? 'good' : score >= 60 ? 'mid' : 'bad';
+      const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'short' }) : '';
+      return `<button type="button" class="ccard-batch ${cls}" data-batch-i="${i}" data-batch-cid="${escapeHtml(String(cid))}" title="לחץ לסקירה">
+        <span class="ccard-batch-score">${score}%</span>
+        <span class="ccard-batch-info">${b.correct}/${b.size} · ${date}</span>
+      </button>`;
+    }).join('');
+  }
+
+  // Cache of batches per course so click handlers can resolve a chip to its batch object.
+  const dashBatchCache = {};
+
+  function wireDashBatchClicks(cid) {
+    document.querySelectorAll(`#course-batches-${cid} .ccard-batch`).forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const i = parseInt(chip.dataset.batchI, 10);
+        const list = dashBatchCache[cid] || [];
+        const b = list[i];
+        if (!b) return;
+        if (!setCourseContext(cid)) return;
+        state.lastBatch = b;
+        navigate(`/course/${cid}/summary`);
+      });
+    });
+  }
+
   let coursesHtml = activeCourses.map(renderCourseCard).join('');
   coursesHtml += `
     <div class="course-card add" id="btn-add-course-card">
       <div class="add-card-content">
         <div class="add-icon">+</div>
         <strong>הוסף תחום לימוד</strong>
-        <small>בגרות, תואר, פסיכומטרי ועוד</small>
+        <small>תואר, פסיכומטרי ועוד</small>
       </div>
     </div>
   `;
@@ -2430,6 +2600,30 @@ async function renderDashboard() {
   }
 
   cg.innerHTML = coursesHtml;
+
+  // Async: populate recent batch chips for each active course card
+  activeCourses.filter(c => !c.is_degree).forEach(c => {
+    const cid = String(c.id);
+    const el = document.getElementById(`course-batches-${cid}`);
+    if (!el) return;
+    const local = (Progress.load(state.user.email, cid).batches || []).slice(-2).reverse();
+    dashBatchCache[cid] = local;
+    el.innerHTML = renderDashBatches(local, cid);
+    wireDashBatchClicks(cid);
+    if (state.user?.email && cid !== 'tohna1') {
+      Progress.fetchRemoteBatches(cid, 2).then(remote => {
+        if (!remote?.length) return;
+        const seen = new Set(local.map(b => b.batchId));
+        const merged = [...local, ...remote.filter(b => !seen.has(b.batchId))].sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0)).slice(0, 2);
+        const stillEl = document.getElementById(`course-batches-${cid}`);
+        if (stillEl) {
+          dashBatchCache[cid] = merged;
+          stillEl.innerHTML = renderDashBatches(merged, cid);
+          wireDashBatchClicks(cid);
+        }
+      }).catch(() => {});
+    }
+  });
 
   // "מה ללמוד היום?" widget — find weakest course with questions
   const studyCourses = CourseRegistry.list().filter(c => !c.archived).map(c => {
@@ -2694,20 +2888,6 @@ function seedDemoProgress(email, courses) {
 // ===== Add Degree Modal (pre-built chooser) =====
 const _UNS = (id) => `https://images.unsplash.com/photo-${id}?w=88&h=88&fit=crop&auto=format`;
 const DEGREE_CATEGORIES = [
-  {
-    label: 'בגרויות', icon: '📚',
-    degrees: [
-      { name: 'מתמטיקה',  desc: 'אלגברה, גאומטריה, הסתברות וסטטיסטיקה', color: '#2563eb', image: _UNS('1635070041078-e363dbe005cb') },
-      { name: 'אנגלית',   desc: 'קריאה, כתיבה, דקדוק ואוצר מילים',       color: '#0891b2', image: _UNS('1456513080510-7bf3a84b82f8') },
-      { name: 'פיזיקה',   desc: 'מכניקה, חשמל, אופטיקה',                  color: '#d97706', image: _UNS('1636466497217-26a8cbeaf0aa') },
-      { name: 'כימיה',    desc: 'כימיה אורגנית, אנאורגנית וגרעינית',      color: '#7c3aed', image: _UNS('1532187863486-abf9dbad1b69') },
-      { name: 'ביולוגיה', desc: 'תאים, גנטיקה, אבולוציה ופיזיולוגיה',   color: '#16a34a', image: _UNS('1530026186672-2cd00ffc50fe') },
-      { name: 'היסטוריה', desc: 'היסטוריה עולמית וישראלית',               color: '#dc2626', image: _UNS('1501785888041-af3ef285b470') },
-      { name: 'ספרות',    desc: 'סיפורת, שירה וביקורת ספרות',             color: '#9333ea', image: _UNS('1481627834876-b7833e8f5570') },
-      { name: 'גיאוגרפיה',desc: 'גיאוגרפיה פיזית, אנושית וסביבה',       color: '#059669', image: _UNS('1524661135-423995f22d0b') },
-      { name: 'אזרחות',   desc: 'מדינת ישראל, דמוקרטיה ומשפט',           color: '#64748b', image: _UNS('1589829545856-d10d557cf95f') },
-    ],
-  },
   {
     label: 'פסיכומטרי', icon: '🧠',
     degrees: [
@@ -3063,36 +3243,54 @@ async function renderCourseDashboard() {
   });
 
   // ===== Recent batches section =====
-  const batches = batchesForCourse(uid, cid);
+  // First render whatever is in localStorage immediately. Then asynchronously
+  // pull remote batches from Supabase and merge — so users see history even
+  // on a fresh device / browser after login.
   const batchesEl = document.getElementById('cd-batches');
   const batchesHeader = document.getElementById('cd-batches-header');
-  if (!batches.length) {
-    batchesHeader.style.display = 'none';
-  } else {
-    batchesHeader.style.display = '';
-    const recent = batches.slice(-3).reverse();
-    batchesEl.innerHTML = recent.map((b, i) => {
-      const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
-      const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL') : '';
-      return `
-        <div class="batch-row batch-clickable" data-batch-i="${i}" style="cursor:pointer">
-          <div class="batch-score">${score}%</div>
-          <div class="batch-info">
-            <div class="batch-summary">${b.correct} מתוך ${b.size} נכון${b.examMode ? ' · מצב מבחן' : ''}</div>
-            <div class="batch-date">${date}</div>
-          </div>
-          <svg class="batch-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        </div>
-      `;
-    }).join('');
-    batchesEl.querySelectorAll('.batch-clickable').forEach(row => {
-      row.addEventListener('click', () => {
-        const idx = parseInt(row.dataset.batchI);
-        state.lastBatch = recent[idx];
-        navigate(`/course/${cid}/summary`);
-      });
-    });
+  renderRecentBatches(batchesForCourse(uid, cid), batchesEl, batchesHeader, cid);
+  Progress.fetchRemoteBatches(cid, 10).then(remote => {
+    if (!remote?.length) return;
+    // Merge by batchId — prefer remote (source of truth for completed batches).
+    const local = batchesForCourse(uid, cid);
+    const byId = new Map();
+    for (const b of local) if (b?.batchId) byId.set(b.batchId, b);
+    for (const b of remote) if (b?.batchId) byId.set(b.batchId, b);
+    const merged = [...byId.values()].sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0));
+    renderRecentBatches(merged, batchesEl, batchesHeader, cid);
+  }).catch(() => {});
+}
+
+function renderRecentBatches(batches, batchesEl, batchesHeader, cid) {
+  if (!batchesEl) return;
+  if (!batches?.length) {
+    if (batchesHeader) batchesHeader.style.display = 'none';
+    batchesEl.innerHTML = '';
+    return;
   }
+  if (batchesHeader) batchesHeader.style.display = '';
+  const recent = batches.slice(-10).reverse();
+  batchesEl.innerHTML = recent.map((b, i) => {
+    const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
+    const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL') : '';
+    return `
+      <div class="batch-row batch-clickable" data-batch-i="${i}" style="cursor:pointer">
+        <div class="batch-score">${score}%</div>
+        <div class="batch-info">
+          <div class="batch-summary">${b.correct} מתוך ${b.size} נכון${b.examMode ? ' · מצב מבחן' : ''}</div>
+          <div class="batch-date">${date}</div>
+        </div>
+        <svg class="batch-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </div>
+    `;
+  }).join('');
+  batchesEl.querySelectorAll('.batch-clickable').forEach(row => {
+    row.addEventListener('click', () => {
+      const idx = parseInt(row.dataset.batchI);
+      state.lastBatch = recent[idx];
+      navigate(`/course/${cid}/summary`);
+    });
+  });
 }
 
 // Load and render exam list for a course
@@ -4429,6 +4627,7 @@ function showUploadPdfModal(courseId) {
           <div class="field">
             <label for="up-name">שם המבחן *</label>
             <input type="text" id="up-name" placeholder="למשל: מבחן מועד א 2024" maxlength="100" />
+            <div class="up-name-suggest" id="up-name-suggest" style="display:none"></div>
           </div>
           <div class="upload-drop-zone" id="up-drop-exam">
             <input type="file" id="up-exam" accept=".pdf" style="display:none" />
@@ -4521,20 +4720,126 @@ function showUploadPdfModal(courseId) {
   const examInput = wireDropZone('up-drop-exam', 'up-exam', 'up-exam-name');
   wireDropZone('up-drop-sol', 'up-solution', 'up-sol-name');
 
-  // Auto-suggest name from filename
+  // Build a clear, readable exam name from a messy filename.
+  // Handles common Hebrew academic patterns:
+  //   moed_aleph_24_25_no_ans_nom.pdf  → "מועד א' 2024-2025"
+  //   semester_b_2023_final.pdf        → "סמסטר ב' 2023 — סופי"
+  //   midterm_2024_clean.pdf           → "אמצע 2024"
   function smartName(filename) {
-    let n = filename.replace(/\.pdf$/i, '').replace(/[_\-]+/g, ' ').trim();
-    // Clean up common patterns to make name clearer
-    n = n.replace(/\b(exam|test|quiz|solution|sol|ans|answer|pdf)\b/gi, '').trim();
-    return n || filename.replace(/\.pdf$/i, '');
+    let n = filename.replace(/\.pdf$/i, '');
+    n = n.replace(/[_\-.]+/g, ' ').trim();
+
+    // ── Year detection ──
+    let yearTag = '';
+    const yearRangeMatch = n.match(/\b(19|20)?(\d{2})\s+(19|20)?(\d{2})\b/);
+    const singleYearMatch = !yearRangeMatch ? n.match(/\b(20\d{2}|19\d{2})\b/) : null;
+    const twoDigitYear = !yearRangeMatch && !singleYearMatch ? n.match(/\b(\d{2})\b/) : null;
+    if (yearRangeMatch) {
+      const y1 = (yearRangeMatch[1] || '20') + yearRangeMatch[2];
+      const y2 = (yearRangeMatch[3] || '20') + yearRangeMatch[4];
+      yearTag = `${y1}-${y2.slice(-2)}`;
+      n = n.replace(yearRangeMatch[0], ' ');
+    } else if (singleYearMatch) {
+      yearTag = singleYearMatch[1];
+      n = n.replace(singleYearMatch[0], ' ');
+    } else if (twoDigitYear) {
+      const yy = parseInt(twoDigitYear[1], 10);
+      if (yy >= 10 && yy <= 40) {
+        yearTag = `20${twoDigitYear[1]}`;
+        n = n.replace(twoDigitYear[0], ' ');
+      }
+    }
+
+    // ── "Moed + letter" → "Moed A/B/C/D/E" (English output) ──
+    const moedLetterMap = {
+      aleph: 'A', alef: 'A', a: 'A',
+      bet: 'B', beit: 'B', b: 'B',
+      gimel: 'C', gimmel: 'C', c: 'C',
+      dalet: 'D', daled: 'D', d: 'D',
+      hei: 'E', he: 'E', e: 'E',
+    };
+    let moedTag = '';
+    const moedMatch = n.match(/\bmoed\s+(\w+)\b/i);
+    if (moedMatch) {
+      const letter = moedLetterMap[moedMatch[1].toLowerCase()];
+      if (letter) {
+        moedTag = `Moed ${letter}`;
+        n = n.replace(moedMatch[0], ' ');
+      } else {
+        moedTag = 'Moed';
+        n = n.replace(/\bmoed\b/i, ' ');
+      }
+    } else {
+      // Transliterate Hebrew "מועד א/ב/ג/ד/ה" → English
+      const heToEn = { 'א': 'A', 'ב': 'B', 'ג': 'C', 'ד': 'D', 'ה': 'E' };
+      const heMoed = n.match(/מועד\s*([א-ה])'?/);
+      if (heMoed) {
+        moedTag = `Moed ${heToEn[heMoed[1]] || heMoed[1]}`;
+        n = n.replace(heMoed[0], ' ');
+      }
+    }
+
+    // ── Semester tag ──
+    let semTag = '';
+    const semMatch = n.match(/\bsem(?:ester)?\s*([ab12])\b/i);
+    if (semMatch) {
+      const raw = semMatch[1].toLowerCase();
+      semTag = `Semester ${raw === 'a' || raw === '1' ? 'A' : 'B'}`;
+      n = n.replace(semMatch[0], ' ');
+    } else {
+      const heSem = n.match(/סמסטר\s*([אב12])/);
+      if (heSem) {
+        semTag = `Semester ${heSem[1] === 'א' || heSem[1] === '1' ? 'A' : 'B'}`;
+        n = n.replace(heSem[0], ' ');
+      }
+    }
+
+    // ── Midterm / final ──
+    let stageTag = '';
+    if (/\b(midterm|mid term|אמצע)\b/i.test(n)) { stageTag = 'Midterm'; n = n.replace(/\b(midterm|mid term|אמצע)\b/gi, ' '); }
+    else if (/\b(final|סופי|סוף)\b/i.test(n)) { stageTag = 'Final'; n = n.replace(/\b(final|סופי|סוף)\b/gi, ' '); }
+
+    // ── Strip noise words ──
+    const NOISE = /\b(no\s*ans(?:wer)?s?|noans|without\s*ans(?:wer)?s?|with\s*ans(?:wer)?s?|answers?|ans|sol(?:ution)?|pitaron|pdf|nom(?:inal)?|scan(?:ned)?|clean|rev(?:ised)?|v\d+|final|exam|test|quiz|מבחן|פתרון|תשובות|מפתח|נקי|סרוק)\b/gi;
+    n = n.replace(NOISE, ' ').replace(/\s+/g, ' ').trim();
+
+    // ── Assemble final label ──
+    const parts = [];
+    if (moedTag) parts.push(moedTag);
+    if (semTag) parts.push(semTag);
+    if (stageTag) parts.push(stageTag);
+    if (yearTag) parts.push(yearTag);
+    if (n) parts.push(n);
+    const result = parts.join(' ').replace(/\s+/g, ' ').trim();
+    return result || filename.replace(/\.pdf$/i, '').replace(/[_\-]+/g, ' ').trim();
   }
+
+  // Toggle the "Apply suggestion" hint below the name input.
+  function updateNameSuggestion() {
+    const hint = document.getElementById('up-name-suggest');
+    const nameInput = document.getElementById('up-name');
+    const file = examInput.files[0];
+    if (!file || !hint || !nameInput) { if (hint) hint.style.display = 'none'; return; }
+    const suggestion = smartName(file.name);
+    const current = (nameInput.value || '').trim();
+    if (!suggestion || suggestion === current) { hint.style.display = 'none'; return; }
+    hint.style.display = '';
+    hint.innerHTML = `הצעה: <button type="button" class="up-suggest-link" id="up-suggest-apply">${escapeHtml(suggestion)}</button>`;
+    document.getElementById('up-suggest-apply').addEventListener('click', () => {
+      nameInput.value = suggestion;
+      updateNameSuggestion();
+    });
+  }
+
   examInput.addEventListener('change', () => {
     const nameInput = document.getElementById('up-name');
     const file = examInput.files[0];
     if (file && !nameInput.value.trim()) {
       nameInput.value = smartName(file.name);
     }
+    updateNameSuggestion();
   });
+  document.getElementById('up-name').addEventListener('input', updateNameSuggestion);
 
   document.getElementById('up-submit').addEventListener('click', async () => {
     const nameInput = document.getElementById('up-name');
@@ -4802,11 +5107,11 @@ function showBatchModal() {
 
     let questions = [];
     if (type === 'random') {
-      questions = pickRandom(Data.allQuestions(), size);
+      questions = pickRandomGrouped(Data.allQuestions(), size);
     } else if (type === 'exam') {
       const ex = Data.metadata.exams.find(e => e.id === examSelect.value);
       if (!ex) return;
-      questions = pickRandom(ex.questions, size);
+      questions = pickRandomGrouped(ex.questions, size);
     } else if (type === 'review') {
       const rq = Progress.load(state.user.email, state.course?.id).reviewQueue || [];
       const all = Data.allQuestions().filter(q => rq.includes(q.id));
@@ -4814,7 +5119,7 @@ function showBatchModal() {
         toast('אין שאלות בתור החזרה. תרגל קצת ואז חזור!', '');
         return;
       }
-      questions = pickRandom(all, size);
+      questions = pickRandomGrouped(all, size);
     } else if (type === 'unanswered') {
       const seen = new Set(Progress.history(state.user.email, state.course?.id).map(a => a.questionId));
       const all = Data.allQuestions().filter(q => !seen.has(q.id));
@@ -4822,7 +5127,7 @@ function showBatchModal() {
         toast('עברת על כל השאלות! נסה מקבץ אקראי.', 'success');
         return;
       }
-      questions = pickRandom(all, size);
+      questions = pickRandomGrouped(all, size);
     }
 
     if (!questions.length) { toast('אין שאלות לתרגול.', 'error'); return; }
@@ -4849,6 +5154,25 @@ function startQuiz({ questions, timerSeconds, examMode }) {
     batchId: 'b_' + Date.now(),
     startedAt: Date.now(),
   };
+  // Announce the new batch to the cloud so the row exists even if the user
+  // abandons mid-session. Non-blocking.
+  const cid = state.course?.id;
+  if (cid && cid !== 'tohna1') {
+    Auth.getToken().then(token => {
+      if (!token) return;
+      fetch('/api/batches/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          id: state.quiz.batchId,
+          courseId: cid,
+          size: questions.length,
+          examMode: !!examMode,
+          qids: questions.map(q => q.id),
+        }),
+      }).catch(() => {});
+    });
+  }
   // Prefetch per-exam explanation shards in the background so reveal() is
   // instant. Non-blocking — the quiz can start rendering immediately.
   try { Data.prefetchExplanationsForQuestions(questions); } catch {}
@@ -4923,9 +5247,15 @@ function renderQuiz() {
   }
   refreshAnswerVisual();
 
-  // Reveal button — always hidden now that clicking an answer auto-reveals.
+  // Reveal button — user clicks to see the solution. Hidden once revealed
+  // (in practice mode) or always hidden in exam mode.
   const revealBtn = document.getElementById('btn-reveal');
-  revealBtn.classList.add('hidden');
+  if (state.quiz.examMode || state.quiz.revealed[q.id]) {
+    revealBtn.classList.add('hidden');
+  } else {
+    revealBtn.classList.remove('hidden');
+    revealBtn.onclick = () => revealSolution();
+  }
 
   // Nav buttons
   const prevBtn = document.getElementById('btn-prev');
@@ -5016,7 +5346,9 @@ function selectAnswer(i) {
   state.quiz.selections[q.id] = i;
   refreshAnswerVisual();
   renderQuizNav();
-  if (!state.quiz.examMode) revealSolution();
+  // Do NOT auto-reveal. User must explicitly click "הצג פתרון" to see the solution.
+  // This prevents giving away whether the answer was correct before the user
+  // is ready to see it — useful for self-testing and exam simulation.
 }
 
 async function revealSolution() {
@@ -5064,7 +5396,11 @@ function showSolutionPanel(q, dataParam) {
   let html = '';
   if (exam) html += `<div class="solution-source">📍 ${escapeHtml(exam.label)} · שאלה ${escapeHtml(q.section)}</div>`;
   if (data.topic) html += `<div class="solution-topic">📌 ${escapeHtml(data.topic)}</div>`;
-  if (exp?.general) {
+  // If the instructor's own solution text is rich enough, show it verbatim
+  // (we skip AI-generated explanations for these questions on the server).
+  if (data.instructorSolutionText && data.hasRichSolution) {
+    html += `<div class="solution-general solution-instructor"><strong>פתרון המרצה:</strong>${renderExplanation(data.instructorSolutionText)}</div>`;
+  } else if (exp?.general) {
     html += `<div class="solution-general"><strong>הסבר כללי:</strong>${renderExplanation(exp.general)}</div>`;
   }
   for (let i = 1; i <= numOpts; i++) {
@@ -5190,6 +5526,8 @@ function endQuiz() {
     endedAt: Date.now(),
   };
   Progress.saveBatch(state.user.email, batchSummary, state.course?.id);
+  // Push final totals to the cloud so remote history shows the outcome.
+  Progress.finalizeBatch(state.user.email, batchSummary, state.course?.id);
   state.lastBatch = batchSummary;
   navigate(`/course/${state.course?.id || 'tohna1'}/summary`);
 }
@@ -5203,14 +5541,15 @@ function renderSummary() {
   const b = state.lastBatch;
   const cid = state.course?.id || 'tohna1';
 
-  // Reconstruct questions array when coming from history (state.quiz not set)
+  // Reconstruct questions array when coming from history (state.quiz not set).
+  // Use questionsForCourse so user courses work, not just tohna1.
   const batchQuestions = state.quiz?.questions || (() => {
-    const allQs = Data.allQuestions();
+    const allQs = questionsForCourse(cid);
     const qMap = Object.fromEntries(allQs.map(q => [q.id, q]));
     return (b.qids || []).map(id => qMap[id]).filter(Boolean);
   })();
 
-  const score = Math.round((b.correct / b.size) * 100);
+  const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
   document.getElementById('summary-score-num').textContent = score + '%';
 
   // Title based on score
@@ -5259,9 +5598,11 @@ function renderMistakeReview() {
   $app.appendChild(tmpl('tmpl-review'));
 
   const b = state.lastBatch;
-  // Reconstruct questions array when coming from history (state.quiz not set)
+  const cid = state.course?.id || 'tohna1';
+  // Reconstruct questions array when coming from history (state.quiz not set).
+  // Use questionsForCourse so user courses work, not just tohna1.
   const batchQuestions = state.quiz?.questions || (() => {
-    const allQs = Data.allQuestions();
+    const allQs = questionsForCourse(cid);
     const qMap = Object.fromEntries(allQs.map(q => [q.id, q]));
     return (b.qids || []).map(id => qMap[id]).filter(Boolean);
   })();
@@ -5379,7 +5720,7 @@ function buildMockExam(courseId, opts) {
 
   if (style === 'hard') {
     const hard = identifyHardQuestions(questions, attempts, size * 2);
-    return pickRandom(hard.map(h => h.q), size);
+    return pickRandomGrouped(hard.map(h => h.q), size);
   }
 
   if (style === 'weak') {
@@ -5390,7 +5731,7 @@ function buildMockExam(courseId, opts) {
     }
     const pool = weakBuckets.flatMap(b => b.qids);
     const poolQs = questions.filter(q => pool.includes(q.id));
-    return pickRandom(poolQs, size);
+    return pickRandomGrouped(poolQs, size);
   }
 
   if (style === 'recent') {
@@ -5405,12 +5746,12 @@ function buildMockExam(courseId, opts) {
       const t = lastSeenByQ.get(q.id);
       return !t || t < sevenDaysAgo;
     });
-    return pickRandom(stale.length ? stale : questions, size);
+    return pickRandomGrouped(stale.length ? stale : questions, size);
   }
 
   // BALANCED: distribute slots across topic buckets proportionally to frequency
   const totalCount = analysis.reduce((s, b) => s + b.count, 0);
-  if (totalCount === 0) return pickRandom(questions, size);
+  if (totalCount === 0) return pickRandomGrouped(questions, size);
   const slots = analysis.map(b => ({
     bucket: b,
     target: Math.max(1, Math.round((b.count / totalCount) * size)),
@@ -5434,8 +5775,22 @@ function buildMockExam(courseId, opts) {
     const remaining = questions.filter(q => !used.has(q.id));
     picked.push(...pickRandom(remaining, size - picked.length));
   }
-  // Shuffle final order so the user doesn't see all "Generics" in a row
-  return pickRandom(picked, picked.length);
+  // Ensure any question belonging to a group has its siblings included,
+  // so grouped questions (sharing a diagram/passage) stay together.
+  const pickedIds = new Set(picked.map(q => q.id));
+  for (const q of [...picked]) {
+    const gid = q.group_id || q.groupId;
+    if (!gid) continue;
+    for (const sibling of questions) {
+      const sgid = sibling.group_id || sibling.groupId;
+      if (sgid === gid && !pickedIds.has(sibling.id)) {
+        picked.push(sibling);
+        pickedIds.add(sibling.id);
+      }
+    }
+  }
+  // Final shuffle that preserves group rigidity
+  return pickRandomGrouped(picked, picked.length);
 }
 
 // ===== Render: Insights =====
@@ -5841,6 +6196,8 @@ async function renderLab() {
 }
 
 function renderAiQuestion(q, i) {
+  // Preview does NOT reveal the correct answer or solution. Users see the full
+  // solution only inside the practice session, via the "הצג פתרון" button.
   return `
     <div class="ai-q-card">
       <div class="ai-q-head">
@@ -5853,28 +6210,12 @@ function renderAiQuestion(q, i) {
       <div class="ai-q-stem">${escapeHtml(q.stem)}</div>
       <ol class="ai-q-options">
         ${q.options.map((opt, j) => `
-          <li class="${j + 1 === q.correctIdx ? 'correct' : ''}">
+          <li>
             <span class="opt-num">${j + 1}</span>
             <span>${escapeHtml(opt)}</span>
-            ${j + 1 === q.correctIdx ? '<span class="opt-mark">✓</span>' : ''}
           </li>
         `).join('')}
       </ol>
-      <details class="ai-q-explain">
-        <summary>הצג פתרון מלא</summary>
-        <div class="ai-q-explain-body">
-          ${q.explanationGeneral ? `<p><strong>הסבר כללי:</strong> ${escapeHtml(q.explanationGeneral)}</p>` : ''}
-          ${q.optionExplanations?.length ? `
-            <div class="ai-q-opt-exps">
-              ${q.optionExplanations.map((e, j) => `
-                <div class="${j + 1 === q.correctIdx ? 'correct' : 'wrong'}">
-                  <strong>${j + 1}.</strong> ${escapeHtml(e || '')}
-                </div>
-              `).join('')}
-            </div>
-          ` : ''}
-        </div>
-      </details>
     </div>
   `;
 }
@@ -5977,7 +6318,7 @@ async function renderProgress() {
     <div class="progress-hero-bar">
       <div class="phb-label">
         <span>כיסוי הקורס</span>
-        <strong>${stats.unique} / ${questions.length}</strong>
+        <strong dir="ltr">${stats.unique} / ${questions.length}</strong>
       </div>
       <div class="phb-track"><div class="phb-fill" style="width:${coverage}%"></div></div>
     </div>
@@ -6223,6 +6564,18 @@ function wireTopbar(cid) {
       }
     });
   }
+
+  // Wire "המקבצים שלי" button in topbar — opens dropdown with recent batches.
+  document.querySelectorAll('.topbar-batches-btn').forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showBatchesDropdown(btn);
+    });
+  });
+
   // User info
   const planEl = document.getElementById('user-plan');
   const nameEl = document.getElementById('user-name');
@@ -6245,6 +6598,101 @@ function wireTopbar(cid) {
       document.querySelector('.app-topbar').classList.toggle('mobile-open');
     });
   }
+}
+
+// ===== Batches dropdown (topbar "המקבצים שלי") =====
+// Floating panel showing the last 15 batches across ALL courses. Clicking a
+// row navigates to that batch's summary page so the user can review questions
+// or enter mistake review. Local batches from the current device render first
+// (fast), remote batches merge in from Supabase when the fetch resolves.
+function showBatchesDropdown(anchor) {
+  const existing = document.getElementById('batches-dropdown');
+  if (existing) {
+    existing.remove();
+    document.removeEventListener('click', existing._closer, true);
+    document.querySelectorAll('.topbar-batches-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+    return;
+  }
+  document.querySelectorAll('.topbar-batches-btn').forEach(b => b.setAttribute('aria-expanded', 'true'));
+  const dd = document.createElement('div');
+  dd.id = 'batches-dropdown';
+  dd.className = 'batches-dropdown';
+  dd.innerHTML = `
+    <div class="bd-header">המקבצים האחרונים שלי</div>
+    <div class="bd-body" id="bd-body"><div class="bd-empty">טוען...</div></div>
+  `;
+  document.body.appendChild(dd);
+  const r = anchor.getBoundingClientRect();
+  dd.style.cssText += `position:fixed;top:${r.bottom + 6}px;right:${Math.max(8, window.innerWidth - r.right)}px;z-index:9999;`;
+
+  const courses = CourseRegistry.list().filter(c => !c.archived && !c.is_degree);
+  const courseName = (cid) => courses.find(c => String(c.id) === String(cid))?.name || cid;
+
+  function render(rows) {
+    const body = document.getElementById('bd-body');
+    if (!body) return;
+    if (!rows.length) { body.innerHTML = '<div class="bd-empty">עדיין לא תרגלת מקבצים.<br>התחל תרגול חופשי מכל קורס.</div>'; return; }
+    body.innerHTML = rows.map((item, i) => {
+      const b = item.batch;
+      const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
+      const cls = score >= 80 ? 'good' : score >= 60 ? 'mid' : 'bad';
+      const date = b.endedAt ? new Date(b.endedAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      return `<button type="button" class="bd-row" data-i="${i}">
+        <span class="bd-score ${cls}">${score}%</span>
+        <span class="bd-info">
+          <span class="bd-course">${escapeHtml(courseName(item.cid))}</span>
+          <span class="bd-meta">${b.correct}/${b.size} · ${date}${b.examMode ? ' · מבחן' : ''}</span>
+        </span>
+        <svg class="bd-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>`;
+    }).join('');
+    body.querySelectorAll('.bd-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const i = parseInt(row.dataset.i, 10);
+        const item = rows[i];
+        if (!item) return;
+        close();
+        if (!setCourseContext(item.cid)) return;
+        state.lastBatch = item.batch;
+        navigate(`/course/${item.cid}/summary`);
+      });
+    });
+  }
+
+  // 1) Fast path: local batches across all courses
+  const localRows = [];
+  for (const c of courses) {
+    const cid = String(c.id);
+    const list = (Progress.load(state.user.email, cid).batches || []);
+    for (const b of list) if (b?.batchId) localRows.push({ cid, batch: b });
+  }
+  localRows.sort((a, b) => (b.batch.endedAt || 0) - (a.batch.endedAt || 0));
+  render(localRows.slice(0, 15));
+
+  // 2) Merge remote (cloud-synced) batches on top of local
+  Promise.all(courses.filter(c => String(c.id) !== 'tohna1').map(c =>
+    Progress.fetchRemoteBatches(String(c.id), 15)
+      .then(rows => (rows || []).map(b => ({ cid: String(c.id), batch: b })))
+      .catch(() => [])
+  )).then(results => {
+    if (!document.getElementById('batches-dropdown')) return;
+    const byId = new Map();
+    for (const r of localRows) if (r.batch?.batchId) byId.set(r.batch.batchId, r);
+    for (const arr of results) for (const r of arr) if (r.batch?.batchId) byId.set(r.batch.batchId, r);
+    const merged = [...byId.values()].sort((a, b) => (b.batch.endedAt || 0) - (a.batch.endedAt || 0)).slice(0, 15);
+    render(merged);
+  });
+
+  function close() {
+    dd.remove();
+    document.removeEventListener('click', closer, true);
+    document.querySelectorAll('.topbar-batches-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+  }
+  function closer(ev) {
+    if (!dd.contains(ev.target) && !anchor.contains(ev.target)) close();
+  }
+  dd._closer = closer;
+  setTimeout(() => document.addEventListener('click', closer, true), 0);
 }
 
 // ===== User dropdown menu =====

@@ -39,9 +39,12 @@ async function authenticate(req) {
 // Ask Gemini to independently solve a question.
 // Accepts an image URL (for scanned PDFs) and/or question text.
 // Returns { correct: 1-4, confidence: 0-1, reasoning } or null if uncertain/failed.
+import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
+
 async function askGemini(imageUrl, questionText, options, { timeoutMs = 25000 } = {}) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  if (!apiKey) return null;
+  const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
+  if (!primaryKey) return null;
+  console.log(`[reverify] using ${hasPaid ? 'paid' : 'free'} key as primary`);
 
   const optsArr = [1, 2, 3, 4].map(i => String(options[i] || options[String(i)] || '').trim());
   const hasRealOptions = optsArr.filter(o => o.length > 0).length >= 2;
@@ -72,20 +75,28 @@ async function askGemini(imageUrl, questionText, options, { timeoutMs = 25000 } 
   }
   parts.push({ text: prompt });
 
-  for (const model of ['gemini-2.0-flash', 'gemini-2.5-flash']) {
+  async function fetchWithKey(apiKey, model) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 512, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  }
+
+  for (const model of ['gemini-2.0-flash', 'gemini-2.5-flash']) {
     try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 512, responseMimeType: 'application/json' },
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      let r = await fetchWithKey(primaryKey, model);
+      if (isQuotaError(r.status, null) && fallbackKey) {
+        console.warn(`[reverify] ${model} primary quota exceeded — switching to fallback key`);
+        r = await fetchWithKey(fallbackKey, model);
+      }
       if (!r.ok) {
-        if (r.status === 429) break; // quota exhausted — stop trying
+        if (r.status === 429) break; // fallback also out — stop trying
         continue;
       }
       const j = await r.json();

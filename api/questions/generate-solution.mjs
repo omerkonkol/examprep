@@ -51,22 +51,34 @@ async function fetchImageBase64(url) {
 }
 
 // ── Gemini helper ──────────────────────────────────────────────────────────────
+import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
+
 async function callGeminiJson(prompt, imageParts, { temperature = 0.1, maxOutputTokens = 1024, timeoutMs = 25000 } = {}) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  if (!apiKey) return { data: null };
+  const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
+  if (!primaryKey) return { data: null };
   const parts = [{ text: prompt }, ...imageParts];
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+
+  async function fetchWithKey(apiKey, model) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { temperature, maxOutputTokens, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  }
+
+  console.log(`[gen-solution] using ${hasPaid ? 'paid' : 'free'} key as primary`);
+  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
     try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: { temperature, maxOutputTokens, responseMimeType: 'application/json' },
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      let r = await fetchWithKey(primaryKey, model);
+      if (isQuotaError(r.status, null) && fallbackKey) {
+        console.warn(`[gen-solution] ${model} primary quota exceeded — switching to fallback`);
+        r = await fetchWithKey(fallbackKey, model);
+      }
       if (!r.ok) continue;
       const j = await r.json();
       const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';

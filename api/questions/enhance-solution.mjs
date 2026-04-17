@@ -51,9 +51,12 @@ async function fetchImageBase64(url) {
 
 // ── Gemini: OCR the question image ────────────────────────────────────────────
 // Reads exactly what appears in the image — handles Hebrew/English/math mix.
+import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
+
 async function ocrQuestionImage(imageBase64, mimeType) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  if (!apiKey) return null;
+  const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
+  if (!primaryKey) return null;
+  console.log(`[enhance] OCR using ${hasPaid ? 'paid' : 'free'} key as primary`);
 
   const prompt = `You are reading a Hebrew university multiple-choice exam question image.
 The question may contain Hebrew text, English terms, mathematical formulas, symbols, and numbers — preserve everything verbatim.
@@ -70,21 +73,29 @@ Rules:
 - If fewer than 4 options are visible, fill the remaining slots with ""
 - Output ONLY the JSON object, nothing else`;
 
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+  async function fetchWithKey(apiKey, model) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { text: prompt },
+          { inlineData: { mimeType, data: imageBase64 } },
+        ]}],
+        generationConfig: { temperature: 0.0, maxOutputTokens: 1024, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+  }
+
+  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
     try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [
-            { text: prompt },
-            { inlineData: { mimeType, data: imageBase64 } },
-          ]}],
-          generationConfig: { temperature: 0.0, maxOutputTokens: 1024, responseMimeType: 'application/json' },
-        }),
-        signal: AbortSignal.timeout(20000),
-      });
+      let r = await fetchWithKey(primaryKey, model);
+      if (isQuotaError(r.status, null) && fallbackKey) {
+        console.warn(`[enhance] OCR ${model} primary quota exceeded — switching to fallback`);
+        r = await fetchWithKey(fallbackKey, model);
+      }
       if (!r.ok) continue;
       const j = await r.json();
       const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
@@ -195,8 +206,9 @@ ${solBlock}
 
 // ── Gemini fallback: end-to-end from image ────────────────────────────────────
 async function generateGeminiFallback(imageBase64, mimeType, correctIdx, solutionTextRaw) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  if (!apiKey) return null;
+  const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
+  if (!primaryKey) return null;
+  console.log(`[enhance] fallback using ${hasPaid ? 'paid' : 'free'} key as primary`);
 
   const solBlock = solutionTextRaw
     ? `\n\nSolution PDF text (use as reference):\n"""\n${solutionTextRaw.slice(0, 2000)}\n"""\n`
@@ -217,21 +229,29 @@ Produce a detailed Hebrew solution. Return ONLY this JSON:
 }
 Exactly ONE isCorrect:true. Write in clean academic Hebrew.`;
 
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+  async function fetchWithKey(apiKey, model) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { text: prompt },
+          { inlineData: { mimeType, data: imageBase64 } },
+        ]}],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 3000, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(40000),
+    });
+  }
+
+  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
     try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [
-            { text: prompt },
-            { inlineData: { mimeType, data: imageBase64 } },
-          ]}],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 3000, responseMimeType: 'application/json' },
-        }),
-        signal: AbortSignal.timeout(40000),
-      });
+      let r = await fetchWithKey(primaryKey, model);
+      if (isQuotaError(r.status, null) && fallbackKey) {
+        console.warn(`[enhance] fallback ${model} primary quota exceeded — switching to fallback key`);
+        r = await fetchWithKey(fallbackKey, model);
+      }
       if (!r.ok) continue;
       const j = await r.json();
       const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';

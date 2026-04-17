@@ -40,6 +40,31 @@ function dbErr(res, tag, error) {
   return res.status(500).json({ error: 'שגיאה פנימית בשרת. נסה שוב.' });
 }
 
+// Validate course image URLs are hosted on trusted CDNs only.
+// Accepts Cloudinary and the configured Supabase project's storage host.
+const SUPABASE_HOST = (() => {
+  try { return SUPABASE_URL ? new URL(SUPABASE_URL).host : null; } catch { return null; }
+})();
+function isAllowedImageUrl(raw) {
+  if (typeof raw !== 'string' || raw.length > 500) return false;
+  let u;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== 'https:') return false;
+  const host = u.host.toLowerCase();
+  if (host === 'res.cloudinary.com' || host.endsWith('.cloudinary.com')) return true;
+  if (SUPABASE_HOST && host === SUPABASE_HOST) return true;
+  if (host.endsWith('.supabase.co') || host.endsWith('.supabase.in')) return true;
+  // Unsplash is used by the pre-built degree chooser.
+  if (host === 'images.unsplash.com' || host.endsWith('.unsplash.com')) return true;
+  return false;
+}
+
+// Strict positive-integer ID validator (for restore / soft-delete routes).
+function validId(raw) {
+  const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 const QUOTAS = {
   trial: { pdfs_total: -1, pdfs_per_day: 5, pdfs_per_month: 20, ai_questions_per_day: 5, ai_questions_per_month: 15, study_packs_total: 5, study_packs_per_month: 5, courses: 2, storage_mb: 200, max_pdf_size_mb: 15, max_pages_per_pdf: 30 },
   free: { pdfs_total: 0, pdfs_per_day: 0, pdfs_per_month: 0, ai_questions_per_day: 0, ai_questions_per_month: 0, study_packs_total: 0, study_packs_per_month: 0, courses: 0, storage_mb: 50, max_pdf_size_mb: 10, max_pages_per_pdf: 25 },
@@ -92,6 +117,8 @@ function matchRoute(method, url) {
   if (method === 'GET'  && p === '/courses') return { r: 'list-courses' };
   if (method === 'POST' && p === '/courses') return { r: 'create-course' };
   if (method === 'POST' && p === '/attempt') return { r: 'attempt' };
+  if (method === 'POST' && p === '/batches/start') return { r: 'batch-start' };
+  if (method === 'POST' && p === '/batches/end') return { r: 'batch-end' };
   if (method === 'GET'  && p === '/study/packs') return { r: 'list-packs' };
   if (method === 'POST' && p === '/admin/switch-plan') return { r: 'admin-switch-plan' };
   if ((method === 'POST' || method === 'DELETE') && p === '/account/delete') return { r: 'account-delete' };
@@ -104,6 +131,7 @@ function matchRoute(method, url) {
     if (s.length === 3 && s[2] === 'courses' && method === 'GET') return { r: 'list-sub-courses', cid };
     if (s.length === 3 && s[2] === 'exams' && method === 'GET') return { r: 'list-exams', cid };
     if (s.length === 3 && s[2] === 'questions' && method === 'GET') return { r: 'list-questions', cid };
+    if (s.length === 3 && s[2] === 'batches' && method === 'GET') return { r: 'list-batches', cid };
     if (s.length === 3 && s[2] === 'review-queue' && method === 'GET') return { r: 'review-queue', cid };
     if (s.length === 3 && s[2] === 'trash' && method === 'GET') return { r: 'list-trash', cid };
     if (s.length === 4 && s[2] === 'exams' && method === 'DELETE') return { r: 'delete-exam', cid, eid: parseInt(s[3], 10) || s[3] };
@@ -220,8 +248,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'תיאור לא תקין' });
       if (color != null && (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)))
         return res.status(400).json({ error: 'צבע לא תקין' });
-      if (image_url != null && (typeof image_url !== 'string' || image_url.length > 500 || !/^https?:\/\//.test(image_url)))
-        return res.status(400).json({ error: 'כתובת תמונה לא תקינה' });
+      if (image_url != null && !isAllowedImageUrl(image_url))
+        return res.status(400).json({ error: 'כתובת תמונה לא תקינה — חייבת להיות מ-Cloudinary או Supabase' });
       if (parent_id != null) {
         const { data: parent } = await auth.db.from('ep_courses').select('id').eq('id', parent_id).eq('user_id', auth.userId).maybeSingle();
         if (!parent) return res.status(400).json({ error: 'קורס האב לא נמצא' });
@@ -243,6 +271,50 @@ export default async function handler(req, res) {
       const { data, error } = await auth.db.from('ep_courses').insert(insertData).select().single();
       if (error) return dbErr(res, 'insert course', error);
       return res.json(data);
+    }
+    case 'batch-start': {
+      // Insert a new batch row at the start of a practice/exam session.
+      const { id, courseId, examId, size, examMode, qids } = req.body || {};
+      if (typeof id !== 'string' || id.length < 3 || id.length > 80) return res.status(400).json({ error: 'id חסר/לא תקין' });
+      const cid = validId(courseId);
+      if (!cid) return res.status(400).json({ error: 'courseId לא תקין' });
+      const sizeInt = parseInt(size, 10);
+      if (!Number.isInteger(sizeInt) || sizeInt <= 0 || sizeInt > 500) return res.status(400).json({ error: 'size לא תקין' });
+      if (!Array.isArray(qids) || qids.length === 0 || qids.length > 500) return res.status(400).json({ error: 'qids לא תקין' });
+      const insert = {
+        id, user_id: auth.userId, course_id: cid,
+        exam_id: examId ? validId(examId) : null,
+        size: sizeInt, exam_mode: !!examMode, qids,
+      };
+      const { error } = await auth.db.from('ep_batches').insert(insert);
+      if (error) return dbErr(res, 'insert batch', error);
+      return res.json({ ok: true });
+    }
+    case 'batch-end': {
+      // Update a batch with final results at session end.
+      const { id, correct, wrong, selections, correctMap, endedAt } = req.body || {};
+      if (typeof id !== 'string' || id.length < 3 || id.length > 80) return res.status(400).json({ error: 'id חסר/לא תקין' });
+      const update = {
+        correct: Math.max(0, parseInt(correct, 10) || 0),
+        wrong: Math.max(0, parseInt(wrong, 10) || 0),
+        selections: selections && typeof selections === 'object' ? selections : null,
+        correct_map: correctMap && typeof correctMap === 'object' ? correctMap : null,
+        ended_at: endedAt || new Date().toISOString(),
+      };
+      const { error } = await auth.db.from('ep_batches').update(update)
+        .eq('id', id).eq('user_id', auth.userId);
+      if (error) return dbErr(res, 'update batch', error);
+      return res.json({ ok: true });
+    }
+    case 'list-batches': {
+      // Return up to 50 most recent batches for this course, newest first.
+      const { data, error } = await auth.db.from('ep_batches')
+        .select('*').eq('course_id', m.cid)
+        .order('ended_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (error) return dbErr(res, 'list batches', error);
+      return res.json(data || []);
     }
     case 'attempt': {
       const { questionId, courseId, selectedIdx, isCorrect, revealed, timeSeconds, batchId } = req.body || {};
@@ -333,8 +405,8 @@ export default async function handler(req, res) {
     }
     case 'restore-exam': {
       try {
-        const { examId } = req.body || {};
-        if (!examId) return res.status(400).json({ error: 'חסר examId' });
+        const examId = validId(req.body?.examId);
+        if (!examId) return res.status(400).json({ error: 'examId לא תקין' });
         const { error: re } = await auth.db.from('ep_exams')
           .update({ deleted_at: null }).eq('id', examId).eq('course_id', m.cid).eq('user_id', auth.userId);
         if (re) return dbErr(res, 'restore exam', re);
@@ -378,8 +450,8 @@ export default async function handler(req, res) {
       const update = {};
       if (typeof archived === 'boolean') update.archived = archived;
       if (updImgUrl !== undefined) {
-        if (updImgUrl !== null && (typeof updImgUrl !== 'string' || updImgUrl.length > 500 || !/^https?:\/\//.test(updImgUrl)))
-          return res.status(400).json({ error: 'כתובת תמונה לא תקינה' });
+        if (updImgUrl !== null && !isAllowedImageUrl(updImgUrl))
+          return res.status(400).json({ error: 'כתובת תמונה לא תקינה — חייבת להיות מ-Cloudinary או Supabase' });
         update.image_url = updImgUrl || null;
       }
       if (updName !== undefined) {
@@ -429,8 +501,8 @@ export default async function handler(req, res) {
     }
     case 'restore-question': {
       try {
-        const { questionId } = req.body || {};
-        if (!questionId) return res.status(400).json({ error: 'חסר questionId' });
+        const questionId = validId(req.body?.questionId);
+        if (!questionId) return res.status(400).json({ error: 'questionId לא תקין' });
         // Fetch the question first to get its exam_id
         const { data: qRow, error: qFetch } = await auth.db.from('ep_questions')
           .select('id, exam_id').eq('id', questionId).eq('course_id', m.cid).eq('user_id', auth.userId).maybeSingle();

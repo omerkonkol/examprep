@@ -175,26 +175,26 @@ ${safe}
 - אסור להמציא עובדות שלא בסיכום. הסתמך על מה שהמשתמש כתב.`;
 }
 
+import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
+
 async function callGemini(summaryText, title) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
   // Try models in order of preference; each has a separate daily quota pool
   const models = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-flash-latest').split(',').slice(0, 2);
-  if (!apiKey) {
+  if (!primaryKey) {
     throw Object.assign(new Error('GEMINI_API_KEY not configured'), { http: 503, code: 'no_api_key' });
   }
+  console.log(`[study] using ${hasPaid ? 'paid' : 'free'} key as primary`);
 
   const prompt = buildPrompt(summaryText, title);
   let lastErr = null;
 
-  for (const model of models) {
-    const m = model.trim();
+  async function tryCall(apiKey, m) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 22_000);
-    let aiRes;
     try {
-      console.log(`[study] trying model: ${m}`);
-      aiRes = await fetch(url, {
+      return await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -209,16 +209,26 @@ async function callGemini(summaryText, title) {
         }),
         signal: controller.signal,
       });
+    } finally { clearTimeout(t); }
+  }
+
+  for (const model of models) {
+    const m = model.trim();
+    let aiRes;
+    try {
+      console.log(`[study] trying model: ${m}`);
+      aiRes = await tryCall(primaryKey, m);
+      if (isQuotaError(aiRes.status, null) && fallbackKey) {
+        console.warn(`[study] ${m} primary quota exceeded — switching to fallback key`);
+        aiRes = await tryCall(fallbackKey, m);
+      }
     } catch (e) {
-      clearTimeout(t);
       if (e?.name === 'AbortError') {
         lastErr = Object.assign(new Error('AI timeout'), { http: 504 });
         continue;
       }
       lastErr = Object.assign(new Error('AI fetch: ' + (e?.message || e)), { http: 502 });
       continue;
-    } finally {
-      clearTimeout(t);
     }
 
     if (aiRes.status === 503 || aiRes.status === 429) {

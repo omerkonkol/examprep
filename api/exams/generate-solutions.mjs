@@ -111,24 +111,23 @@ async function explainWithGemini(questionText, options, correctIdx, imageBase64,
     ? `שאלה: ${questionText}\n\nאפשרויות:\n${optsList}`
     : 'קרא את השאלה והאפשרויות מהתמונה.';
 
-  const prompt = `אתה מורה פרטי שמסביר שאלת בחינה לסטודנט.
+  const prompt = `אתה מרצה אוניברסיטאי מומחה שמסביר שאלת בחינה רב-ברירה בעברית אקדמית.
+התשובה הנכונה היא אפשרות ${correctIdx} (${correctLetter}) — זהו SOURCE OF TRUTH מוחלט.
 
 ${textSection}
 
-התשובה הנכונה: אפשרות ${correctIdx} (${correctLetter})
-
-כתוב הסבר מפורט ובהיר. החזר JSON בלבד:
+החזר JSON תקין בלבד (ללא markdown, ללא ```):
 {
-  "general_explanation": "<2-4 משפטים: מה הנושא הנלמד ומדוע אפשרות ${correctLetter} נכונה>",
+  "general_explanation": "<3-5 משפטים: (1) הגדר את המושג/נושא הנדון. (2) הסבר בדיוק מדוע אפשרות ${correctLetter} נכונה עם נימוק תיאורטי. (3) ציין מלכודת נפוצה שגורמת לטעות בשאלה זו.>",
   "option_explanations": [
-    {"idx": 1, "isCorrect": ${correctIdx === 1}, "explanation": "<2 משפטים: מדוע אפשרות זו ${correctIdx === 1 ? 'נכונה' : 'שגויה'}>"},
-    {"idx": 2, "isCorrect": ${correctIdx === 2}, "explanation": "<2 משפטים: מדוע אפשרות זו ${correctIdx === 2 ? 'נכונה' : 'שגויה'}>"},
-    {"idx": 3, "isCorrect": ${correctIdx === 3}, "explanation": "<2 משפטים: מדוע אפשרות זו ${correctIdx === 3 ? 'נכונה' : 'שגויה'}>"},
-    {"idx": 4, "isCorrect": ${correctIdx === 4}, "explanation": "<2 משפטים: מדוע אפשרות זו ${correctIdx === 4 ? 'נכונה' : 'שגויה'}">}
+    {"idx": 1, "isCorrect": ${correctIdx === 1}, "explanation": "<2-3 משפטים: ${correctIdx === 1 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">},
+    {"idx": 2, "isCorrect": ${correctIdx === 2}, "explanation": "<2-3 משפטים: ${correctIdx === 2 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">},
+    {"idx": 3, "isCorrect": ${correctIdx === 3}, "explanation": "<2-3 משפטים: ${correctIdx === 3 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">},
+    {"idx": 4, "isCorrect": ${correctIdx === 4}, "explanation": "<2-3 משפטים: ${correctIdx === 4 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">}
   ]
 }
 
-כללים: עברית אקדמית ברורה; שמור מונחים טכניים באנגלית; JSON תקין בלבד ללא markdown.`;
+כללים: עברית אקדמית בלבד; מונחים טכניים — השאר באנגלית; אל תחזור על טקסט השאלה; JSON תקין ללא markdown.`;
 
   const parts = [];
   if (imageBase64 && mimeType) {
@@ -323,9 +322,11 @@ async function _handler(req, res) {
     }
   }
 
-  // Fetch questions
+  // Fetch questions — include group_id + instructor_solution_text so we can
+  // (a) skip questions that already have a rich instructor solution and
+  // (b) feed grouped questions together so explanations stay consistent.
   const { data: questions, error: qErr } = await admin.from('ep_questions')
-    .select('id, user_id, exam_id, question_number, correct_idx, question_text, options_text, general_explanation, option_explanations, image_path')
+    .select('id, user_id, exam_id, question_number, correct_idx, question_text, options_text, general_explanation, option_explanations, image_path, group_id, instructor_solution_text, has_rich_solution')
     .eq('exam_id', examId).eq('user_id', exam.user_id).is('deleted_at', null)
     .order('question_number', { ascending: true });
 
@@ -337,8 +338,10 @@ async function _handler(req, res) {
     return res.status(404).json({ error: 'לא נמצאו שאלות במבחן זה' });
   }
 
-  // Skip questions that already have full explanations
+  // Skip questions that already have full explanations OR that the instructor
+  // already wrote a rich solution for (we show instructor text directly).
   const needsWork = questions.filter(q => {
+    if (q.has_rich_solution && q.instructor_solution_text) return false;
     const hasG = !!(q.general_explanation && String(q.general_explanation).trim());
     const hasO = Array.isArray(q.option_explanations) && q.option_explanations.some(o => o?.explanation);
     return !hasG || !hasO;

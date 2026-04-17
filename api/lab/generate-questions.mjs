@@ -6,6 +6,7 @@
 // =====================================================
 
 import { checkIpThrottle } from '../../lib/ipThrottle.mjs';
+import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
 
 export const config = {
   api: { bodyParser: true },
@@ -13,21 +14,19 @@ export const config = {
 };
 
 async function callGemini(prompt) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
   const models = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-flash-latest').split(',');
-  if (!apiKey) {
+  if (!primaryKey) {
     throw Object.assign(new Error('GEMINI_API_KEY not configured'), { http: 503, code: 'no_api_key' });
   }
+  console.log(`[lab] using ${hasPaid ? 'paid' : 'free'} key as primary`);
 
-  let lastErr = null;
-  for (const model of models) {
-    const m = model.trim();
+  async function tryCall(apiKey, m) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 55_000);
-    let aiRes;
     try {
-      aiRes = await fetch(url, {
+      const aiRes = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -42,11 +41,24 @@ async function callGemini(prompt) {
         }),
         signal: controller.signal,
       });
+      return { aiRes, bodyText: null };
+    } finally { clearTimeout(t); }
+  }
+
+  let lastErr = null;
+  for (const model of models) {
+    const m = model.trim();
+    let aiRes;
+    try {
+      ({ aiRes } = await tryCall(primaryKey, m));
+      if (isQuotaError(aiRes.status, null) && fallbackKey) {
+        console.warn(`[lab] ${m} primary quota exceeded — switching to fallback key`);
+        ({ aiRes } = await tryCall(fallbackKey, m));
+      }
     } catch (e) {
-      clearTimeout(t);
       lastErr = Object.assign(new Error(e?.name === 'AbortError' ? 'AI timeout' : 'AI fetch: ' + e?.message), { http: e?.name === 'AbortError' ? 504 : 502 });
       continue;
-    } finally { clearTimeout(t); }
+    }
 
     if (aiRes.status === 503 || aiRes.status === 429) {
       console.warn(`[lab] ${m} returned ${aiRes.status}, trying next`);

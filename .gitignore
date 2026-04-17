@@ -26,3 +26,9 @@ data/app.db-*
 .env.vercel
 
 .env*.local
+
+# Supabase CLI workspace (local-only state)
+supabase/.temp/
+
+# Workspace-only tmp dir (exam PDFs for local testing)
+tmp/

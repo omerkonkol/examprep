@@ -13,6 +13,17 @@
 // =====================================================
 
 import { createClient } from '@supabase/supabase-js';
+import { extractPositions, buildLines } from './_lib/pdf-positions.mjs';
+import {
+  findQuestionRange,
+  findSectionHeadings,
+  findStandaloneQuestions,
+  findBottomBoundary,
+  classifyRegion,
+  extractRegionText,
+  detectMCQsFromPositions,
+} from './_lib/pdf-mcq-detect.mjs';
+import { applyGroupContextToCrops, extractContextText } from './_lib/pdf-group-context.mjs';
 
 export const config = { api: { bodyParser: false }, maxDuration: 120 };
 
@@ -63,14 +74,25 @@ function rawBody(req, limit = MAX_PDF_BYTES + 512 * 1024) {
   });
 }
 
+// Hardened multipart parser — enforces strict limits to prevent memory/DoS abuse.
+const MAX_MULTIPART_PARTS = 10;
+const MAX_MULTIPART_HEADER_BYTES = 8192;
+const MAX_MULTIPART_BOUNDARY_BYTES = 256;
+
 function parseMultipart(buf, contentType) {
   const bm = contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/i);
   if (!bm) throw new Error('No multipart boundary');
   const boundary = bm[1] || bm[2];
+  if (boundary.length > MAX_MULTIPART_BOUNDARY_BYTES) {
+    throw new Error('Multipart boundary exceeds maximum length');
+  }
   const sep = Buffer.from('--' + boundary);
   const parts = [];
   let start = buf.indexOf(sep);
   while (start !== -1) {
+    if (parts.length >= MAX_MULTIPART_PARTS) {
+      throw new Error(`Too many multipart parts (limit ${MAX_MULTIPART_PARTS})`);
+    }
     start += sep.length;
     if (buf[start] === 0x0d && buf[start + 1] === 0x0a) start += 2;
     if (buf[start] === 0x2d && buf[start + 1] === 0x2d) break;
@@ -79,6 +101,9 @@ function parseMultipart(buf, contentType) {
     const part = buf.slice(start, next - 2);
     const hEnd = part.indexOf('\r\n\r\n');
     if (hEnd === -1) { start = next; continue; }
+    if (hEnd > MAX_MULTIPART_HEADER_BYTES) {
+      throw new Error('Multipart header exceeds maximum size');
+    }
     const hdr = part.slice(0, hEnd).toString('utf8');
     parts.push({
       name: hdr.match(/name="([^"]+)"/)?.[1] || '',
@@ -130,511 +155,13 @@ function filenamesSimilar(name1, name2, threshold = 0.55) {
 // =====================================================
 // PDF text-layer analysis (pdf.js via unpdf)
 // =====================================================
-
-// Extract per-item text positions for every page.
-// Each item carries x, y in PDF native coords, and yFromTop (flipped so 0
-// is at the top of the page, matching how we'll crop the rendered image).
-async function extractPositions(pdfBytes) {
-  const { getDocumentProxy } = await import('unpdf');
-  const doc = await getDocumentProxy(new Uint8Array(pdfBytes));
-  const pages = [];
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const viewport = page.getViewport({ scale: 1.0 });
-    const tc = await page.getTextContent();
-    const items = tc.items
-      .filter(it => it && it.str !== undefined)
-      .map(it => ({
-        str: it.str,
-        x: it.transform[4],
-        y: it.transform[5],
-        yFromTop: viewport.height - it.transform[5],
-        width: it.width,
-        height: it.height,
-      }));
-    pages.push({ page: i, width: viewport.width, height: viewport.height, items });
-  }
-  return pages;
-}
-
-// Group items into visual lines (items whose yFromTop is within yTol of each
-// other). Returns each line with its concatenated text + left/right X extents.
-function buildLines(page, yTol = 3) {
-  const items = page.items.filter(it => it.str && it.str.trim() !== '');
-  if (!items.length) return [];
-  const sorted = [...items].sort((a, b) => a.yFromTop - b.yFromTop);
-  const lines = [];
-  for (const it of sorted) {
-    const line = lines.find(l => Math.abs(l.yFromTop - it.yFromTop) < yTol);
-    if (line) {
-      line.items.push(it);
-      line.yFromTop = (line.yFromTop * (line.items.length - 1) + it.yFromTop) / line.items.length;
-    } else {
-      lines.push({ yFromTop: it.yFromTop, items: [it] });
-    }
-  }
-  for (const line of lines) {
-    // RTL: rightmost item first when building visual text.
-    line.items.sort((a, b) => b.x - a.x);
-    const parts = [];
-    let lastX = null;
-    for (const it of line.items) {
-      if (lastX !== null && lastX - (it.x + (it.width || 0)) > 2) parts.push(' ');
-      parts.push(it.str);
-      lastX = it.x;
-    }
-    line.text = parts.join('').replace(/\s+/g, ' ').trim();
-    line.leftX = Math.min(...line.items.map(it => it.x));
-    line.rightX = Math.max(...line.items.map(it => it.x + (it.width || 0)));
-  }
-  return lines;
-}
-
-// Find the page range for a parent question (used by sections mode).
-function findQuestionRange(pages, parentQ) {
-  let startPage = null, startY = null, endPage = null, endY = null;
-  for (const page of pages) {
-    const lines = buildLines(page);
-    for (const line of lines) {
-      const m = line.text.match(/שאלה\s*(\d+)|(\d+)\s*שאלה/);
-      if (m) {
-        const num = parseInt((m[1] || m[2]), 10);
-        if (num === parentQ && startPage === null) {
-          startPage = page.page; startY = line.yFromTop;
-        } else if (num === parentQ + 1 && startPage !== null && endPage === null) {
-          endPage = page.page; endY = line.yFromTop;
-        }
-      }
-    }
-  }
-  return { startPage, startY, endPage, endY };
-}
-
-const ALL_LETTERS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י'];
-
-// Find sub-section headings (סעיף א/ב/ג...) within a parent question.
-function findSectionHeadings(pages, parentQ) {
-  const range = findQuestionRange(pages, parentQ);
-  const results = [];
-  if (range.startPage === null) return { headings: results, range };
-  const seen = new Set();
-  for (const page of pages) {
-    if (page.page < range.startPage) continue;
-    if (range.endPage !== null && page.page > range.endPage) break;
-    const lines = buildLines(page);
-    for (const line of lines) {
-      if (range.endPage === page.page && line.yFromTop >= range.endY) continue;
-      for (const letter of ALL_LETTERS) {
-        if (seen.has(letter)) continue;
-        const re1 = new RegExp(`(^|\\s)סעיף\\s*${letter}['\u2019\u05F3\`]?(\\s|$|\\()`);
-        const re2 = new RegExp(`(^|\\s)${letter}['\u2019\u05F3\`]\\s*\\(\\s*\\d+\\s*נק`);
-        if (re1.test(line.text) || re2.test(line.text)) {
-          if (line.rightX > page.width - 110) {
-            seen.add(letter);
-            results.push({ section: letter, page: page.page, yFromTop: line.yFromTop });
-            break;
-          }
-        }
-      }
-    }
-  }
-  results.sort((a, b) => a.page - b.page || a.yFromTop - b.yFromTop);
-  return { headings: results, range };
-}
-
-// Find standalone numbered question headings ("שאלה 1", "שאלה 2", ...).
-// Requires that the line STARTS with "שאלה" (not embedded in a paragraph)
-// and sits near the right edge of the page (RTL heading position).
-//
-// Page 1 is scanned unless it's clearly an instructions page (has the word
-// "הוראות" / "כללי" near the top and no "שאלה N" headings). We decide that
-// per-PDF by actually looking at what page 1 contains.
-function findStandaloneQuestions(pages) {
-  const results = [];
-  const seen = new Set();
-  // Decide whether to skip page 1: only if it looks like an instructions page
-  // AND has no שאלה-N heading on it. Otherwise include it.
-  let skipPage1 = false;
-  if (pages.length > 1) {
-    const p1 = pages.find(p => p.page === 1);
-    if (p1) {
-      const lines = buildLines(p1);
-      const hasQHeading = lines.some(l => /^\s*שאלה\s*\d/.test(l.text));
-      const looksLikeInstructions = lines.slice(0, 15).some(l =>
-        /(הוראות\s+כלליות|משך\s+הבחינה|חומר\s+עזר|מהלך\s+הבחינה)/.test(l.text));
-      skipPage1 = !hasQHeading && looksLikeInstructions;
-    }
-  }
-  for (const page of pages) {
-    if (page.page === 1 && skipPage1) continue;
-    const lines = buildLines(page);
-    for (const line of lines) {
-      // Skip only the absolute outliers — real headings can include the full
-      // question stem on the same visual line ("שאלה 2 נאמר ששפה L מסכימה...").
-      if (line.text.length > 300) continue;
-      // Match "שאלה N" at line start. Don't use \b — Hebrew + digit boundary is
-      // tricky; use an explicit "not a digit" lookahead instead.
-      const m = line.text.match(/^\s*שאלה\s*(\d{1,3})(?!\d)/);
-      if (!m) continue;
-      const num = parseInt(m[1], 10);
-      if (num < 1 || num > 100 || seen.has(num)) continue;
-      if (line.rightX <= page.width * 0.35) continue;
-      seen.add(num);
-      results.push({ section: String(num), page: page.page, yFromTop: line.yFromTop });
-    }
-  }
-  results.sort((a, b) => a.page - b.page || a.yFromTop - b.yFromTop);
-  return results;
-}
-
-// Given a heading and the following heading, find where the current question
-// actually ends.
-//
-// The returned `yFromTop` is the PRE-MARGIN bottom — buildCropUrl will still
-// add CROP_MARGIN_BOTTOM_PT on top. So we cap at (hardUpper - safety) where
-// safety ≥ CROP_MARGIN_BOTTOM_PT to guarantee the crop never spills into the
-// next heading after the aesthetic margin is added.
-//
-// Priority order:
-//  A. A "נימוק" line (justification box) on the starting page — tohna1 sections
-//     mode puts this after each MCQ.
-//  B. The LAST option line (1./2./3./4. or א./ב./ג./ד.) on the starting page,
-//     within the region before the next heading. This is the most reliable
-//     signal for MCQs — stops us cropping into the next question when there's
-//     no explicit structural marker.
-//  C. The next heading on the same page (minus a safety margin).
-//  D. The page bottom.
-function findBottomBoundary(pages, fromHeading, nextHeading) {
-  const startPage = fromHeading.page;
-  const startY = fromHeading.yFromTop;
-  const page = pages.find(p => p.page === startPage);
-  if (!page) return null;
-
-  // Upper Y bound — never scan past the next heading (if it's on the same page).
-  const hardUpper = (nextHeading && nextHeading.page === startPage)
-    ? nextHeading.yFromTop
-    : page.height;
-
-  // Safety margin between our returned bottom and the next heading. We need
-  // at least CROP_MARGIN_BOTTOM_PT + a few points to absorb the crop padding.
-  const SAFETY = CROP_MARGIN_BOTTOM_PT + 6;
-  const safeCap = hardUpper - SAFETY;
-
-  const lines = buildLines(page);
-
-  // A. "נימוק" line
-  for (const line of lines) {
-    if (line.yFromTop <= startY || line.yFromTop >= hardUpper) continue;
-    if (/^נימוק\s*[:.]?\s*$/.test(line.text)) {
-      return { page: startPage, yFromTop: Math.min(safeCap, line.yFromTop - 10) };
-    }
-  }
-
-  // B. Last sequential option line in the region
-  let lastOptionY = null;
-  let numSeen = 0, hebSeen = 0;
-  for (const line of lines) {
-    if (line.yFromTop <= startY || line.yFromTop >= hardUpper) continue;
-    const t = line.text.replace(/^[\s•·]+/, '');
-    const mNum = t.match(/^\.?\s*([1-9])\s*[.)]/);
-    if (mNum) {
-      const n = parseInt(mNum[1], 10);
-      if (n === numSeen + 1 && n <= 6) {
-        numSeen = n;
-        lastOptionY = line.yFromTop;
-        continue;
-      }
-    }
-    const mHeb = t.match(/^\.?\s*([א-ט])\s*[.)]/);
-    if (mHeb) {
-      const idx = 'אבגדהוזח'.indexOf(mHeb[1]);
-      if (idx === hebSeen && hebSeen < 6) {
-        hebSeen = idx + 1;
-        lastOptionY = line.yFromTop;
-        continue;
-      }
-    }
-  }
-  if (lastOptionY !== null && Math.max(numSeen, hebSeen) >= 2) {
-    // Extend past the last option marker to capture any wrapped continuation
-    // lines — stop at the next structural element (new heading, new option,
-    // נימוק) or a big vertical gap.
-    let includeY = lastOptionY;
-    const tail = lines
-      .filter(l => l.yFromTop > lastOptionY && l.yFromTop < hardUpper)
-      .sort((a, b) => a.yFromTop - b.yFromTop);
-    for (const line of tail) {
-      if (/^נימוק\s*[:.]?\s*$/.test(line.text)) break;
-      if (/^\s*שאלה\s*\d/.test(line.text)) break;
-      const t = line.text.replace(/^[\s•·]+/, '');
-      if (/^\.?\s*[1-9]\s*[.)]/.test(t)) break;
-      if (/^\.?\s*[א-ט]\s*[.)]/.test(t)) break;
-      if (line.yFromTop - includeY > 25) break;
-      includeY = line.yFromTop;
-    }
-    // +6pt accounts for the baseline → descender of the last included line;
-    // CROP_MARGIN_BOTTOM_PT below adds the rest of the line height.
-    return { page: startPage, yFromTop: Math.min(safeCap, includeY + 6) };
-  }
-
-  // C. Next heading on the same page
-  if (nextHeading && nextHeading.page === startPage) {
-    return { page: startPage, yFromTop: safeCap };
-  }
-
-  // D. Page bottom
-  return { page: startPage, yFromTop: page.height - 30 };
-}
-
-// Does the region between heading and bottom look like an MCQ?
-// Signals:
-//   + "הקיפו" / "בחרו" / "איזו מהטענות" → explicit circle-one-answer = MCQ
-//   + ≥3 sequential numbered (1.2.3.4) or lettered (א.ב.ג.ד.) option lines
-//   - explicit open-question commands at sentence start (הוכיחו / השלימו / ...)
-//
-// `strict=true` (standalone mode) requires a concrete positive signal.
-// `strict=false` (sections mode) defaults to MCQ — the parent question is
-// typically dedicated to MCQs, so unclear cases are kept rather than dropped.
-function classifyRegion(pages, heading, bottom, strict = false) {
-  const page = pages.find(p => p.page === heading.page);
-  if (!page) return { isMCQ: false, numOptions: 0 };
-  const lines = buildLines(page);
-  const regionBottom = bottom ? bottom.yFromTop : page.height;
-  let regionLines = lines.filter(l =>
-    l.yFromTop > heading.yFromTop && l.yFromTop < regionBottom);
-
-  // Cross-page scan: if the region extends to/near the end of the page,
-  // also check the top portion of the next page for option markers.
-  // This catches questions whose heading is near the bottom of a page
-  // and whose options start on the following page.
-  if (regionBottom >= page.height - 60) {
-    const nextPage = pages.find(p => p.page === heading.page + 1);
-    if (nextPage) {
-      const nextLines = buildLines(nextPage).filter(l => l.yFromTop < 380);
-      regionLines = [...regionLines, ...nextLines];
-    }
-  }
-
-  if (regionLines.length === 0) return { isMCQ: false, numOptions: 0 };
-
-  const regionText = regionLines.map(l => l.text).join(' ');
-
-  // Count sequential option markers (".1", "1.", ".א", "א." at line start).
-  let num = 0, heb = 0;
-  for (const l of regionLines) {
-    const t = l.text.replace(/^[\s•·]+/, '');
-    const mNum = t.match(/^\.?\s*([1-9])\s*[.)]?/);
-    if (mNum) {
-      const n = parseInt(mNum[1], 10);
-      if (n === num + 1 && n <= 6) num = n;
-    }
-    const mHeb = t.match(/^\.?\s*([א-ט])\s*[.)]?/);
-    if (mHeb) {
-      const letterIdx = 'אבגדהוזח'.indexOf(mHeb[1]);
-      if (letterIdx === heb && heb < 6) heb = letterIdx + 1;
-    }
-  }
-  const numOptions = Math.max(num, heb);
-  const hasCirclePhrase = /(הקיפו|איזו\s+מהטענות|איזה\s+מהבא|בחרו\s+את|סמנו\s+את)/.test(regionText);
-
-  // Strong positive: explicit "circle" instruction — always an MCQ, even for
-  // 2-option true/false variants like "הקיפו: מתקמפל / לא מתקמפל".
-  if (hasCirclePhrase) {
-    return { isMCQ: true, numOptions: Math.max(numOptions, 2) };
-  }
-
-  // Strong negative: the stem opens with a clear write-an-answer command.
-  const openMarkers = /(הוכיחו|הפריכו|השלימו\s+את|כתבו\s+את|מימשו\s+את|ממשו\s+את|חשבו\s+את|תכננו\s+את|סרטטו|ציירו|תארו\s+את|הסבירו|פתרו\s+את|נמקו\s+את)/;
-  if (openMarkers.test(regionText) && numOptions < 3) {
-    return { isMCQ: false, numOptions: 0 };
-  }
-
-  // ≥3 numbered options is a reliable positive.
-  if (numOptions >= 3) return { isMCQ: true, numOptions };
-
-  // Standalone mode: require a concrete positive signal above. Unclear = reject.
-  if (strict) return { isMCQ: false, numOptions };
-
-  // Sections mode: default to MCQ (permissive — parent Q is typically MCQ-only).
-  return { isMCQ: true, numOptions: numOptions || 4 };
-}
-
-// Extract the question stem + 4 option texts from an MCQ region using the
-// already-parsed line data. This enables text-first solution generation:
-// instead of sending the PDF to Gemini as an image, we feed Gemini the real
-// question text from the user's PDF.
-//
-// Returns { questionStemText, optionTexts: {1..N: text} }. Falls back gracefully
-// to empty strings when the layout is unusual.
-function extractRegionText(pages, page, yTop, yBottom) {
-  const pageData = pages.find(p => p.page === page);
-  if (!pageData) return { questionStemText: '', optionTexts: {} };
-
-  let lines = buildLines(pageData).filter(l => l.yFromTop > yTop && l.yFromTop < yBottom);
-  // Cross-page scan for questions near page bottom (same logic as classifyRegion)
-  if (yBottom >= pageData.height - 60) {
-    const nextPage = pages.find(p => p.page === page + 1);
-    if (nextPage) {
-      const nextLines = buildLines(nextPage).filter(l => l.yFromTop < 380);
-      lines = [...lines, ...nextLines];
-    }
-  }
-  // Skip the header line "שאלה N" itself
-  lines = lines.filter(l => !/^\s*שאלה\s*\d{1,3}/.test(l.text));
-  if (lines.length === 0) return { questionStemText: '', optionTexts: {} };
-
-  // Walk through lines and split into stem vs options
-  const stemLines = [];
-  const options = {}; // { 1: [...lines], 2: [...], ... }
-  let currentOpt = 0;
-
-  for (const l of lines) {
-    const t = l.text.replace(/^[\s•·]+/, '').trim();
-    if (!t) continue;
-    // Match option markers: "1.", "2)", ".1", "א.", "ב)", etc.
-    const mNum = t.match(/^\.?\s*([1-6])\s*[.)]\s*(.*)$/);
-    const mHeb = t.match(/^\.?\s*([א-ט])\s*[.)]\s*(.*)$/);
-    if (mNum) {
-      const n = parseInt(mNum[1], 10);
-      if (n === currentOpt + 1) {
-        currentOpt = n;
-        options[n] = [mNum[2].trim()].filter(Boolean);
-        continue;
-      }
-    }
-    if (mHeb) {
-      const idx = 'אבגדהוזח'.indexOf(mHeb[1]) + 1;
-      if (idx === currentOpt + 1) {
-        currentOpt = idx;
-        options[idx] = [mHeb[2].trim()].filter(Boolean);
-        continue;
-      }
-    }
-    // Continuation line for current option, or stem line if no option yet
-    if (currentOpt > 0) {
-      options[currentOpt].push(t);
-    } else {
-      stemLines.push(t);
-    }
-  }
-
-  const optionTexts = {};
-  for (const [k, v] of Object.entries(options)) {
-    optionTexts[k] = v.join(' ').replace(/\s+/g, ' ').trim();
-  }
-
-  return {
-    questionStemText: stemLines.join(' ').replace(/\s+/g, ' ').trim(),
-    optionTexts,
-  };
-}
-
-// Top-level MCQ detection: auto-picks between sections mode (a single parent
-// question with sub-sections) and standalone mode (each שאלה N is its own MCQ).
-function detectMCQsFromPositions(pages) {
-  // Sections mode: try parent questions 1..6 and keep the one with the most
-  // sub-sections that actually look like MCQs.
-  let best = { mode: 'none', mcqs: [] };
-  for (let pq = 1; pq <= 6; pq++) {
-    const { headings } = findSectionHeadings(pages, pq);
-    if (headings.length < 3) continue;
-    const mcqs = [];
-    for (let i = 0; i < headings.length; i++) {
-      const h = headings[i];
-      const next = headings[i + 1];
-      const bottom = findBottomBoundary(pages, h, next);
-      if (!bottom) continue;
-      const cls = classifyRegion(pages, h, bottom);
-      if (!cls.isMCQ) continue;
-      const pageMeta = pages.find(p => p.page === h.page);
-      const regionText = extractRegionText(pages, h.page, h.yFromTop, bottom.yFromTop);
-      mcqs.push({
-        section: h.section,
-        number: i + 1,
-        page: h.page,
-        yTop: h.yFromTop,
-        yBottom: bottom.yFromTop,
-        pageWidth: pageMeta.width,
-        pageHeight: pageMeta.height,
-        numOptions: cls.numOptions,
-        questionStemText: regionText.questionStemText,
-        optionTexts: regionText.optionTexts,
-      });
-    }
-    if (mcqs.length > best.mcqs.length) {
-      best = { mode: `sections(parent=${pq})`, mcqs };
-    }
-  }
-
-  // Standalone mode: "שאלה N" at the right edge of the page.
-  // Strict classifier — standalone "שאלה N" could easily be an open question
-  // (proofs, design, programming), so we require concrete MCQ evidence.
-  const standalone = findStandaloneQuestions(pages);
-  if (standalone.length >= 3) {
-    const mcqs = [];
-    for (let i = 0; i < standalone.length; i++) {
-      const h = standalone[i];
-      const next = standalone[i + 1];
-      const bottom = findBottomBoundary(pages, h, next);
-      if (!bottom) continue;
-      const cls = classifyRegion(pages, h, bottom, /* strict */ true);
-      if (!cls.isMCQ) continue;
-      const pageMeta = pages.find(p => p.page === h.page);
-      const regionText = extractRegionText(pages, h.page, h.yFromTop, bottom.yFromTop);
-      mcqs.push({
-        section: h.section,
-        number: parseInt(h.section, 10),
-        page: h.page,
-        yTop: h.yFromTop,
-        yBottom: bottom.yFromTop,
-        pageWidth: pageMeta.width,
-        pageHeight: pageMeta.height,
-        numOptions: cls.numOptions,
-        questionStemText: regionText.questionStemText,
-        optionTexts: regionText.optionTexts,
-      });
-    }
-
-    // Second pass: for any headings that failed strict classification,
-    // re-run non-strictly if we already confirmed most are MCQs.
-    // This recovers questions skipped due to cross-page layouts or
-    // unusual option formatting, while still rejecting clear open questions.
-    if (mcqs.length >= 2 && mcqs.length < standalone.length) {
-      const confirmedNums = new Set(mcqs.map(m => m.number));
-      for (let i = 0; i < standalone.length; i++) {
-        const h = standalone[i];
-        const num = parseInt(h.section, 10);
-        if (confirmedNums.has(num)) continue;
-        const next = standalone[i + 1];
-        const bottom = findBottomBoundary(pages, h, next);
-        if (!bottom) continue;
-        const cls2 = classifyRegion(pages, h, bottom, /* strict */ false);
-        if (!cls2.isMCQ) continue;
-        const pageMeta = pages.find(p => p.page === h.page);
-        const regionText = extractRegionText(pages, h.page, h.yFromTop, bottom.yFromTop);
-        console.log(`[standalone-gap-fill] adding Q${num} via non-strict pass`);
-        mcqs.push({
-          section: h.section,
-          number: num,
-          page: h.page,
-          yTop: h.yFromTop,
-          yBottom: bottom.yFromTop,
-          pageWidth: pageMeta.width,
-          pageHeight: pageMeta.height,
-          numOptions: cls2.numOptions || 4,
-          questionStemText: regionText.questionStemText,
-          optionTexts: regionText.optionTexts,
-        });
-      }
-    }
-
-    if (mcqs.length > best.mcqs.length) {
-      best = { mode: 'standalone', mcqs };
-    }
-  }
-
-  return best;
-}
+// Helpers live in api/_lib/:
+//   extractPositions, buildLines                 → pdf-positions.mjs
+//   findQuestionRange, findSectionHeadings, findStandaloneQuestions,
+//   findBottomBoundary, classifyRegion, extractRegionText,
+//   detectMCQsFromPositions                      → pdf-mcq-detect.mjs
+//   applyGroupContextToCrops, extractContextText → pdf-group-context.mjs
+// =====================================================
 
 // Build a Cloudinary URL that crops page `page` of `publicId` to exactly the
 // rectangle containing this MCQ. `pageWidth` / `pageHeight` must be the real
@@ -927,8 +454,15 @@ async function analyzeExamWithGemini(examPdfBase64, solPdfBase64) {
   const prompt = `Analyze this Hebrew university exam PDF. Find EVERY multiple-choice question (שאלות אמריקאיות / שאלות סגורות).
 
 A multiple-choice question has ALL of:
-1. A question number (e.g. "שאלה 1", "שאלה 2", or "סעיף א")
-2. 3-5 answer options labeled either 1./2./3./4. OR א./ב./ג./ד.
+1. A question number labeled in ANY of these ways:
+   • "שאלה 1", "שאלה 2", ... (classic header format)
+   • "1 (", "2 (", "3 (" — bare number followed by open-paren, common in biology/genetics/chemistry exams
+   • "סעיף א", "(א)", "(ב)" (sub-questions inside a set)
+   • Just "1." / "2." at the start of a line
+2. 2-10 answer options labeled in ANY of these formats:
+   • 1. / 2. / 3. / 4.   or   1) / 2) / 3) / 4)   or   (1) / (2) / (3) / (4)
+   • א. / ב. / ג. / ד. / ה. / ו. / ז. / ח. / ט. / י.   (biology often has 6-10 options)
+   • א) / ב) / ג) / ד)   or   (א) / (ב) / (ג) / (ד)
 3. The student picks ONE answer
 
 BE EXHAUSTIVE. Return EVERY question that matches. This is CRITICAL:
@@ -936,11 +470,62 @@ BE EXHAUSTIVE. Return EVERY question that matches. This is CRITICAL:
 - Include questions even if you are only ~80% sure they are MCQs.
 - Scan ALL pages, including page 1.
 - If questions are numbered 1..N, you should generally return N objects.
+- BIOLOGY / CHEMISTRY / MEDICINE exams often present a scenario, experiment description, figure, or data table followed by several short sub-questions with options — every short sub-question with options IS an MCQ; extract each one separately with a shared group_id.
+- Questions can appear mid-page between figures or passages — scan the full page, not just top/bottom.
+- If you see short answer-option lines (1./2./3./4. or א./ב./ג./ד. or (1)/(2)/(3)/(4) or (א)/(ב)) near any question stem, that IS an MCQ even if the stem is only one sentence.
 
 ONLY skip a question if:
 - It has NO answer options at all (just a blank writing space)
 - It sits under an explicit "שאלות פתוחות" section header
 - It is pure instructions / cover page with no question stem
+
+=== CONTEXT GROUPS ===
+Some exams present a shared piece of content — a figure, diagram, passage, data table, chemical structure, or code snippet — BEFORE a numbered cluster of MCQs that ALL depend on it. Without the shared content, those questions CANNOT be answered.
+
+A GROUP exists when ALL of these are true:
+- A figure, image, diagram, passage, table, code snippet, or data set appears on the page, AND
+- The sub-questions that follow CANNOT be answered without that shared content
+
+NOT a group:
+- Questions on the same topic but each independently states all needed information
+- A section header like "חלק א" or "נושא: גנטיקה" without a concrete shared figure/passage
+- Consecutive questions that share subject area but are self-contained
+
+For each question in a group:
+- Assign the SAME group_id string (e.g. "A", "B", "C") to all questions sharing the same context
+- Report context_y_top: the percentage (0-100) from the TOP of context_page where the shared context element STARTS (very top edge of the figure, passage, code block, or table — not the question itself)
+- Report context_page: the page number (1-based) where the shared context appears
+
+=== ISRAELI SET FORMAT (very common) ===
+Israeli exams frequently use "set" (סט) format WITHOUT an explicit linking instruction.
+Two common variants:
+
+Variant A (CS/math — sub-letters):
+  שאלה 1 (15 נקודות)
+  [context block — code, theorem, automaton, formula, diagram]
+  (א) First sub-question...   (1) opt1  (2) opt2  (3) opt3  (4) opt4
+  (ב) Second sub-question...  (1) opt1  (2) opt2  (3) opt3  (4) opt4
+  (ג) Third sub-question...   ...
+
+Variant B (biology/chemistry/genetics — numbered within set):
+  סט 1 : [long scenario — experiment, crossbreeding, mutation data, population data]
+  1 ( Question about the scenario  → א. opt1  ב. opt2  ג. opt3  ד. opt4  ה. opt5 ...
+  2 ( Another question             → א. opt1  ב. opt2  ג. opt3  ד. opt4 ...
+
+  סט 2 : [new scenario]
+  7 ( ...
+  8 ( ...
+
+→ Treat EACH sub-question as a SEPARATE MCQ entry with the SAME group_id
+→ For Variant B: each numbered question under "סט N" shares the group_id of that set; the set header "סט 1" / "סט 2" defines the context boundary
+→ context_y_top = top of the scenario text block (right after the "סט N :" label)
+→ context_page  = page where the scenario text starts
+→ Biology/genetics MCQs commonly have 6-10 options (א through י)  — return all of them in the stem area; your job is to find the coordinates, not to list the options
+→ Apply this detection even without an explicit "ענה על שאלות X-Y בהתבסס על..." instruction
+=== END SET FORMAT ===
+
+IMPORTANT: When in doubt, DO create a group — it is better to over-group than to miss a dependency. Missing a group makes the questions unanswerable for students.
+=== END CONTEXT GROUPS ===
 
 For EACH MCQ return:
 {
@@ -948,6 +533,9 @@ For EACH MCQ return:
   "page": PDF page number (1-based integer),
   "y_top": percentage from top where the "שאלה N" LABEL LINE starts — must be AT or ABOVE the top edge of the "שאלה X" text itself, not below it. If unsure, subtract ~2% from your estimate to ensure the label is included. (0-100),
   "y_bottom": percentage from top where the LAST option ends (0-100),
+  "group_id": null if standalone; short string like "A" or "B" if this question shares a context block with others (all questions in the same context get the same group_id),
+  "context_y_top": percentage from top of context_page where shared content STARTS — the very top of the figure/passage/table (only when group_id != null; null otherwise),
+  "context_page": page number (1-based) where shared context lives (only when group_id != null; null otherwise),
   "correct": correct answer index (1-4) if known, else null,
   "page_w": page width in points (usually 595),
   "page_h": page height in points (usually 842)
@@ -1004,17 +592,95 @@ Return ONLY a JSON array. Be complete — if the exam has 10 questions, return 1
     return null;
   }
 
-  if (freeKey) {
-    const res = await tryWithKey(freeKey);
-    if (res?.result) return res.result;
-    if (res?.quota_exceeded && paidKey) {
-      console.warn('[gemini-fallback] free key quota exceeded — switching to paid key');
-      const paidRes = await tryWithKey(paidKey);
-      if (paidRes?.result) return paidRes.result;
+  const primaryKey = paidKey || freeKey;
+  const fallbackKey = paidKey ? freeKey : null;
+  console.log(`[gemini-fallback] using ${paidKey ? 'paid' : 'free'} key as primary`);
+  const primaryRes = await tryWithKey(primaryKey);
+  if (primaryRes?.result) return primaryRes.result;
+  if (primaryRes?.quota_exceeded && fallbackKey) {
+    console.warn('[gemini-fallback] primary key quota exceeded — switching to fallback key');
+    const fallbackRes = await tryWithKey(fallbackKey);
+    if (fallbackRes?.result) return fallbackRes.result;
+  }
+
+  // Retry with an ultra-permissive prompt — for non-standard exam formats
+  // (biology/chemistry exams with context-shared sets, unlabeled numbering, etc.).
+  console.warn('[gemini-fallback] primary prompt returned 0 — retrying with permissive prompt');
+  const loosePrompt = `You are scanning a Hebrew exam PDF. Your ONE job: locate EVERY question that has multiple answer choices the student picks from.
+
+Be EXTREMELY INCLUSIVE. A question counts if it has:
+• Any form of question text (a stem, prompt, or setup), AND
+• 2+ visible answer options labeled in ANY of these ways:
+  1./2./3./4.  |  1)/2)/3)/4)  |  (1)/(2)/(3)/(4)
+  א./ב./ג./ד.  |  א)/ב)/ג)/ד)  |  (א)/(ב)/(ג)/(ד)  |  A./B./C./D.
+  or even options on separate short lines under the stem.
+
+The question "number" can be written as:
+  "שאלה 1", "1.", "1)", "(1)", "סעיף א", "(א)", "א.",  "Question 1", or just a bold/standalone label.
+
+CRITICAL FOR BIOLOGY/CHEMISTRY/MEDICINE EXAMS:
+Many exams present a scenario/passage/figure/data-table ONCE, then ask 2–6 short MCQs about it. Each short MCQ with its own options is a SEPARATE question — return EACH one. Give them all the SAME group_id (a short letter) and the same context_y_top/context_page pointing at the top of the shared block.
+
+DO NOT SKIP:
+- Questions on page 1 (page 1 often has real questions, not just instructions)
+- Questions whose stems use words like הסבירו/הוכיחו — if they still have labeled options, they are MCQs
+- Questions in the middle of a passage or between figures
+- Short "true/false" style questions with 2 options
+
+Return ONLY a JSON array. If the exam appears to have 15 questions, return 15 objects. Empty array ONLY if the PDF truly contains zero multi-choice items.
+
+For each question return:
+{
+  "n": integer question number (use the printed number; for (א)/(ב) sub-questions inside a set, number them 1,2,3 within the set),
+  "page": 1-based page number,
+  "y_top": % from top where the question label/stem begins (0-100),
+  "y_bottom": % from top where the last option ends (0-100),
+  "group_id": null, OR short string shared by all questions in one context-set,
+  "context_y_top": % from top where shared context begins (null if group_id is null),
+  "context_page": page of shared context (null if group_id is null),
+  "correct": 1-4 if the correct answer is visually marked (highlight/circle/check) else null,
+  "page_w": page width in points (595 if unknown),
+  "page_h": page height in points (842 if unknown)
+}`;
+  const looseParts = [
+    { text: loosePrompt },
+    { inlineData: { mimeType: 'application/pdf', data: examPdfBase64 } },
+  ];
+  async function tryLoose(apiKey) {
+    for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      try {
+        console.log(`[gemini-fallback-loose] trying ${model}...`);
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: looseParts }],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 16384, responseMimeType: 'application/json' },
+          }),
+          signal: AbortSignal.timeout(45000),
+        });
+        if (!r.ok) { if (r.status === 429) return { quota_exceeded: true }; continue; }
+        const j = await r.json();
+        const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+        const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        let parsed = null;
+        try { parsed = JSON.parse(cleaned); } catch { continue; }
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log(`[gemini-fallback-loose] ${model} found ${parsed.length} MCQs`);
+          return { result: parsed };
+        }
+      } catch (e) {
+        console.warn(`[gemini-fallback-loose] ${model} failed:`, e.message);
+      }
     }
-  } else if (paidKey) {
-    const res = await tryWithKey(paidKey);
-    if (res?.result) return res.result;
+    return null;
+  }
+  const looseRes = await tryLoose(primaryKey);
+  if (looseRes?.result) return looseRes.result;
+  if (looseRes?.quota_exceeded && fallbackKey) {
+    const fb = await tryLoose(fallbackKey);
+    if (fb?.result) return fb.result;
   }
   return null;
 }
@@ -1028,23 +694,36 @@ Return ONLY a JSON array. Be complete — if the exam has 10 questions, return 1
 // Cost reduction: ~6x (from ~$0.028/exam to ~$0.005/exam).
 
 async function callGeminiJsonWithUsage(prompt, pdfParts, { temperature = 0.2, maxOutputTokens = 16384, timeoutMs = 60000 } = {}) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  if (!apiKey) return { data: null, usage: null, error: 'no-api-key' };
+  const freeKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
+  const paidKey = (process.env.GEMINI_API_KEY_PAID || '').replace(/\\n/g, '').trim();
+  const primaryKey = paidKey || freeKey;
+  const fallbackKey = paidKey && freeKey ? freeKey : null;
+  if (!primaryKey) return { data: null, usage: null, error: 'no-api-key' };
+  console.log(`[gemini-batch] using ${paidKey ? 'paid' : 'free'} key as primary`);
   const parts = [{ text: prompt }, ...pdfParts];
   const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
   let lastError = null;
-  for (const model of models) {
+
+  async function fetchWithKey(apiKey, model) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { temperature, maxOutputTokens, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  }
+
+  for (const model of models) {
     try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: { temperature, maxOutputTokens, responseMimeType: 'application/json' },
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      let r = await fetchWithKey(primaryKey, model);
+      if (r.status === 429 && fallbackKey) {
+        console.warn(`[gemini-batch] ${model} primary quota exceeded — switching to fallback key`);
+        r = await fetchWithKey(fallbackKey, model);
+      }
       if (!r.ok) {
         lastError = `${model}:${r.status}`;
         const errBody = await r.text().catch(() => '');
@@ -1072,9 +751,10 @@ async function callGeminiJsonWithUsage(prompt, pdfParts, { temperature = 0.2, ma
 // Main batched generator — ONE call for the whole exam.
 // Returns: { solutions: {[qNumber]: {correct, general_explanation, option_explanations}}, usage: {input_tokens, output_tokens, cost_usd}, error }
 async function generateAllSolutions(mcqs, examBase64, solBase64, answers) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  if (!apiKey) {
-    console.warn('[solutions] no GEMINI_API_KEY, skipping');
+  const freeKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
+  const paidKey = (process.env.GEMINI_API_KEY_PAID || '').replace(/\\n/g, '').trim();
+  if (!freeKey && !paidKey) {
+    console.warn('[solutions] no GEMINI_API_KEY configured, skipping');
     return { solutions: {}, usage: null, error: 'no-api-key' };
   }
 
@@ -1172,8 +852,11 @@ STRICT RULES:
 // Quick document-type classifier — called only when 0 MCQs detected.
 // Returns { type: 'exam'|'solution'|'notes'|'blank'|'other', reason: string } or null.
 async function classifyPdfWithGemini(pdfBase64) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  if (!apiKey) return null;
+  const freeKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
+  const paidKey = (process.env.GEMINI_API_KEY_PAID || '').replace(/\\n/g, '').trim();
+  const primaryKey = paidKey || freeKey;
+  const fallbackKey = paidKey && freeKey ? freeKey : null;
+  if (!primaryKey) return null;
   const prompt = `Look at this PDF and classify it. Reply with ONLY a JSON object (no markdown):
 { "type": "exam" | "solution" | "notes" | "blank" | "other", "reason": "one short sentence in Hebrew" }
 exam = university exam with questions students must answer
@@ -1181,9 +864,10 @@ solution = answer key / פתרון / answers to an exam
 notes = lecture slides, notes, textbook pages
 blank = empty or unreadable
 other = anything else`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-  try {
-    const r = await fetch(url, {
+
+  async function tryKey(apiKey) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1192,6 +876,14 @@ other = anything else`;
       }),
       signal: AbortSignal.timeout(20000),
     });
+  }
+
+  try {
+    let r = await tryKey(primaryKey);
+    if (r.status === 429 && fallbackKey) {
+      console.warn('[classify] primary quota exceeded — switching to fallback key');
+      r = await tryKey(fallbackKey);
+    }
     if (!r.ok) return null;
     const j = await r.json();
     const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
@@ -1311,10 +1003,12 @@ Rules:
   const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
   for (const model of models) {
     try {
-      let res = freeKey ? await callModel(model, freeKey) : null;
-      if (res?.quota_exceeded && paidKey) {
-        console.warn(`[solution-analyze] ${model} free quota exhausted — switching to paid key`);
-        res = await callModel(model, paidKey);
+      const primaryKey = paidKey || freeKey;
+      const fallbackKey = paidKey ? freeKey : null;
+      let res = primaryKey ? await callModel(model, primaryKey) : null;
+      if (res?.quota_exceeded && fallbackKey) {
+        console.warn(`[solution-analyze] ${model} primary key quota exceeded — switching to fallback key`);
+        res = await callModel(model, fallbackKey);
       }
       if (!res?.parsed) continue;
 
@@ -1497,6 +1191,12 @@ function normalizeGeminiMcqs(raw) {
       numOptions: 4,
       _geminiCorrect: q.correct ?? null,
       _fromGemini: true,
+      // Context group support: questions sharing a figure/passage/table context
+      groupId: q.group_id || null,
+      contextYTop: (q.context_y_top != null && q.group_id)
+        ? Math.max(0, (q.context_y_top / 100) * (q.page_h || 842) - 5)
+        : null,
+      contextPage: (q.context_page != null && q.group_id) ? q.context_page : null,
     }));
 }
 
@@ -1694,11 +1394,16 @@ export default async function handler(req, res) {
       const geminiByNumber = new Map(geminiMcqs.map(q => [q.number, q]));
       const textNums = new Set(textLayerMcqs.map(q => q.number));
       const geminiFill = geminiMcqs.filter(q => !textNums.has(q.number));
-      // Copy _geminiCorrect from Gemini onto text-layer MCQs — critical for answer extraction.
-      // Without this, Gemini's answer data is discarded when text-layer finds all questions.
+      // Copy _geminiCorrect and group data from Gemini onto text-layer MCQs.
+      // Without this, Gemini's answer data and group context are discarded when text-layer finds all questions.
       const enrichedTextLayer = textLayerMcqs.map(q => {
         const gq = geminiByNumber.get(q.number);
-        return (gq?._geminiCorrect != null) ? { ...q, _geminiCorrect: gq._geminiCorrect } : q;
+        if (!gq) return q;
+        return {
+          ...q,
+          ...(gq._geminiCorrect != null ? { _geminiCorrect: gq._geminiCorrect } : {}),
+          ...(gq.groupId ? { groupId: gq.groupId, contextYTop: gq.contextYTop, contextPage: gq.contextPage } : {}),
+        };
       });
       mcqs = [...enrichedTextLayer, ...geminiFill];
       mode = geminiFill.length > 0
@@ -1720,6 +1425,9 @@ export default async function handler(req, res) {
     mcqs.sort((a, b) => (a.number || 0) - (b.number || 0));
     console.log(`[upload] ${mcqs.length} unique MCQs after dedup`);
 
+    // Extend crop bounds for grouped questions to include shared context (figure/passage/table)
+    mcqs = applyGroupContextToCrops(mcqs);
+
     // Hard stop: 0 MCQs detected — classify and give a specific error
     if (mcqs.length === 0) {
       const cls = await classifyPdfWithGemini(examBase64).catch(() => null);
@@ -1735,13 +1443,41 @@ export default async function handler(req, res) {
     }
 
     // ===== Unified solution analysis: match verification + answer extraction =====
-    // One Gemini call does both jobs. Strict rejection if the AI says "not a match",
-    // silent accept if the AI says "match" with confidence >= 0.7.
+    // One Gemini call does both jobs. The upload ALWAYS succeeds — if the AI
+    // cannot confidently match the solution, we drop the low-confidence answers
+    // and attach a soft warning so the user can set answers manually.
     let answers = {};
     let answerCrossVerify = {}; // { qNumStr: 'agree' | 'disagree' | 'skip' } — set by Groq pass
     let answerExtractDebug = { tried: false, ok: false, matched: 0, model: null };
     let matchVerdict = null;     // 'match' | 'mismatch' | 'unknown'
     let matchConfidence = 0;
+    let solutionWarning = null;  // populated when the AI couldn't verify the solution
+
+    // Detect "rich" instructor solutions: per-question blocks that contain
+    // explanation text (not just a one-character final answer). When present
+    // we skip Gemini-generated explanations entirely for those questions and
+    // show the instructor text verbatim.
+    const richSolutions = {}; // { [qNumber]: { text, isRich } }
+    if (pass1Result) {
+      for (const [k, v] of Object.entries(pass1Result)) {
+        const raw = (v?.rawText || '').trim();
+        if (!raw) continue;
+        const textLen = raw.length;
+        const lineCount = raw.split(/\r?\n/).filter(l => l.trim().length > 2).length;
+        // Hebrew reasoning markers that indicate an explanation beyond a bare answer
+        const explainMarkers = /(?:כי |לכן|מכיוון|משום ש|נובע|נוסח(?:ה|אות)|הוכחה|הסבר|קרא את|נסמן|פתרון:|חישוב|מתקיים|לפיכך|על כן|ניתן לראות)/;
+        const hasExplainKeywords = explainMarkers.test(raw);
+        // Consider rich if the block is long AND has multiple lines AND at
+        // least one reasoning keyword, OR very long text regardless.
+        const isRich = (textLen >= 150 && lineCount >= 3 && hasExplainKeywords) || textLen >= 400;
+        if (isRich) {
+          richSolutions[k] = { text: raw.slice(0, 4000), isRich: true };
+        }
+      }
+      if (Object.keys(richSolutions).length > 0) {
+        console.log(`[upload] detected ${Object.keys(richSolutions).length} rich instructor solutions — will skip Gemini explanation for these`);
+      }
+    }
 
     if (mcqs.length > 0 && solBase64) {
       const nums = mcqs.map(q => q.number).filter(Boolean);
@@ -1786,33 +1522,26 @@ export default async function handler(req, res) {
         console.warn('[upload] cross-verify failed:', e?.message || e);
       }
 
-      // STRICT rejection rules — the user's explicit requirement:
-      //   "תדע לזהות תמיד על ידי שימוש בAI שהקבצים בוודאות מתאימים אחרת בכלל לא לבצע"
-      //
-      // 1. AI says "mismatch"           → hard reject, delete exam, 422
-      // 2. AI says "unknown"/"match" with confidence < 0.5 AND no answers extracted → reject
-      // 3. AI says "match" with confidence >= 0.5 OR answers were found → proceed silently
+      // NEVER hard-reject the upload. When the AI is not confident about the
+      // solution we drop the unreliable answers and surface a soft warning so
+      // the user can set answers manually. This guarantees every exam file
+      // ends up in the DB — biology/chemistry exams whose solution PDFs are
+      // just answer-grids would otherwise fail match verification.
       const answered = mcqs.filter(q => answers[String(q.number)]).length;
       const stronglyMatched = matchVerdict === 'match' && matchConfidence >= 0.5;
       const hasGoodAnswers = answered >= Math.max(2, Math.ceil(nums.length * 0.3));
 
       if (matchVerdict === 'mismatch') {
-        await auth.db.from('ep_exams').delete().eq('id', exam.id);
-        examId = null;
-        return res.status(422).json({
-          error: 'קובץ הפתרון אינו מתאים לבחינה',
-          guidance: 'ה-AI זיהה שהפתרון שהועלה אינו שייך לבחינה זו. ודא שהעלית את קובץ הפתרון הנכון, או הסר אותו ונסה שוב ללא פתרון.',
-        });
+        console.warn(`[upload] AI reported mismatch (conf=${matchConfidence.toFixed(2)}) — accepting anyway, dropping extracted answers`);
+        answers = {};
+        solutionWarning = 'ה-AI חשד שקובץ הפתרון אינו שייך לבחינה. המבחן הועלה אבל לא סימנו תשובות נכונות — תצטרך לסמן אותן ידנית לכל שאלה. אם העלית קובץ פתרון לא נכון, מחק את המבחן ונסה שוב.';
+      } else if (!stronglyMatched && !hasGoodAnswers) {
+        console.warn(`[upload] weak solution match (verdict=${matchVerdict}, conf=${matchConfidence.toFixed(2)}, answered=${answered}/${nums.length}) — accepting with warning`);
+        answers = {};
+        solutionWarning = 'לא זיהינו תשובות מתוך קובץ הפתרון — תצטרך לסמן את התשובה הנכונה לכל שאלה בעצמך. אם העלית קובץ פתרון לא נכון, מחק את המבחן ונסה שוב.';
+      } else {
+        console.log(`[upload] solution accepted: match=${matchVerdict} conf=${matchConfidence.toFixed(2)} answered=${answered}/${nums.length}`);
       }
-      if (!stronglyMatched && !hasGoodAnswers) {
-        await auth.db.from('ep_exams').delete().eq('id', exam.id);
-        examId = null;
-        return res.status(422).json({
-          error: 'לא ניתן לאמת שהפתרון שייך לבחינה',
-          guidance: 'ה-AI לא הצליח לאמת בוודאות שקובץ הפתרון מתאים לבחינה ולא חילץ מספיק תשובות. ודא שהעלית את קובץ הפתרון הנכון, או נסה להעלות רק את קובץ הבחינה.',
-        });
-      }
-      console.log(`[upload] solution accepted: match=${matchVerdict} conf=${matchConfidence.toFixed(2)} answered=${answered}/${nums.length}`);
     }
 
     // ===== NO upload-time Gemini solution generation =====
@@ -1863,6 +1592,16 @@ export default async function handler(req, res) {
           // solution_text_raw stays null — parseSolutionPdf side-task was removed (too unreliable)
           general_explanation: null,
           option_explanations: null,
+          group_id: q.groupId || null,
+          // Raw text extracted from the context block (code/theorem/passage) above the question.
+          // Used during quiz display so user can read context without opening the image.
+          context_text: q.groupId && q.contextYTop != null
+            ? extractContextText(positions, q.contextPage, q.contextYTop, q.yTopBeforeContext ?? q.yTop)
+            : null,
+          // If the solution PDF had a detailed per-question explanation, store
+          // it so the UI can show it verbatim and skip Gemini generation.
+          instructor_solution_text: richSolutions[String(q.number)]?.text || null,
+          has_rich_solution: !!richSolutions[String(q.number)]?.isRich,
         };
       });
 
@@ -1907,9 +1646,13 @@ export default async function handler(req, res) {
     if (mcqs.length === 0) {
       warnings.push('לא זוהו שאלות אמריקאיות בקובץ. ודא שהמבחן מכיל שאלות רב-ברירה בפורמט מוכר.');
     } else if (solBase64) {
-      const answered = mcqs.filter(q => answers[String(q.number)]).length;
-      if (answered > 0 && answered / mcqs.length < 0.5) {
-        warnings.push(`זוהו תשובות רק ל-${answered} מתוך ${mcqs.length} שאלות.`);
+      if (solutionWarning) {
+        warnings.push(solutionWarning);
+      } else {
+        const answered = mcqs.filter(q => answers[String(q.number)]).length;
+        if (answered > 0 && answered / mcqs.length < 0.5) {
+          warnings.push(`זוהו תשובות רק ל-${answered} מתוך ${mcqs.length} שאלות.`);
+        }
       }
     }
 
