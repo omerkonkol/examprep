@@ -182,6 +182,8 @@ const Data = {
           correctIdx: q.correct_idx,
           topic: q.topic || null,
           groupId: q.group_id || null,
+          contextText: q.context_text || null,
+          questionNumber: q.question_number || null,
           instructorSolutionText: q.instructor_solution_text || null,
           hasRichSolution: !!q.has_rich_solution,
         };
@@ -205,6 +207,7 @@ const Data = {
       optionLabels: a.optionLabels || null,
       topic: a.topic || null,
       groupId: a.groupId || null,
+      contextText: a.contextText || null,
     };
   },
   // Lazy-load explanations for a single tohna1 exam. Returns a Promise that
@@ -5213,6 +5216,32 @@ function renderQuiz() {
       wrap.innerHTML = '<img id="quiz-image" src="" alt="שאלה" />';
     }
     document.getElementById('quiz-image').src = Data.imageUrl(q.image);
+  }
+
+  // Context panel — for questions that are part of a "set" sharing a passage/
+  // diagram/data block. Click toggles; content is the same across all members
+  // of the group so users can reference the set intro from any question.
+  const ctxWrap = document.getElementById('quiz-context');
+  const ctxToggle = document.getElementById('quiz-context-toggle');
+  const ctxBody = document.getElementById('quiz-context-body');
+  const ctxText = (ap && ap.contextText) ? ap.contextText : '';
+  if (ctxWrap && ctxToggle && ctxBody) {
+    if (ctxText && ctxText.trim().length > 0) {
+      ctxWrap.classList.remove('hidden');
+      ctxBody.textContent = ctxText;
+      ctxBody.hidden = true;
+      ctxToggle.setAttribute('aria-expanded', 'false');
+      const label = ctxToggle.querySelector('.quiz-context-label');
+      if (label) label.textContent = 'הקשר לשאלה — לחץ להצגה';
+      ctxToggle.onclick = () => {
+        const open = ctxBody.hidden;
+        ctxBody.hidden = !open;
+        ctxToggle.setAttribute('aria-expanded', String(open));
+        if (label) label.textContent = open ? 'הקשר לשאלה — לחץ להסתרה' : 'הקשר לשאלה — לחץ להצגה';
+      };
+    } else {
+      ctxWrap.classList.add('hidden');
+    }
   }
 
   // Flag button

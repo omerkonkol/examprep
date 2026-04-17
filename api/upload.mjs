@@ -939,10 +939,13 @@ Solution PDFs often contain detailed explanations that DISCUSS WRONG OPTIONS in 
 Only count a letter as the answer if it appears in one of these EXPLICIT final-answer formats:
   1. PRIORITY: A SUMMARY TABLE on the last pages — e.g. a table with columns "שאלה | תשובה" listing each question with its answer letter. This is the most reliable source.
   2. A DEDICATED ANSWER KEY section or ordered list: "1. ב", "1) א", "תשובה 1: ב", "ת. 1: ג".
-  3. A CONCLUSION SENTENCE at the very end of the solution for a question: "לכן התשובה היא ב", "התשובה הנכונה היא א", "הקיפו את אפשרות ב", "הפתרון: א". The sentence must DECLARE the answer, not discuss why another option is wrong.
+  3. A CONCLUSION / INLINE DECLARATION for a question: "לכן התשובה היא ב", "התשובה הנכונה היא א", "התשובה הנכונה היתה ט'", "הקיפו את אפשרות ב", "הפתרון: א", "מסיח א הוסר, התשובה הנכונה היתה ט'". The sentence must DECLARE the answer; it can appear at the END of a question's explanation block, right before the next question.
   4. A HIGHLIGHTED or CIRCLED option — a colored highlight over one option letter, a hand-drawn circle, checkmark (✓), or arrow (→) pointing at one specific option. The correct option is the one that is marked/circled/highlighted, NOT the ones that are crossed out.
   5. A LETTER or DIGIT written in the margin next to the question number.
-Map answers to indices: 1=א, 2=ב, 3=ג, 4=ד. Accept both Hebrew letters and digits in the source.
+
+IMPORTANT — 10-option exams: biology/genetics/chemistry exams commonly have 6–10 options labeled א,ב,ג,ד,ה,ו,ז,ח,ט,י. Map letters to indices as follows:
+  א=1, ב=2, ג=3, ד=4, ה=5, ו=6, ז=7, ח=8, ט=9, י=10
+Accept both Hebrew letters and digits in the source. Return the numeric index in "ans".
 
 CRITICAL INSTRUCTION — OMIT RATHER THAN GUESS:
 If you are NOT 100% sure of the answer for a specific question — if the solution PDF does not clearly state it with one of the 5 formats above, if you found the letter only in the middle of an explanation paragraph (not a conclusion), or if there is any ambiguity whatsoever — you MUST OMIT that question from the "answers" array entirely. Return nothing rather than a guess. Returning nothing is always correct; returning a wrong answer is always wrong.
@@ -955,7 +958,7 @@ Return ONLY this JSON object (no markdown, no extra text):
   "confidence": <float 0.0-1.0 indicating how confident you are in the match verdict>,
   "reasoning": "<one short Hebrew sentence explaining the match verdict>",
   "answers": [
-    {"q": <exam question number>, "ans": <1|2|3|4>, "method": "<one of: table, list, conclusion, highlight, handwritten, margin>", "confidence": <0.0-1.0>, "source_quote": "<the exact text snippet or visual description from the solution PDF declaring this as the answer, max 100 chars>"}
+    {"q": <exam question number>, "ans": <integer 1..10>, "method": "<one of: table, list, conclusion, highlight, handwritten, margin>", "confidence": <0.0-1.0>, "source_quote": "<the exact text snippet or visual description from the solution PDF declaring this as the answer, max 100 chars>"}
   ]
 }
 
@@ -1028,17 +1031,23 @@ Rules:
           // Require source_quote — if Gemini can't point to explicit text in the
           // solution PDF, it was inferring, and we don't accept inferences.
           if (!hasQuote) continue;
-          // Reject answers where the source_quote is from an explanation of a
-          // WRONG option (e.g. "ג שגויה כי..." or "אינה נכונה").
-          // These sentences MENTION the letter of the wrong answer, not the correct one.
-          const quote = (item.source_quote || '').toLowerCase();
-          const negationWords = ['שגוי', 'שגויה', 'שגוים', 'שגויות', 'אינה', 'אינו', 'אין', 'לא נכון', 'לא מתאי', 'incorrect', 'wrong', 'not correct', 'אינם', 'אינן'];
-          const appearsNegated = negationWords.some(w => quote.includes(w));
-          if (appearsNegated) {
-            console.warn(`[solution-analyze] Q${q}: REJECTED — source_quote looks like wrong-option explanation: "${(item.source_quote || '').slice(0, 120)}"`);
+          // Reject answers where the source_quote is clearly from a discussion
+          // of a WRONG option. We only reject when the quote CLEARLY opens with
+          // a wrong-option framing AND does NOT contain an affirmative answer
+          // declaration. Earlier versions were too aggressive and dropped valid
+          // biology answers whose source_quote happened to mention "אינה" later.
+          const quote = (item.source_quote || '');
+          const lower = quote.toLowerCase();
+          const affirmativeMarkers = /(התשוב(?:ה|ות)\s+(?:ה)?נכונ(?:ה|ות)|הפתרון|לכן\s+התשובה|הקיפו|המסיח\s+הנכון|התשובה\s+היא|התשובה\s+היתה|: ?answer|correct\s+answer)/i;
+          const hasAffirmative = affirmativeMarkers.test(quote);
+          // Very-strict wrong-option framing: quote OPENS with "X שגויה/אינה נכונה/לא נכון"
+          const stronglyNegated = /^[\s"״׳'()\[\]]*(?:אפשרות\s+)?[\u0590-\u05FFa-z\d]+['״׳]?\s*(?:שגוי|שגויה|אינה נכון|אינו נכון|לא נכון)/i.test(quote);
+          if (stronglyNegated && !hasAffirmative) {
+            console.warn(`[solution-analyze] Q${q}: REJECTED — source_quote looks like wrong-option explanation: "${quote.slice(0, 120)}"`);
             continue;
           }
-          if (q > 0 && ans >= 1 && ans <= 4 && conf >= 0.85) {
+          // Accept up to 10 options (biology/genetics exams have א–י).
+          if (q > 0 && ans >= 1 && ans <= 10 && conf >= 0.85) {
             answers[String(q)] = ans;
           }
         }
@@ -1552,6 +1561,29 @@ export default async function handler(req, res) {
 
     // ===== Build DB rows =====
     if (mcqs.length > 0) {
+      // Pre-compute ONE shared context text per group.
+      // For each groupId, find the question with the smallest yTopBeforeContext on
+      // the group's contextPage — that's the "first question" of the set. The
+      // context text is everything between setTop (contextYTop) and that first
+      // question's original top. All members of the group get the SAME text.
+      // This handles cross-page sets correctly (e.g. set starts on p1, members
+      // on p2 and p3 still point back to p1's intro).
+      const groupContexts = {};
+      for (const q of mcqs) {
+        if (!q.groupId || q.contextPage == null || q.contextYTop == null) continue;
+        if (groupContexts[q.groupId] !== undefined) continue;
+        let firstInSet = null;
+        for (const m of mcqs) {
+          if (m.groupId !== q.groupId) continue;
+          if (m.page !== q.contextPage) continue;
+          const yOrig = m.yTopBeforeContext ?? m.yTop;
+          if (!firstInSet || yOrig < (firstInSet.yTopBeforeContext ?? firstInSet.yTop)) firstInSet = m;
+        }
+        if (!firstInSet) { groupContexts[q.groupId] = null; continue; }
+        const firstY = firstInSet.yTopBeforeContext ?? firstInSet.yTop;
+        groupContexts[q.groupId] = extractContextText(positions, q.contextPage, q.contextYTop, firstY);
+      }
+
       const qRecords = mcqs.map((q, i) => {
         let imagePath = 'text-only';
         if (cloudinaryId) {
@@ -1563,7 +1595,7 @@ export default async function handler(req, res) {
         // theoretical questions. No solution PDF → correct_idx=unknown → user sets it.
         const answerFromSolution = answers[String(q.number)] ?? null;
         const crossVerified = answerCrossVerify?.[String(q.number)]; // set by Groq pass
-        const hasAnswer = answerFromSolution !== null && answerFromSolution >= 1 && answerFromSolution <= 4;
+        const hasAnswer = answerFromSolution !== null && answerFromSolution >= 1 && answerFromSolution <= 10;
         // Two confidence levels:
         //   'confirmed' — Gemini extracted an answer from the solution PDF
         //   'unknown'   — no answer extracted at all (UI shows "set manually" prompt)
@@ -1593,11 +1625,10 @@ export default async function handler(req, res) {
           general_explanation: null,
           option_explanations: null,
           group_id: q.groupId || null,
-          // Raw text extracted from the context block (code/theorem/passage) above the question.
-          // Used during quiz display so user can read context without opening the image.
-          context_text: q.groupId && q.contextYTop != null
-            ? extractContextText(positions, q.contextPage, q.contextYTop, q.yTopBeforeContext ?? q.yTop)
-            : null,
+          // Shared context text for the group (set intro / passage / code block).
+          // Same text for every question in the set so users can reference it
+          // from any question without re-reading the other questions' stems.
+          context_text: q.groupId ? (groupContexts[q.groupId] || null) : null,
           // If the solution PDF had a detailed per-question explanation, store
           // it so the UI can show it verbatim and skip Gemini generation.
           instructor_solution_text: richSolutions[String(q.number)]?.text || null,
