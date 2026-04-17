@@ -3641,6 +3641,10 @@ function showExamManagementModal(courseId) {
                 <div style="font-size:12px;color:var(--text-muted);">${ex.question_count || 0} שאלות · <span style="${statusCls}">${statusLabel}</span></div>
               </div>
               ${canExpand ? `<svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>` : ''}
+              <button class="em-solution-btn" data-exam-id="${ex.id}" title="עדכן פתרון" style="flex-shrink:0;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:inherit;display:flex;align-items:center;gap:4px;">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6m0 0l-3-3m3 3l3-3"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                עדכן פתרון
+              </button>
               <button class="em-delete-btn" data-exam-id="${ex.id}" data-exam-name="${escapeHtml(ex.name)}" data-q-count="${ex.question_count || 0}" title="מחק מבחן" style="flex-shrink:0;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:inherit;display:flex;align-items:center;gap:4px;">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 מחק
@@ -3653,7 +3657,7 @@ function showExamManagementModal(courseId) {
       // Wire expand (click on row header)
       listEl.querySelectorAll('.em-row-header').forEach(header => {
         header.addEventListener('click', async (e) => {
-          if (e.target.closest('.em-delete-btn')) return; // don't expand when clicking delete
+          if (e.target.closest('.em-delete-btn') || e.target.closest('.em-solution-btn')) return;
           const row = header.closest('.em-exam-row');
           const examId = row.dataset.examId;
           const grid = row.querySelector('.em-questions-grid');
@@ -3915,6 +3919,37 @@ function showExamManagementModal(courseId) {
         });
       });
 
+      // Wire solution-upload buttons
+      listEl.querySelectorAll('.em-solution-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const examId = btn.dataset.examId;
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'application/pdf';
+          input.onchange = async () => {
+            const file = input.files[0];
+            if (!file) return;
+            btn.disabled = true;
+            btn.textContent = 'מעלה...';
+            const fd = new FormData();
+            fd.append('solFile', file);
+            try {
+              const t = await Auth.getToken();
+              const r = await fetch(`/api/exams/${examId}/solution`, { method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: fd });
+              const j = await r.json();
+              if (j.ok) {
+                toast(`זוהו תשובות ל-${j.answered}/${j.total} שאלות${j.warnings?.length ? ' — ' + j.warnings[0] : ''}`, j.answered > 0 ? 'success' : 'warning', 8000);
+              } else {
+                toast(j.error || 'שגיאה בעדכון פתרון', 'error');
+              }
+            } catch { toast('שגיאת רשת', 'error'); }
+            finally { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6m0 0l-3-3m3 3l3-3"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg> עדכן פתרון'; }
+          };
+          input.click();
+        });
+      });
+
       // Wire delete exam buttons
       listEl.querySelectorAll('.em-delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -4172,7 +4207,18 @@ function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, ma
     const imageHtml = isTextOnly
       ? `<div style="padding:24px;font-size:15px;line-height:1.8;direction:rtl;">${escapeHtml(q.general_explanation || 'שאלה ללא תמונה')}</div>`
       : `<img src="${imgSrc}" alt="שאלה" style="width:100%;display:block;" />`;
+    const contextHtml = (q.context_text && String(q.context_text).trim())
+      ? `<div class="quiz-context" style="margin:0 0 14px;">
+          <button type="button" class="quiz-context-toggle" id="qv-ctx-toggle" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <span class="quiz-context-label">הקשר לשאלה — לחץ להצגה</span>
+            <svg class="quiz-context-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="quiz-context-body" id="qv-ctx-body" hidden>${escapeHtml(q.context_text)}</div>
+        </div>`
+      : '';
     bodyEl.innerHTML = `
+      ${contextHtml}
       <div class="qv-image-wrap">${imageHtml}</div>
       <div class="qv-solution-section">
         <button class="qv-solution-toggle" id="qv-sol-toggle" type="button">
@@ -4183,6 +4229,18 @@ function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, ma
         <div class="qv-solution-panel" id="qv-sol-panel" hidden></div>
       </div>
     `;
+    // Wire context toggle
+    const ctxToggle = bodyEl.querySelector('#qv-ctx-toggle');
+    const ctxBody = bodyEl.querySelector('#qv-ctx-body');
+    if (ctxToggle && ctxBody) {
+      ctxToggle.addEventListener('click', () => {
+        const open = ctxBody.hidden;
+        ctxBody.hidden = !open;
+        ctxToggle.setAttribute('aria-expanded', String(open));
+        const label = ctxToggle.querySelector('.quiz-context-label');
+        if (label) label.textContent = open ? 'הקשר לשאלה — לחץ להסתרה' : 'הקשר לשאלה — לחץ להצגה';
+      });
+    }
     if (onDelete) { delBtn.style.display = ''; } else { delBtn.style.display = 'none'; }
     wireSolutionToggle(q);
     // Auto-open solution panel immediately on question load
@@ -4396,21 +4454,25 @@ function renderSolutionPanel(q) {
   const hasGeneral = !!(q.general_explanation && String(q.general_explanation).trim());
   const opts = Array.isArray(q.option_explanations) ? q.option_explanations : [];
   const hasOpts = opts.length > 0 && opts.some(o => o && o.explanation);
-  const letters = ['א', 'ב', 'ג', 'ד', 'ה'];
+  const letters = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י'];
+  const numOptions = Math.max(2, Math.min(10, parseInt(q.num_options, 10) || 4));
   const correctIdx = parseInt(q.correct_idx, 10) || (opts.find(o => o?.isCorrect)?.idx) || 1;
   const correctLetter = letters[correctIdx - 1] || String(correctIdx);
   const needsReview = q.answer_confidence === 'unknown';
   const isUncertain = q.answer_confidence === 'uncertain';
 
-  // Radio buttons — pre-select current answer when confidence is known
+  // Radio buttons — pre-select current answer when confidence is known.
+  // Biology/genetics exams have up to 10 options (א..י).
   const radioBorderColor = needsReview ? '#fca5a5' : (isUncertain ? '#fed7aa' : 'var(--border-soft)');
-  const radios = [1,2,3,4].map(i => `
+  const indices = Array.from({ length: numOptions }, (_, i) => i + 1);
+  const radios = indices.map(i => `
     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px solid ${radioBorderColor};border-radius:6px;background:white;">
       <input type="radio" name="qv-manual-answer" value="${i}" ${!needsReview && i === correctIdx ? 'checked' : ''} style="margin:0;" />
-      <span>${letters[i-1]}</span>
+      <span>${letters[i-1] || i}</span>
     </label>
   `).join('');
   const saveBtn = `<button class="btn btn-primary btn-sm" id="qv-manual-save" type="button" data-q-id="${q.id}">שמור</button>`;
+  const optionsPrompt = numOptions === 4 ? 'ארבעת האפשרויות' : `${numOptions} האפשרויות`;
 
   // Three states:
   //   'unknown'   — red warning, radios visible immediately, user MUST set manually
@@ -4422,7 +4484,7 @@ function renderSolutionPanel(q) {
     answerBlock = `
       <div class="qv-answer-review" style="margin-bottom:16px;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
         <p style="margin:0 0 10px;font-size:13px;color:#991b1b;font-weight:600;">⚠ התשובה הנכונה לא זוהתה אוטומטית</p>
-        <p style="margin:0 0 10px;font-size:12px;color:#7f1d1d;">בחר את התשובה הנכונה מתוך ארבעת האפשרויות:</p>
+        <p style="margin:0 0 10px;font-size:12px;color:#7f1d1d;">בחר את התשובה הנכונה מתוך ${optionsPrompt}:</p>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${radios}${saveBtn}</div>
       </div>`;
   } else if (isUncertain) {

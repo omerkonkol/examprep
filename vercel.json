@@ -8,7 +8,8 @@
     "api/questions/generate-solution.mjs": { "maxDuration": 60, "memory": 1024 },
     "api/questions/enhance-solution.mjs": { "maxDuration": 60, "memory": 1024 },
     "api/exams/generate-solutions.mjs": { "maxDuration": 120, "memory": 1024 },
-    "api/exams/reverify-answers.mjs": { "maxDuration": 120, "memory": 512 }
+    "api/exams/reverify-answers.mjs": { "maxDuration": 120, "memory": 512 },
+    "api/exams/add-solution.mjs": { "maxDuration": 60, "memory": 512 }
   },
   "rewrites": [
     { "source": "/api/me", "destination": "/api/crud" },
@@ -18,6 +19,7 @@
     { "source": "/api/courses/:courseId/exams", "destination": "/api/crud" },
     { "source": "/api/courses/:courseId/questions", "destination": "/api/crud" },
     { "source": "/api/courses/:courseId/review-queue", "destination": "/api/crud" },
+    { "source": "/api/exams/:examId/solution", "destination": "/api/exams/add-solution" },
     { "source": "/api/courses/:courseId/exams/:examId", "destination": "/api/crud" },
     { "source": "/api/courses/:courseId/questions/:questionId", "destination": "/api/crud" },
     { "source": "/api/courses/:courseId/trash", "destination": "/api/crud" },
