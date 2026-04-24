@@ -9,16 +9,13 @@
 // =====================================================
 
 import { createClient } from '@supabase/supabase-js';
+import { getQuota } from '../_lib/quotas.mjs';
+import { checkBurst, checkGlobalBudget } from '../_lib/burst-check.mjs';
+import { MODEL_CHAIN } from '../_lib/gemini-models.mjs';
+import { validateExplanation, selectBestExplanation } from '../_lib/validate-explanation.mjs';
+import { checkModelimBlock } from '../_lib/seed-guard.mjs';
 
 export const config = { maxDuration: 60 };
-
-const PLAN_QUOTAS = {
-  trial:     { per_day:  3, per_month:  10 },
-  free:      { per_day:  0, per_month:   0 },
-  basic:     { per_day: 10, per_month:  50 },
-  pro:       { per_day: 30, per_month: 200 },
-  education: { per_day: 80, per_month: 500 },
-};
 
 function getAdmin() {
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -72,7 +69,7 @@ async function callGeminiJson(prompt, imageParts, { temperature = 0.1, maxOutput
   }
 
   console.log(`[gen-solution] using ${hasPaid ? 'paid' : 'free'} key as primary`);
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+  for (const model of MODEL_CHAIN.explain) {
     try {
       let r = await fetchWithKey(primaryKey, model);
       if (isQuotaError(r.status, null) && fallbackKey) {
@@ -171,7 +168,16 @@ ${optionsList}
     {"idx": 3, "isCorrect": <bool>, "explanation": "<2 משפטים: מדוע נכונה/שגויה>"},
     {"idx": 4, "isCorrect": <bool>, "explanation": "<2 משפטים: מדוע נכונה/שגויה>"}
   ]
-}`;
+}
+
+פורמט הפלט (חובה — KaTeX ירנדר את זה ב-frontend):
+- כל ביטוי מתמטי, משתנה בודד (n, x, k), סימן (∑, ∫, π, √), חזקה, שבר, לוגריתם, או סיבוכיות — חייב להיות עטוף ב-$...$ (inline) או $$...$$ (display).
+  נכון: "חשב את $O(n \\log n)$ עבור $n \\geq 1$"
+  לא נכון: "חשב את O(n log n) עבור n גדול מ-1"
+- אל תעטוף מילים רגילות בעברית או באנגלית ב-$. רק טוקנים מתמטיים.
+- בשורה נפרדת להדגשת נוסחה מורכבת: $$\\sum_{i=1}^{n} i^2 = \\frac{n(n+1)(2n+1)}{6}$$
+- מונחים מרכזיים: **מונח** (מודגש)
+- בין רעיונות שונים — שורה ריקה`;
 
   const pass1 = await callGroq([systemMsg, { role: 'user', content: pass1Prompt }], {
     temperature: 0.3,
@@ -194,6 +200,8 @@ ${(draft.option_explanations || []).map(o => `אפשרות ${o.idx}: ${o.explana
 1. ודא שההסבר הכללי מסביר בבירור מדוע ${correctLetter} היא הנכונה
 2. ודא שכל הסבר שגוי מנמק מדוע האפשרות אינה נכונה
 3. הפוך את השפה ברורה יותר ואקדמית יותר אם צריך
+4. כל ביטוי מתמטי, משתנה, חזקה, שבר או סימן — חייב להיות ב-$...$ (inline) או $$...$$ (display). מונחים חשובים: **מונח**.
+5. ודא שכל $...$ פתוח גם נסגר (מספר סימני $ זוגי).
 
 החזר JSON באותו מבנה בדיוק.`;
 
@@ -229,7 +237,8 @@ Analyze the question and produce a detailed Hebrew solution. Return ONE JSON obj
     {"idx": 4, "isCorrect": <bool>, "explanation": "..."}
   ]
 }
-Rules: exactly ONE isCorrect:true. Write in clean academic Hebrew. Output ONLY the JSON.`;
+Rules: exactly ONE isCorrect:true. Write in clean academic Hebrew. Output ONLY the JSON.
+Formatting: use $formula$ for inline math, $$formula$$ for display math (LaTeX), **term** for key terms, blank line between ideas.`;
 
   const result = await callGeminiJson(prompt, [{ inlineData: { mimeType, data: imageBase64 } }], {
     temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 45000,
@@ -265,7 +274,79 @@ function normalizeGroqResult(groqData, correctIdx) {
     correct,
     general_explanation: (groqData.general_explanation || '').toString().trim(),
     option_explanations: normalizedOpts,
+    concept_tag: groqData.concept_tag ? String(groqData.concept_tag).trim().slice(0, 80) : null,
+    distractor_analysis: Array.isArray(groqData.distractor_analysis) ? groqData.distractor_analysis : null,
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0, model: 'groq/llama-3.3-70b-versatile' },
+  };
+}
+
+// ── Ensemble explainer (Layer 4 opt-in) ────────────────────────────────────
+// Runs N parallel Groq explanation calls, validates each, picks the best.
+// Adds concept_tag + distractor_analysis to the prompt. Used for the
+// "פתרון מעמיק" button in the UI. Default path (non-ensemble) is unchanged.
+async function generateEnsembleExplanation(questionData, correctIdx, { n = 3 } = {}) {
+  const HEB = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י'];
+  const correctLetter = HEB[(correctIdx || 1) - 1] || 'א';
+  const { question_text, options } = questionData;
+  const optionsList = (options || [])
+    .map((txt, i) => `${HEB[i]}. ${txt}`)
+    .join('\n');
+
+  const systemMsg = {
+    role: 'system',
+    content: 'אתה מרצה אקדמי ישראלי. הסבריך קצרים, מדויקים, מבוססי תחביר LaTeX (KaTeX), וברמה של סטודנט אוניברסיטאי.',
+  };
+  const userPrompt = `זוהי שאלה אמריקאית מהאוניברסיטה. התשובה הנכונה ידועה — מטרתך לבנות הסבר אקדמי שמוכיח מדוע.
+
+השאלה:
+${question_text}
+
+האפשרויות:
+${optionsList}
+
+התשובה הנכונה: ${correctIdx} (${correctLetter})
+
+החזר JSON בלבד:
+{
+  "general_explanation": "<2-3 משפטים מסבירים את הנושא ומדוע ${correctLetter} נכונה. LaTeX ב-$...$>",
+  "option_explanations": [
+    {"idx": 1, "isCorrect": <bool>, "explanation": "<2 משפטים>"},
+    {"idx": 2, "isCorrect": <bool>, "explanation": "<2 משפטים>"},
+    {"idx": 3, "isCorrect": <bool>, "explanation": "<2 משפטים>"},
+    {"idx": 4, "isCorrect": <bool>, "explanation": "<2 משפטים>"}
+  ],
+  "distractor_analysis": [
+    {"idx": <wrong option idx>, "misconception": "<טעות נפוצה שמובילה לבחור בה>", "why_wrong": "<למה השיקול הזה שגוי>"}
+  ],
+  "concept_tag": "<תגית קצרה לנושא — עד 3 מילים בעברית>"
+}
+
+פורמט:
+- כל ביטוי מתמטי חייב להיות ב-$...$ (inline) או $$...$$ (display). הקפד על מספר זוגי של סימני $.
+- distractor_analysis: רק לאפשרויות הלא-נכונות. אם אין מסיחים רלוונטיים, החזר [].
+- concept_tag: תגית תמציתית (לדוגמה "סיבוכיות זמן", "משפט בייס", "טבלת אמת").`;
+
+  // Fire N parallel Groq calls. Moderate temperature for diversity.
+  const calls = Array.from({ length: n }, (_, i) =>
+    callGroq([systemMsg, { role: 'user', content: userPrompt }], {
+      temperature: 0.4 + i * 0.05,
+      maxTokens: 2048,
+    })
+  );
+  const results = await Promise.all(calls.map(p => p.catch(() => null)));
+  const candidates = results.filter(Boolean).map(r => r?.data).filter(Boolean);
+  if (candidates.length === 0) return null;
+
+  const picked = selectBestExplanation(candidates, { correctIdx });
+  if (!picked.best) {
+    console.warn(`[ensemble] no candidate passed validation (n=${candidates.length})`);
+    return { data: null, candidates: candidates.length, picked: 0, engine: 'groq-ensemble' };
+  }
+  return {
+    data: picked.best,
+    candidates: candidates.length,
+    picked: picked.totalValid,
+    engine: 'groq-ensemble',
   };
 }
 
@@ -276,14 +357,17 @@ export default async function handler(req, res) {
   const auth = await authenticate(req);
   if (!auth) return res.status(401).json({ error: 'Missing or invalid authorization' });
 
+  if (await checkModelimBlock(res, getAdmin(), auth.userId)) return;
+
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
   if (!body || typeof body !== 'object') body = {};
   const questionId = parseInt(body.questionId, 10);
   if (!questionId) return res.status(400).json({ error: 'questionId חסר' });
+  const ensembleMode = body.mode === 'ensemble';
 
   const { data: q, error: qErr } = await auth.db.from('ep_questions')
-    .select('id, user_id, image_path, correct_idx, num_options')
+    .select('id, user_id, image_path, correct_idx, num_options, answer_confidence')
     .eq('id', questionId).maybeSingle();
   if (qErr || !q) return res.status(404).json({ error: 'שאלה לא נמצאה' });
   if (q.user_id !== auth.userId) return res.status(403).json({ error: 'אין הרשאה' });
@@ -296,27 +380,56 @@ export default async function handler(req, res) {
   if (!admin) return res.status(500).json({ error: 'שירות לא זמין' });
   // Run the quota/trial-expiry RPC FIRST so the profile we fetch next
   // reflects any just-expired trial.
-  await admin.rpc('reset_user_quotas_if_needed', { p_user_id: auth.userId }).catch(() => {});
+  try { await admin.rpc('reset_user_quotas_if_needed', { p_user_id: auth.userId }); } catch {}
   const { data: profile } = await admin.from('profiles')
     .select('plan, is_admin, trial_used').eq('id', auth.userId).maybeSingle();
   const isAdmin = profile?.is_admin === true;
   if (!isAdmin) {
     const plan = profile?.plan || 'free';
-    const quota = PLAN_QUOTAS[plan] || PLAN_QUOTAS.free;
-    if (quota.per_day === 0) {
+    const quota = getQuota(plan);
+    if (quota.ai_day === 0) {
       return res.status(402).json({
         error: 'פיצ\'ר פרימיום',
         guidance: 'יצירת פתרונות מפורטים עם AI זמינה רק ללקוחות משלמים.',
         trial_expired: profile?.trial_used === true && plan === 'free',
       });
     }
+    // Global daily kill-switch.
+    const budget = await checkGlobalBudget();
+    if (budget?.ok === false) {
+      return res.status(503).json({
+        error: 'השירות עמוס כרגע',
+        guidance: 'ה-AI בעומס חריג. נסה שוב בעוד מספר שעות.',
+      });
+    }
+    // Per-minute burst protection.
+    const burst = await checkBurst(auth.userId, 'ai', 6);
+    if (burst?.allowed === false) {
+      return res.status(429).json({
+        error: 'יותר מדי בקשות בזמן קצר',
+        guidance: `המתן ${burst.retry_after_seconds || 30} שניות ונסה שוב.`,
+        retry_after_seconds: burst.retry_after_seconds,
+      });
+    }
+    // Ensemble is 3x the cost of a normal explain call (3 parallel LLM calls).
+    // Reserve 3 slots and also enforce the per-plan explain_day cap.
+    if (ensembleMode) {
+      const explainCap = quota.explain_day ?? 0;
+      if (explainCap === 0) {
+        return res.status(402).json({
+          error: 'פתרון מעמיק זמין רק בחבילות בתשלום',
+          guidance: 'ensemble של 3 קריאות במקביל + ולידציה — זמין ב-Basic ומעלה.',
+        });
+      }
+    }
+    const slotsToReserve = ensembleMode ? 3 : 1;
     const { data: granted } = await admin.rpc('ep_reserve_ai_slots', {
-      p_user_id: auth.userId, p_count: 1, p_max_day: quota.per_day, p_max_month: quota.per_month,
+      p_user_id: auth.userId, p_count: slotsToReserve, p_max_day: quota.ai_day, p_max_month: quota.ai_month,
     });
     if (granted === false) {
       return res.status(429).json({
         error: 'הגעת למגבלה היומית',
-        guidance: `התוכנית "${plan}" מאפשרת ${quota.per_day} יצירות ליום. נסה שוב מחר או שדרג.`,
+        guidance: `התוכנית "${plan}" מאפשרת ${quota.ai_day} יצירות ליום. נסה שוב מחר או שדרג.`,
       });
     }
   }
@@ -327,14 +440,39 @@ export default async function handler(req, res) {
     let sol = null;
 
     if (groqKey) {
-      // ── Groq path: Gemini OCR → Groq 2-pass explanation ──────────────────
-      console.log(`[generate-solution] Q${q.id}: Gemini OCR + Groq 2-pass`);
       const questionData = await ocrQuestionImage(base64, mimeType);
       if (questionData) {
-        const groqResult = await generateGroqExplanation(questionData, q.correct_idx);
-        if (groqResult?.data) {
-          sol = normalizeGroqResult(groqResult.data, q.correct_idx);
-          console.log(`[generate-solution] Q${q.id}: Groq ok (engine: groq)`);
+        if (ensembleMode) {
+          // ── Ensemble path: N parallel Groq calls + validation ──────────
+          console.log(`[generate-solution] Q${q.id}: Groq ENSEMBLE (n=3)`);
+          // Mark 'generating' so UI can show a spinner while we work.
+          await auth.db.from('ep_questions')
+            .update({ explanation_status: 'generating' })
+            .eq('id', questionId).eq('user_id', auth.userId)
+            .then(() => {}, () => {}); // best-effort; ignore failure if column not yet migrated
+          const ens = await generateEnsembleExplanation(questionData, q.correct_idx, { n: 3 });
+          if (ens?.data) {
+            sol = normalizeGroqResult(ens.data, q.correct_idx);
+            sol._ensemble = { candidates: ens.candidates, picked: ens.picked };
+            sol._statusTarget = 'verified';
+            console.log(`[generate-solution] Q${q.id}: ensemble ok (${ens.picked}/${ens.candidates} passed validation)`);
+          } else {
+            sol = null; // fall through to 2-pass / Gemini fallback below
+            await auth.db.from('ep_questions')
+              .update({ explanation_status: 'failed' })
+              .eq('id', questionId).eq('user_id', auth.userId)
+              .then(() => {}, () => {});
+            console.warn(`[generate-solution] Q${q.id}: ensemble failed validation — falling back`);
+          }
+        }
+        if (!sol) {
+          // ── Default path: Gemini OCR → Groq 2-pass explanation ────────
+          console.log(`[generate-solution] Q${q.id}: Gemini OCR + Groq 2-pass`);
+          const groqResult = await generateGroqExplanation(questionData, q.correct_idx);
+          if (groqResult?.data) {
+            sol = normalizeGroqResult(groqResult.data, q.correct_idx);
+            console.log(`[generate-solution] Q${q.id}: Groq ok (engine: groq)`);
+          }
         }
       }
       if (!sol) {
@@ -355,13 +493,32 @@ export default async function handler(req, res) {
 
     console.log(`[generate-solution] Q${q.id}: ok engine=${sol.usage?.model} cost=$${sol.usage?.costUsd?.toFixed(6) || '0'}`);
 
-    const { error: updateErr } = await auth.db.from('ep_questions')
-      .update({
-        general_explanation: sol.general_explanation,
-        option_explanations: sol.option_explanations,
-        correct_idx: sol.correct,
-      })
+    // Never overwrite a confirmed answer with Gemini's OCR guess.
+    // Only update correct_idx when the answer is unset or still uncertain.
+    const answerIsLocked = q.answer_confidence === 'confirmed' && q.correct_idx != null;
+    const updatePayload = {
+      general_explanation: sol.general_explanation,
+      option_explanations: sol.option_explanations,
+    };
+    if (!answerIsLocked) updatePayload.correct_idx = sol.correct;
+    else console.log(`[generate-solution] Q${q.id}: answer_confidence=confirmed — skipping correct_idx overwrite`);
+
+    // Layer 4 enrichment fields — only populated when ensemble produced them.
+    if (sol.concept_tag) updatePayload.concept_tag = sol.concept_tag;
+    if (sol.distractor_analysis) updatePayload.distractor_analysis = sol.distractor_analysis;
+    if (sol._statusTarget) updatePayload.explanation_status = sol._statusTarget;
+
+    let { error: updateErr } = await auth.db.from('ep_questions')
+      .update(updatePayload)
       .eq('id', questionId).eq('user_id', auth.userId);
+    // If the enrichment columns aren't migrated yet, retry without them.
+    if (updateErr?.message?.includes('does not exist')) {
+      console.warn(`[generate-solution] Q${q.id}: enrichment column missing — retrying without:`, updateErr.message);
+      const { concept_tag, distractor_analysis, explanation_status, ...compat } = updatePayload;
+      ({ error: updateErr } = await auth.db.from('ep_questions')
+        .update(compat)
+        .eq('id', questionId).eq('user_id', auth.userId));
+    }
     if (updateErr) {
       console.error('[generate-solution] update failed:', updateErr.message);
       return res.status(500).json({ error: 'שגיאה בשמירת הפתרון' });
@@ -383,7 +540,10 @@ export default async function handler(req, res) {
       ok: true,
       general_explanation: sol.general_explanation,
       option_explanations: sol.option_explanations,
-      correct_idx: sol.correct,
+      correct_idx: answerIsLocked ? q.correct_idx : sol.correct,
+      ...(sol.concept_tag && { concept_tag: sol.concept_tag }),
+      ...(sol.distractor_analysis && { distractor_analysis: sol.distractor_analysis }),
+      ...(sol._ensemble && { ensemble: sol._ensemble }),
     });
   } catch (e) {
     console.error('[generate-solution] exception:', e?.message || e);

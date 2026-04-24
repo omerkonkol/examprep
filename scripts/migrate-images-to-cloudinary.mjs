@@ -136,7 +136,8 @@ async function main() {
 
   // Also: backfill any auth.users without a profiles row
   console.log('\n🔍  Checking for users missing profiles...');
-  const { data: orphans } = await sb.rpc('find_users_without_profiles').catch(() => ({ data: null }));
+  let orphans = null;
+  try { ({ data: orphans } = await sb.rpc('find_users_without_profiles')); } catch {}
   if (orphans === null) {
     console.log('   (Skipped — run the backfill SQL manually if needed)');
   }

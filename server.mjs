@@ -28,6 +28,7 @@ import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
 import { processExamPair, fileHash } from './scripts/process-pdf.mjs';
 import { Resend } from 'resend';
+import { legacyQuotaShape, PLAN_QUOTAS as PLAN_QUOTAS_SRC } from './api/_lib/quotas.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -141,76 +142,12 @@ function dbError(res, tag, error, status = 500) {
 }
 
 // ===== Quota config =====
-// NOTE: Free plan no longer gets exam-PDF processing (was 5 lifetime). Instead,
-// the free trial is "Smart Study from Summary": 2 lifetime AI-generated study
-// packs. Real PDF practice is gated behind Basic+. See plan: free trial change.
-const QUOTAS = {
-  trial: {
-    pdfs_total: -1,           // ✅ trial: limited by day/month caps below
-    pdfs_per_day: 5,
-    pdfs_per_month: 20,
-    ai_questions_per_day: 5,
-    ai_questions_per_month: 15,
-    study_packs_total: 5,     // 5 lifetime during 14-day trial
-    study_packs_per_month: 5,
-    courses: 2,
-    storage_mb: 200,
-    max_pdf_size_mb: 15,
-    max_pages_per_pdf: 30,
-  },
-  free: {
-    pdfs_total: 0,            // ❌ view-only after trial — no new uploads
-    pdfs_per_day: 0,
-    pdfs_per_month: 0,
-    ai_questions_per_day: 0,
-    ai_questions_per_month: 0,
-    study_packs_total: 0,     // ❌ no new study packs
-    study_packs_per_month: 0,
-    courses: 0,               // ❌ no new courses
-    storage_mb: 50,
-    max_pdf_size_mb: 10,
-    max_pages_per_pdf: 25,
-  },
-  basic: {
-    pdfs_total: -1, // unlimited
-    pdfs_per_day: 10,
-    pdfs_per_month: 30,
-    ai_questions_per_day: 20,
-    ai_questions_per_month: 100,
-    study_packs_total: -1,
-    study_packs_per_month: 30,
-    courses: 5,
-    storage_mb: 1024,
-    max_pdf_size_mb: 20,
-    max_pages_per_pdf: 50,
-  },
-  pro: {
-    pdfs_total: -1,
-    pdfs_per_day: 30,
-    pdfs_per_month: 150,
-    ai_questions_per_day: 80,
-    ai_questions_per_month: 500,
-    study_packs_total: -1,
-    study_packs_per_month: 150,
-    courses: -1,
-    storage_mb: 5120,
-    max_pdf_size_mb: 30,
-    max_pages_per_pdf: 100,
-  },
-  education: {
-    pdfs_total: -1,
-    pdfs_per_day: 50,
-    pdfs_per_month: 500,
-    ai_questions_per_day: 200,
-    ai_questions_per_month: 2000,
-    study_packs_total: -1,
-    study_packs_per_month: -1,
-    courses: -1,
-    storage_mb: 20480,
-    max_pdf_size_mb: 50,
-    max_pages_per_pdf: 150,
-  },
-};
+// Single source of truth lives in api/_lib/quotas.mjs. server.mjs uses the
+// legacy shape (pdfs_per_day / ai_questions_per_day / …) so existing code
+// stays compatible — new numbers come from the shared module.
+const QUOTAS = Object.fromEntries(
+  Object.keys(PLAN_QUOTAS_SRC).map(plan => [plan, legacyQuotaShape(plan)])
+);
 
 // Hard ceilings independent of plan — defense in depth.
 const HARD_LIMITS = {
@@ -390,7 +327,7 @@ async function authMiddleware(req, res, next) {
 
 // ===== Get user profile + plan + reset quotas if needed =====
 // Uses supabaseAdmin because reset_user_quotas_if_needed is a privileged RPC.
-async function getUserProfile(userId) {
+async function getUserProfile(userId, req) {
   await supabaseAdmin.rpc('reset_user_quotas_if_needed', { p_user_id: userId });
   const { data, error } = await supabaseAdmin
     .from('profiles')
@@ -406,6 +343,20 @@ async function getUserProfile(userId) {
       .eq('id', userId);
     data.plan = 'free';
     data.trial_used = true;
+  }
+
+  // One-shot trial claim with IP-based anti-farming (no-op after first call).
+  if (data.plan === 'trial' && data.signup_ip_hash == null && req) {
+    const ipHash = hashClientIp(req);
+    if (ipHash) {
+      const { data: claimResult } = await supabaseAdmin
+        .rpc('ep_claim_trial_with_ip_check', { p_user_id: userId, p_ip_hash: ipHash })
+        .catch(() => ({ data: null }));
+      if (claimResult?.downgraded) {
+        data.plan = 'free';
+        data.trial_used = true;
+      }
+    }
   }
 
   return data;
@@ -434,6 +385,7 @@ function publicProfile(profile) {
     ai_questions_used_this_month: profile.ai_questions_used_this_month,
     study_packs_used_total: profile.study_packs_used_total || 0,
     study_packs_used_this_month: profile.study_packs_used_this_month || 0,
+    study_packs_used_today: profile.study_packs_used_today || 0,
     storage_bytes_used: profile.storage_bytes_used,
     created_at: profile.created_at,
   };
@@ -527,7 +479,7 @@ app.post('/api/contact', rateLimitMiddleware(3), async (req, res) => {
 
 // ===== User stats =====
 app.get('/api/me', authMiddleware, async (req, res) => {
-  const profile = await getUserProfile(req.userId);
+  const profile = await getUserProfile(req.userId, req);
   if (!profile) return res.status(404).json({ error: 'profile not found' });
   const plan = profile.plan || 'free';
   res.json({
@@ -548,7 +500,7 @@ app.get('/api/courses', authMiddleware, async (req, res) => {
 
 // ===== Create new course =====
 app.post('/api/courses', authMiddleware, rateLimitMiddleware(10), async (req, res) => {
-  const { name, description, color } = req.body || {};
+  const { name, description, color, is_degree, parent_id } = req.body || {};
   if (typeof name !== 'string' || name.length < 2 || name.length > HARD_LIMITS.max_course_name_len) {
     return res.status(400).json({ error: 'שם קורס לא תקין' });
   }
@@ -558,21 +510,42 @@ app.post('/api/courses', authMiddleware, rateLimitMiddleware(10), async (req, re
   if (color != null && (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color))) {
     return res.status(400).json({ error: 'צבע לא תקין' });
   }
+  if (parent_id != null && (!Number.isInteger(parent_id) || parent_id <= 0)) {
+    return res.status(400).json({ error: 'parent_id לא תקין' });
+  }
 
-  // Check quota
+  // Check quota — degrees and sub-courses don't count toward the course limit.
   const profile = await getUserProfile(req.userId);
   const plan = profile?.plan || 'free';
   const quota = QUOTAS[plan];
   const { count, error: countErr } = await req.db
-    .from('ep_courses').select('id', { count: 'exact', head: true });
+    .from('ep_courses')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_degree', false)
+    .is('parent_id', null);
   if (countErr) return dbError(res, 'count courses', countErr);
   if (quota.courses !== -1 && count >= quota.courses) {
-    return res.status(403).json({ error: `הגעת למגבלת הקורסים שלך (${quota.courses}). שדרג לחבילה גדולה יותר.` });
+    const isExpired = plan === 'free' && !!profile?.trial_used;
+    return res.status(isExpired ? 402 : 403).json({
+      error: isExpired
+        ? 'תקופת הניסיון הסתיימה. שדרג כדי להמשיך.'
+        : `הגעת למגבלת הקורסים שלך (${quota.courses}). שדרג לחבילה גדולה יותר.`,
+      needs_upgrade: true,
+      trial_expired: isExpired,
+      upgrade_to: 'basic',
+    });
   }
 
   const { data, error } = await req.db
     .from('ep_courses')
-    .insert({ user_id: req.userId, name, description: description || null, color: color || '#3b82f6' })
+    .insert({
+      user_id: req.userId,
+      name,
+      description: description || null,
+      color: color || '#3b82f6',
+      is_degree: is_degree === true,
+      parent_id: parent_id || null,
+    })
     .select()
     .single();
   if (error) return dbError(res, 'insert course', error);
@@ -644,10 +617,10 @@ async function blockFreePlanUpload(req, res, next) {
     const plan = profile.plan || 'free';
     if (QUOTAS[plan].pdfs_total === 0 && QUOTAS[plan].pdfs_per_month === 0) {
       return res.status(402).json({
-        error: 'העלאת PDF של מבחנים זמינה למנויי Basic ומעלה. במסלול החינמי תוכל ליצור חומרי לימוד מסיכום (לימוד חכם מסיכום).',
+        error: 'תקופת הניסיון הסתיימה. שדרג כדי להמשיך להעלות מבחנים.',
         needs_upgrade: true,
+        trial_expired: plan === 'free' && !!profile.trial_used,
         upgrade_to: 'basic',
-        try_instead: '/study/new',
       });
     }
     next();
@@ -952,6 +925,47 @@ app.post('/api/attempt', authMiddleware, rateLimitMiddleware(60), async (req, re
   res.json({ ok: true });
 });
 
+// ===== Dashboard stats summary (DB-authoritative) =====
+app.get('/api/stats/summary', authMiddleware, rateLimitMiddleware(30), async (req, res) => {
+  const [attemptsRes, reviewRes] = await Promise.all([
+    req.db.from('ep_attempts').select('course_id, question_id, is_correct, revealed'),
+    req.db.from('ep_review_queue').select('course_id'),
+  ]);
+  if (attemptsRes.error) return dbError(res, 'stats attempts', attemptsRes.error);
+  if (reviewRes.error) return dbError(res, 'stats review', reviewRes.error);
+
+  const perCourse = {};
+  const get = cid => {
+    const k = String(cid);
+    if (!perCourse[k]) perCourse[k] = { total: 0, seen: new Set(), correct: new Set(), reviewCount: 0 };
+    return perCourse[k];
+  };
+  for (const r of attemptsRes.data || []) {
+    const b = get(r.course_id);
+    b.total += 1;
+    b.seen.add(r.question_id);
+    if (r.is_correct && !r.revealed) b.correct.add(r.question_id);
+  }
+  for (const r of reviewRes.data || []) get(r.course_id).reviewCount += 1;
+
+  const aggregate = { total: 0, unique: 0, correct: 0, wrong: 0, reviewCount: 0 };
+  const aggSeen = new Set(), aggCorrect = new Set();
+  const perCourseOut = {};
+  for (const [cid, b] of Object.entries(perCourse)) {
+    const correct = b.correct.size;
+    const unique = b.seen.size;
+    perCourseOut[cid] = { total: b.total, unique, correct, wrong: unique - correct, reviewCount: b.reviewCount };
+    aggregate.total += b.total;
+    aggregate.reviewCount += b.reviewCount;
+    for (const qid of b.seen) aggSeen.add(`${cid}:${qid}`);
+    for (const qid of b.correct) aggCorrect.add(`${cid}:${qid}`);
+  }
+  aggregate.unique = aggSeen.size;
+  aggregate.correct = aggCorrect.size;
+  aggregate.wrong = aggregate.unique - aggregate.correct;
+  res.json({ aggregate, perCourse: perCourseOut });
+});
+
 // ===== Get review queue for a course =====
 app.get('/api/courses/:courseId/review-queue', authMiddleware, rateLimitMiddleware(30), async (req, res) => {
   const { data, error } = await req.db
@@ -1055,7 +1069,7 @@ app.post('/api/ai/generate-similar', authMiddleware, rateLimitMiddleware(AI_RATE
   const quota = QUOTAS[plan];
 
   if (quota.ai_questions_per_month === 0) {
-    return res.status(402).json({ error: 'יצירת שאלות AI זמינה רק במנוי בתשלום', needs_upgrade: true });
+    return res.status(402).json({ error: 'תקופת הניסיון הסתיימה. שדרג כדי להמשיך.', needs_upgrade: true, trial_expired: plan === 'free' && !!profile?.trial_used });
   }
 
   // Atomic AI quota reservation. The RPC bumps both daily + monthly counters
@@ -1131,10 +1145,11 @@ app.post('/api/lab/generate-questions', authMiddleware, rateLimitMiddleware(4), 
     hard:   'שאלות ברמת מבחן אוניברסיטאי - טריקיות, דרגת קושי גבוהה, חייבות הבנה עמוקה',
   }[diff];
 
-  const prompt = `אתה מרצה בקורס "${course}" באוניברסיטה. עליך לחבר ${n} שאלות אמריקאיות חדשות לחלוטין ברמת ${difficultyHint}.
+  const safeCourse = sanitizeForInlinePrompt(course);
+  const prompt = `אתה מרצה בקורס "${safeCourse}" באוניברסיטה. עליך לחבר ${n} שאלות אמריקאיות חדשות לחלוטין ברמת ${difficultyHint}.
 
 הנושאים שעליהם להתמקד (לפי תדירות החזרה במבחנים אמיתיים מהשנים האחרונות):
-${topics.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+${topics.map((t, i) => `${i + 1}. ${t.replace(/[\r\n]/g, ' ')}`).join('\n')}
 
 דרישות פורמט (חובה):
 - כל השאלות ב${lang === 'Hebrew' ? 'עברית' : 'English'} (חוץ מקטעי קוד שיהיו ב-Java).
@@ -1316,9 +1331,10 @@ async function extractPdfText(pdfBuffer, maxPages = 30) {
 function buildStudyPackPrompt(summaryText, title) {
   // Trim the input so we don't blow the model's context.
   const safe = summaryText.length > 30000 ? summaryText.slice(0, 30000) + '\n[...truncated]' : summaryText;
+  const safeTitle = sanitizeForInlinePrompt(title);
   return `אתה מורה מומחה שיוצר חומרי לימוד איכותיים בעברית מסיכום של סטודנט.
 
-הסיכום (כותרת: "${title}"):
+הסיכום (כותרת: "${safeTitle}"):
 """
 ${safe}
 """
@@ -1572,6 +1588,7 @@ app.post('/api/study/generate', rateLimitMiddleware(3), ipAbuseGuard('study_gen'
         p_user_id: req.userId,
         p_max_total: quota.study_packs_total,
         p_max_month: quota.study_packs_per_month,
+        p_max_day: quota.study_packs_per_day,
       });
       if (rpcErr && /function .* does not exist/i.test(rpcErr.message || '')) {
         console.warn('[study] ep_reserve_study_pack_slot RPC missing — refusing request');
@@ -1582,12 +1599,13 @@ app.post('/api/study/generate', rateLimitMiddleware(3), ipAbuseGuard('study_gen'
         return res.status(500).json({ error: 'שגיאה פנימית' });
       }
       if (granted !== true) {
-        const isFreeOrTrial = plan === 'free' || plan === 'trial';
+        const isExpired = plan === 'free';
         return res.status(402).json({
-          error: isFreeOrTrial
-            ? `סיימת את ${quota.study_packs_total} חבילות הלימוד שלך. שדרג ל-Basic כדי להמשיך.`
-            : 'הגעת למכסה החודשית של חומרי לימוד.',
-          needs_upgrade: isFreeOrTrial,
+          error: isExpired
+            ? 'תקופת הניסיון הסתיימה. שדרג כדי ליצור חבילות לימוד.'
+            : 'הגעת למגבלה היומית של חבילות לימוד. נסה שוב מחר.',
+          needs_upgrade: isExpired,
+          trial_expired: isExpired,
           upgrade_to: 'basic',
         });
       }
@@ -1636,6 +1654,13 @@ app.post('/api/study/generate', rateLimitMiddleware(3), ipAbuseGuard('study_gen'
 
 // Helper for the endpoint above (small util used once).
 function clampString(s, n) { return String(s || '').slice(0, n); }
+
+// Strip characters that could break inline prompt interpolation (e.g. closing
+// a quoted field and injecting new instructions). Applied to user strings that
+// appear inside `"..."` delimiters in prompts, NOT to block content.
+function sanitizeForInlinePrompt(s) {
+  return String(s || '').replace(/["\r\n]/g, ' ').trim();
+}
 
 // GET /api/study/packs — list current user's study packs
 app.get('/api/study/packs', authMiddleware, rateLimitMiddleware(30), async (req, res) => {

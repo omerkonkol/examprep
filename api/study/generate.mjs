@@ -12,6 +12,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { checkIpThrottle } from '../../lib/ipThrottle.mjs';
+import { getQuota } from '../_lib/quotas.mjs';
+import { assertNotModelim } from '../_lib/seed-guard.mjs';
 
 export const config = {
   api: { bodyParser: false },
@@ -176,11 +178,12 @@ ${safe}
 }
 
 import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
+import { MODEL_CHAIN } from '../_lib/gemini-models.mjs';
 
 async function callGemini(summaryText, title) {
   const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
   // Try models in order of preference; each has a separate daily quota pool
-  const models = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-flash-latest').split(',').slice(0, 2);
+  const models = MODEL_CHAIN.extraction;
   if (!primaryKey) {
     throw Object.assign(new Error('GEMINI_API_KEY not configured'), { http: 503, code: 'no_api_key' });
   }
@@ -204,7 +207,6 @@ async function callGemini(summaryText, title) {
             topP: 0.95,
             maxOutputTokens: 8192,
             responseMimeType: 'application/json',
-            thinkingConfig: { thinkingBudget: 0 },
           },
         }),
         signal: controller.signal,
@@ -320,8 +322,8 @@ async function callGemini(summaryText, title) {
 // ----- Main handler ----------------------------------------------------------
 // Restrict to our own origin(s). Wildcard CORS lets any site's JS burn our Gemini quota via a logged-in user's browser.
 const ALLOWED_ORIGINS = new Set([
-  'https://try-examprep.com',
-  'https://www.try-examprep.com',
+  'https://try.examprep.com',
+  'https://www.try.examprep.com',
   'https://examprep.vercel.app',
 ]);
 
@@ -347,6 +349,44 @@ export default async function handler(req, res) {
 
   // Authenticate user (best-effort — used for DB save; generation continues even if anonymous)
   const authUser = await authenticate(req).catch(() => null);
+
+  // Modelim plan check runs before any body validation so short/empty posts
+  // still get the 403 instead of leaking a validation message.
+  if (authUser) {
+    try {
+      const guardSvc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, { auth: { persistSession: false } });
+      const { data: guardProf } = await guardSvc.from('profiles').select('plan, is_admin').eq('id', authUser.userId).maybeSingle();
+      if (assertNotModelim(res, guardProf)) return;
+    } catch (e) { console.warn('[study] modelim guard failed:', e?.message); }
+  }
+
+  // Enforce plan quota for authenticated users (IP throttle above covers anonymous)
+  if (authUser) {
+    try {
+      const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, { auth: { persistSession: false } });
+      await svc.rpc('reset_user_quotas_if_needed', { p_user_id: authUser.userId }).catch(() => {});
+      const { data: prof } = await svc.from('profiles').select('plan,is_admin').eq('id', authUser.userId).single();
+      const plan = prof?.plan || 'free';
+      const isAdmin = !!prof?.is_admin;
+      if (!isAdmin) {
+        const q = getQuota(plan);
+        if (q.pack_month === 0 && q.pack_total === 0) {
+          return res.status(402).json({ error: 'הגעת למגבלת חבילות הלמידה.' });
+        }
+        const { data: granted } = await svc.rpc('ep_reserve_study_pack_slot', {
+          p_user_id: authUser.userId,
+          p_max_month: q.pack_month,
+          p_max_total: q.pack_total,
+          p_max_day: q.pack_day,
+        }).catch(() => ({ data: true }));
+        if (granted === false) {
+          return res.status(429).json({ error: 'הגעת למגבלת חבילות הלמידה היומית. נסה שוב מחר.' });
+        }
+      }
+    } catch (quotaErr) {
+      console.warn('[study] quota check error (non-fatal):', quotaErr?.message);
+    }
+  }
 
   try {
     const ct = String(req.headers['content-type'] || '');

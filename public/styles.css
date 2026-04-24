@@ -2540,7 +2540,7 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
   background: var(--bg-soft);
 }
 .bd-body { max-height: 420px; overflow-y: auto; padding: 6px 0; }
-.bd-empty { padding: 24px 16px; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.bd-empty { padding: 28px 20px; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1.6; display: flex; flex-direction: column; align-items: center; }
 .bd-row {
   display: flex; align-items: center; gap: 12px;
   width: 100%; padding: 10px 16px;
@@ -2784,8 +2784,11 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
    LAB PAGE
    ===================================================== */
 .lab-grid {
-  display: grid; grid-template-columns: 1fr 1fr;
+  display: grid; grid-template-columns: 1fr;
   gap: 24px;
+  max-width: 680px;
+  margin: 0 auto;
+  width: 100%;
 }
 .lab-card {
   background: #fff; padding: 32px 28px;
@@ -4952,14 +4955,34 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
 
 /* Dashboard welcome banner (new users with zero activity) */
 .dash-welcome-banner {
-  text-align: center; padding: 56px 24px 48px;
+  display: flex; align-items: center; gap: 0;
+  padding: 0; overflow: hidden;
   background: linear-gradient(135deg, var(--brand-50) 0%, #f0f9ff 100%);
   border-radius: var(--radius-xl); border: 1.5px dashed var(--brand-200);
-  margin-bottom: 36px;
+  margin-bottom: 36px; min-height: 240px;
 }
-.dash-welcome-icon { font-size: 52px; margin-bottom: 16px; line-height: 1; }
+.dash-welcome-content {
+  flex: 1 1 0; min-width: 0;
+  text-align: center; padding: 48px 32px 40px;
+}
+.dash-welcome-visual {
+  flex: 0 0 46%; max-width: 46%;
+  display: flex; align-items: flex-end; justify-content: center;
+  overflow: hidden; align-self: stretch;
+}
+.dash-welcome-hero-img {
+  width: 100%; height: 100%; object-fit: cover; object-position: center top;
+  display: block; mix-blend-mode: multiply;
+}
+.dash-welcome-icon { margin-bottom: 20px; line-height: 1; }
+.dash-welcome-logo-img { width: 80px; height: auto; display: block; margin: 0 auto; }
 .dash-welcome-banner h2 { font-size: 26px; font-weight: 800; margin-bottom: 8px; color: var(--gray-900); }
 .dash-welcome-banner p { color: var(--text-muted); font-size: 15px; margin-bottom: 24px; }
+@media (max-width: 640px) {
+  .dash-welcome-banner { flex-direction: column; min-height: auto; }
+  .dash-welcome-visual { display: none; }
+  .dash-welcome-content { padding: 40px 20px 32px; }
+}
 
 /* ----- Modern data table ----- */
 .data-table-wrap {
@@ -5544,6 +5567,7 @@ code { font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace; font-size: .
   position: absolute; z-index: 2;
   background: #fff; border-radius: 14px;
   padding: 28px 26px 22px; max-width: 340px; width: calc(100vw - 40px);
+  max-height: calc(100dvh - 24px); overflow-y: auto;
   box-shadow: 0 12px 48px rgba(0,0,0,.16);
   animation: fadeSlideIn 0.22s ease;
 }
@@ -5866,6 +5890,15 @@ body, #app { overflow-x: hidden; max-width: 100vw; }
   font-size: 13.5px;
   line-height: 1.65;
 }
+.sol-text {
+  margin: 0;
+  color: #374151;
+  font-size: 13.5px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.qv-sol-general .sol-text { color: #4b5563; }
+.katex-display { overflow-x: auto; margin: 6px 0; }
 
 @media (max-width: 540px) {
   .qv-solution-panel { padding: 14px 14px 18px; }
@@ -5939,3 +5972,283 @@ body, #app { overflow-x: hidden; max-width: 100vw; }
 :root[data-theme="dark"] .degree-option-btn { background: var(--bg-elevated); border-color: var(--border); color: var(--text); }
 :root[data-theme="dark"] .degree-option-btn:hover { border-color: var(--brand-500); background: rgba(37,99,235,.15); color: var(--brand-300); }
 :root[data-theme="dark"] .degree-badge { background: rgba(37,99,235,.15); color: var(--brand-300); border-color: rgba(37,99,235,.3); }
+
+/* ========================================================
+   PdfCropTool — shared crop/view modal
+   Used by reshoot-question, fix-answer solution viewer,
+   and context-creation flows. RTL-aware (dir="rtl" inherited).
+   ======================================================== */
+.pdf-crop-overlay {
+  position: fixed; inset: 0; z-index: 99998;
+  background: rgba(10, 15, 30, 0.82);
+  display: grid; place-items: center;
+  padding: 16px;
+  direction: rtl;
+}
+.pdf-crop-shell {
+  background: #fff; border-radius: 14px;
+  width: min(1600px, 96vw); max-height: 94vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.35);
+}
+.pdf-crop-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 18px; border-bottom: 1px solid var(--gray-100);
+  background: linear-gradient(180deg, #f8fafc, #fff);
+}
+.pdf-crop-title { font-size: 15px; font-weight: 700; color: var(--gray-900); }
+.pdf-crop-close {
+  background: none; border: none; cursor: pointer; font-size: 26px;
+  color: var(--gray-500); line-height: 1; padding: 0 6px;
+}
+.pdf-crop-close:hover { color: var(--gray-900); }
+.pdf-crop-banner {
+  background: #fef9c3; color: #854d0e;
+  border-bottom: 1px solid #facc15;
+  padding: 8px 18px; font-size: 12.5px; font-weight: 600;
+}
+.pdf-crop-hint {
+  background: #eff6ff; color: #1e40af;
+  border-bottom: 1px solid #bfdbfe;
+  padding: 8px 18px; font-size: 12.5px;
+}
+.pdf-crop-body {
+  flex: 1; display: flex; gap: 0; min-height: 0; overflow: hidden;
+}
+.pdf-crop-stage {
+  flex: 1; min-width: 0; overflow: auto;
+  background: #f1f5f9; padding: 16px;
+  display: flex; justify-content: center; align-items: flex-start;
+}
+.pdf-crop-canvas-wrap {
+  position: relative; display: inline-block;
+  background: #fff; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  line-height: 0; outline: none;
+}
+.pdf-crop-canvas { display: block; user-select: none; -webkit-user-drag: none; }
+.pdf-crop-loading {
+  padding: 80px 40px; font-size: 14px; color: var(--gray-500);
+  text-align: center; line-height: 1.4;
+}
+.pdf-crop-err {
+  padding: 40px 20px; font-size: 14px; color: #b91c1c;
+  text-align: center; line-height: 1.5;
+}
+.pdf-crop-layer {
+  position: absolute; inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+.pdf-crop-rect {
+  position: absolute; box-sizing: border-box;
+  border: 1.5px dashed #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  cursor: move;
+  pointer-events: auto;
+}
+.pdf-crop-handle {
+  position: absolute; width: 12px; height: 12px;
+  background: #fff; border: 2px solid #2563eb;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.pdf-crop-handle-nw { top: -7px; left: -7px;   cursor: nwse-resize; }
+.pdf-crop-handle-n  { top: -7px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.pdf-crop-handle-ne { top: -7px; right: -7px;  cursor: nesw-resize; }
+.pdf-crop-handle-e  { top: 50%; right: -7px; transform: translateY(-50%); cursor: ew-resize; }
+.pdf-crop-handle-se { bottom: -7px; right: -7px; cursor: nwse-resize; }
+.pdf-crop-handle-s  { bottom: -7px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.pdf-crop-handle-sw { bottom: -7px; left: -7px;  cursor: nesw-resize; }
+.pdf-crop-handle-w  { top: 50%; left: -7px; transform: translateY(-50%); cursor: ew-resize; }
+.pdf-crop-side {
+  width: min(420px, 38%); min-width: 280px;
+  border-right: 1px solid var(--gray-100);
+  padding: 18px; overflow-y: auto;
+  background: #fafbff;
+}
+.pdf-crop-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; padding: 10px 18px;
+  border-top: 1px solid var(--gray-100); background: #fafbff;
+}
+.pdf-crop-pagenav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pdf-crop-pagenav button {
+  border: 1px solid var(--gray-200); background: #fff; color: var(--gray-800);
+  border-radius: 8px; padding: 6px 10px; font-size: 13px;
+  font-family: inherit; cursor: pointer;
+}
+.pdf-crop-pagenav button:hover { border-color: var(--brand-400); color: var(--brand-700); }
+.pdf-crop-pagelabel { font-size: 13px; color: var(--gray-600); display: inline-flex; align-items: center; gap: 4px; }
+.pdf-crop-pageinp {
+  width: 58px; padding: 4px 6px; border: 1px solid var(--gray-200);
+  border-radius: 6px; font-size: 13px; font-family: inherit;
+  text-align: center; direction: ltr;
+}
+.pdf-crop-pagetotal { font-size: 12px; color: var(--gray-500); }
+.pdf-crop-actions { display: flex; gap: 8px; }
+
+/* Manage-context modal + list rows inside file-manager */
+.ep-ctx-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; margin-bottom: 10px;
+  background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px;
+  grid-column: 1 / -1;
+}
+.ep-ctx-add-btn {
+  background: #0284c7; color: #fff; border: none;
+  padding: 6px 12px; border-radius: 8px; font-size: 13px;
+  font-family: inherit; cursor: pointer; font-weight: 600;
+}
+.ep-ctx-add-btn:hover { background: #0369a1; }
+.ep-ctx-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px; padding: 8px 0;
+}
+.ep-ctx-card {
+  border: 1px solid var(--gray-200); border-radius: 10px;
+  padding: 10px; background: #fff;
+}
+.ep-ctx-card img {
+  width: 100%; max-height: 120px; object-fit: contain;
+  background: #f8fafc; border-radius: 6px; margin-bottom: 8px;
+}
+.ep-ctx-card-meta { font-size: 11px; color: var(--gray-600); margin-bottom: 6px; }
+.ep-ctx-card-qs   { font-size: 12px; color: var(--gray-800); margin-bottom: 8px; }
+.ep-ctx-card-actions { display: flex; gap: 6px; }
+.ep-ctx-card-actions button {
+  flex: 1; border: 1px solid var(--gray-200); background: #fff; color: var(--gray-700);
+  font-size: 11px; font-weight: 600; padding: 4px 6px; border-radius: 6px;
+  cursor: pointer; font-family: inherit;
+}
+.ep-ctx-card-actions button.danger { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
+.ep-ctx-question-picker { max-height: 240px; overflow-y: auto; padding: 6px 0; border: 1px solid var(--gray-100); border-radius: 8px; }
+.ep-ctx-question-picker label { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+.ep-ctx-question-picker label:hover { background: var(--gray-50); }
+
+/* PdfCropTool responsive + zoom controls */
+.pdf-crop-zoombar {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-right: 6px; padding: 2px 6px;
+  background: #fff; border: 1px solid var(--gray-200); border-radius: 8px;
+}
+.pdf-crop-zoombar button {
+  background: none; border: none; padding: 2px 8px; font-size: 15px;
+  color: var(--gray-700); cursor: pointer; font-family: inherit; line-height: 1;
+}
+.pdf-crop-zoombar button:hover { color: var(--brand-700); }
+.pdf-crop-zoomlabel {
+  font-size: 12px; color: var(--gray-600); min-width: 40px; text-align: center;
+  direction: ltr;
+}
+
+/* Mobile / narrow screens — stack side panel below, full-height modal */
+@media (max-width: 768px) {
+  .pdf-crop-overlay { padding: 0; }
+  .pdf-crop-shell {
+    width: 100vw; height: 100vh; max-height: 100vh;
+    border-radius: 0;
+  }
+  .pdf-crop-body { flex-direction: column; }
+  .pdf-crop-stage { padding: 10px; }
+  .pdf-crop-side {
+    width: 100%; min-width: 0;
+    max-height: 42vh;
+    border-right: none; border-top: 1px solid var(--gray-100);
+    padding: 12px;
+  }
+  .pdf-crop-footer {
+    flex-direction: column; align-items: stretch; gap: 8px;
+    padding: 8px 10px;
+  }
+  .pdf-crop-pagenav { justify-content: center; font-size: 12px; gap: 6px; }
+  .pdf-crop-pagenav button { padding: 5px 8px; font-size: 12px; }
+  .pdf-crop-actions { display: flex; gap: 6px; }
+  .pdf-crop-actions .btn { flex: 1; }
+  .pdf-crop-header { padding: 10px 14px; }
+  .pdf-crop-title { font-size: 14px; }
+  .pdf-crop-banner, .pdf-crop-hint { padding: 6px 12px; font-size: 12px; }
+  /* Bigger handles on touch for easier dragging */
+  .pdf-crop-handle { width: 18px; height: 18px; }
+  .pdf-crop-handle-nw { top: -10px; left: -10px; }
+  .pdf-crop-handle-ne { top: -10px; right: -10px; }
+  .pdf-crop-handle-sw { bottom: -10px; left: -10px; }
+  .pdf-crop-handle-se { bottom: -10px; right: -10px; }
+}
+
+/* Small phones — drop total pages + shrink zoom bar */
+@media (max-width: 480px) {
+  .pdf-crop-pagetotal { display: none; }
+  .pdf-crop-pageinp { width: 44px; }
+  .pdf-crop-zoombar button { padding: 2px 6px; }
+}
+
+/* Exam-management bars: stack vertically on narrow screens so long button
+   labels (e.g. "צור הסברים מפורטים עם AI (11 שאלות)") don't overflow. */
+@media (max-width: 600px) {
+  .em-gen-bar,
+  .ep-ctx-bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    text-align: center;
+  }
+  .em-gen-bar > div,
+  .ep-ctx-bar > div {
+    flex: none !important;
+  }
+  .em-gen-bar > .em-gen-btn,
+  .ep-ctx-bar .ep-ctx-add-btn {
+    width: 100%;
+    white-space: normal !important;
+    padding: 10px 14px !important;
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  .em-gen-bar svg,
+  .ep-ctx-bar svg {
+    margin: 0 auto;
+  }
+}
+
+/* =====================================================
+   Modelim plan — pure offline practice gating.
+   =====================================================
+   Users on plan='modelim' (friends of the Computational Models course) see a
+   pre-seeded exam library and only the practice flow. Every UI that creates
+   content, uploads PDFs, or calls Gemini is hidden. Server-side guards in
+   api/_lib/seed-guard.mjs enforce the same restrictions — the CSS is just
+   so these users never see broken or locked-out buttons.
+   ===================================================== */
+body.plan-modelim [data-route="/lab"],
+body.plan-modelim [data-route$="/lab"],
+body.plan-modelim a[href="#/lab"],
+body.plan-modelim a[href$="/lab"],
+body.plan-modelim a[href^="#/study"],
+body.plan-modelim [data-route="/study"],
+body.plan-modelim [data-route$="/study"],
+body.plan-modelim a[href$="/study"],
+body.plan-modelim #em-upload-btn,
+body.plan-modelim #em-trash-btn,
+body.plan-modelim #btn-welcome-add-course,
+body.plan-modelim #btn-add-course-card,
+body.plan-modelim #btn-add-sub-course-card,
+body.plan-modelim .em-delete-btn,
+body.plan-modelim .em-hide-btn,
+body.plan-modelim .em-review-btn,
+body.plan-modelim .em-q-regen-btn,
+body.plan-modelim .em-gen-bar,
+body.plan-modelim .em-q-ctx-btn,
+body.plan-modelim [data-action="regen-solution"],
+body.plan-modelim [data-action="reanalyze"],
+body.plan-modelim [data-action="upload"],
+body.plan-modelim [data-action="exams"],
+body.plan-modelim [data-action="lab"],
+body.plan-modelim [data-action="study"],
+body.plan-modelim #settings-export-data,
+body.plan-modelim #settings-clear-history,
+body.plan-modelim .settings-actions-row,
+body.plan-modelim .ai-actions,
+body.plan-modelim .ep-ctx-bar {
+  display: none !important;
+}
+

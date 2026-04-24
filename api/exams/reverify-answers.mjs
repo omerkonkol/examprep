@@ -14,6 +14,8 @@
 // =====================================================
 
 import { createClient } from '@supabase/supabase-js';
+import { MODEL_CHAIN } from '../_lib/gemini-models.mjs';
+import { checkModelimBlock } from '../_lib/seed-guard.mjs';
 
 export const config = { maxDuration: 120 };
 
@@ -88,7 +90,7 @@ async function askGemini(imageUrl, questionText, options, { timeoutMs = 25000 } 
     });
   }
 
-  for (const model of ['gemini-2.0-flash', 'gemini-2.5-flash']) {
+  for (const model of MODEL_CHAIN.critical) {
     try {
       let r = await fetchWithKey(primaryKey, model);
       if (isQuotaError(r.status, null) && fallbackKey) {
@@ -137,6 +139,8 @@ async function _handler(req, res) {
 
   const admin = getAdmin();
   if (!admin) return res.status(500).json({ error: 'שירות לא זמין' });
+
+  if (await checkModelimBlock(res, admin, auth.userId)) return;
 
   // Ownership check
   const { data: exam, error: examErr } = await admin.from('ep_exams')

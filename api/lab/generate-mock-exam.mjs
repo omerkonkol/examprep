@@ -6,8 +6,28 @@
 // mirrors the style, difficulty, and topic mix of real exams.
 // =====================================================
 
+import { createClient } from '@supabase/supabase-js';
 import { checkIpThrottle } from '../../lib/ipThrottle.mjs';
 import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
+import { MODEL_CHAIN } from '../_lib/gemini-models.mjs';
+import { checkModelimBlock } from '../_lib/seed-guard.mjs';
+
+function getAdminForGuard() {
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  }
+  return null;
+}
+async function authedUserId(req) {
+  const auth = req.headers['authorization'];
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const admin = getAdminForGuard();
+  if (!admin) return null;
+  try {
+    const { data } = await admin.auth.getUser(auth.substring(7));
+    return data?.user?.id || null;
+  } catch { return null; }
+}
 
 export const config = {
   api: { bodyParser: true },
@@ -16,7 +36,7 @@ export const config = {
 
 async function callGemini(prompt, maxTokens = 16384) {
   const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
-  const models = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-flash-latest').split(',');
+  const models = MODEL_CHAIN.extraction;
   if (!primaryKey) {
     throw Object.assign(new Error('GEMINI_API_KEY not configured'), { http: 503, code: 'no_api_key' });
   }
@@ -102,6 +122,10 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Modelim plan users are blocked before the expensive path.
+  const guardUserId = await authedUserId(req);
+  if (guardUserId && await checkModelimBlock(res, getAdminForGuard(), guardUserId)) return;
 
   // Mock exams are the most expensive Gemini call — tighter limit
   const throttle = await checkIpThrottle(req, 'lab_mock_exam', { maxDay: 10, maxWeek: 30, blockHours: 24 });

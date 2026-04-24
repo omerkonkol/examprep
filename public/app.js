@@ -173,6 +173,7 @@ const Data = {
         examMap[q.exam_id].questions.push({
           id: qid, examId, image: q.image_path,
           section: String(q.question_number),
+          answer_confidence: q.answer_confidence || null,
           _isCloud: true,
           ...(isTextOnly && { _isAi: true, _stem: q.general_explanation || `שאלה ${q.question_number}` }),
         });
@@ -183,6 +184,8 @@ const Data = {
           topic: q.topic || null,
           groupId: q.group_id || null,
           contextText: q.context_text || null,
+          contextImagePath: q.context_image_path || null,
+          contextCrossPage: !!q.context_cross_page,
           questionNumber: q.question_number || null,
           instructorSolutionText: q.instructor_solution_text || null,
           hasRichSolution: !!q.has_rich_solution,
@@ -191,6 +194,8 @@ const Data = {
           explanations[qid] = {
             general: q.general_explanation || null,
             options: q.option_explanations || [],
+            conceptTag: q.concept_tag || null,
+            distractorAnalysis: Array.isArray(q.distractor_analysis) ? q.distractor_analysis : null,
           };
         }
       }
@@ -208,6 +213,8 @@ const Data = {
       topic: a.topic || null,
       groupId: a.groupId || null,
       contextText: a.contextText || null,
+      contextImagePath: a.contextImagePath || null,
+      contextCrossPage: a.contextCrossPage || false,
     };
   },
   // Lazy-load explanations for a single tohna1 exam. Returns a Promise that
@@ -272,6 +279,31 @@ const Data = {
     if (!this.metadata) return [];
     return this.metadata.exams.flatMap(e => e.questions);
   },
+  practiceQuestions() {
+    return this.allQuestions().filter(
+      q => q.answer_confidence !== 'uncertain' && q.answer_confidence !== 'unknown'
+    );
+  },
+};
+
+// Fallback-swap helper for thumbnail <img> elements. When a Cloudinary crop
+// comes back usable-but-tiny (empty strip) or 404s, replace the image with
+// the stem text stashed on data-fallback-text. Defined as a window global so
+// inline onload/onerror attributes can reference it.
+window.EmThumbFallback = {
+  check(img) {
+    if (!img) return;
+    if (img.naturalHeight < 60 || img.naturalWidth < 30) this.swap(img);
+  },
+  swap(img) {
+    if (!img || !img.parentElement) return;
+    const text = img.dataset.fallbackText || '';
+    const div = document.createElement('div');
+    div.style.padding = '8px';
+    div.textContent = text;
+    img.parentElement.innerHTML = '';
+    img.parentElement.appendChild(div);
+  },
 };
 
 // ===== State =====
@@ -283,6 +315,7 @@ const state = {
   degree: null, // currently selected degree { id, name, color, ... }
   quiz: null, // current quiz session
   lastBatch: null, // for the mistake review screen
+  statsSummary: null, // cached { aggregate, perCourse } from /api/stats/summary; null = re-fetch
 };
 
 // ===== Course Registry =====
@@ -307,8 +340,10 @@ const CourseRegistry = {
   },
 
   list() {
-    // Built-in tohna1 course is admin-only
-    if (state.user?.isAdmin) return [this.BUILTIN, ...state.courses];
+    // Built-in tohna1 course is admin-only. Modelim-plan admins skip it — they
+    // only manage the seeded course library for their friends.
+    const isModelimAdmin = state.user?.isAdmin && state.user?.plan === 'modelim';
+    if (state.user?.isAdmin && !isModelimAdmin) return [this.BUILTIN, ...state.courses];
     return [...state.courses];
   },
 
@@ -331,6 +366,10 @@ const CourseRegistry = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      if (res.status === 402) {
+        showPaywallModal(err.trial_expired ? 'trial_ended' : 'course_limit');
+        throw new Error('');
+      }
       throw new Error(err.error || 'שגיאה ביצירת קורס');
     }
     const course = await res.json();
@@ -387,6 +426,10 @@ async function refreshCourseState(courseId) {
   const cid = String(courseId);
   try {
     Data._loadedSet.delete(cid);
+    // A fresh upload likely introduced un-topic'd questions — let the next
+    // Insights visit run the labeler again instead of trusting the session
+    // flag set on the previous visit.
+    try { _insightsTopicRequested.delete(cid); } catch {}
     await CourseRegistry.refresh();
     await Data.ensureLoaded(cid).catch(() => {});
   } catch (e) {
@@ -865,6 +908,8 @@ const Auth = {
       daysLeft,
       planExpiresAt: profile?.plan_expires_at || null,
       trialUsed: profile?.trial_used || false,
+      studyPacksUsedToday: profile?.study_packs_used_today || 0,
+      studyPacksUsedThisMonth: profile?.study_packs_used_this_month || 0,
     };
     this.save(u);
     return u;
@@ -1218,15 +1263,32 @@ const Progress = {
       reviewCount: (p.reviewQueue || []).length,
     };
   },
+  // DB-authoritative stats for the dashboard. Returns the last known summary
+  // immediately if cached; always kicks off a fresh fetch and updates state
+  // once it lands. The dashboard awaits this so it re-renders with live data.
+  async fetchSummary() {
+    try {
+      const token = await Auth.getToken();
+      if (!token) return null;
+      const r = await fetch('/api/stats/summary', { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return state.statsSummary; // keep prior cache on transient error
+      const data = await r.json();
+      state.statsSummary = data;
+      return data;
+    } catch {
+      return state.statsSummary;
+    }
+  },
+  invalidateSummary() { state.statsSummary = null; },
   history(uid, courseId) { return (this.load(uid, courseId).attempts || []); },
 };
 
 // ===== Plans / quotas (mirrors server.mjs intent) =====
 const PLANS = {
-  trial: { name: 'Trial (14 ימים)', canPractice: true, canAI: true, maxCourses: 2 },
-  free: { name: 'חינמי (בטל)', canPractice: true, canAI: false, maxCourses: 0 },
-  basic: { name: 'Basic', canPractice: true, canAI: true, maxCourses: 5 },
-  pro: { name: 'Pro', canPractice: true, canAI: true, maxCourses: -1 },
+  trial: { name: 'ניסיון (14 ימים)', canPractice: true, canAI: true, maxCourses: 5 },
+  free:  { name: 'Free', canPractice: true, canAI: true, maxCourses: 5 },
+  basic: { name: 'Basic', canPractice: true, canAI: true, maxCourses: 10 },
+  pro:   { name: 'Pro', canPractice: true, canAI: true, maxCourses: -1 },
   education: { name: 'Education', canPractice: true, canAI: true, maxCourses: -1 },
 };
 
@@ -1238,6 +1300,190 @@ function tmpl(id) {
 }
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Render solution text: supports $inline$ and $$display$$ LaTeX via KaTeX,
+// **bold**, and newlines as <br>. When KaTeX isn't available yet we emit a
+// placeholder span that the observer below auto-upgrades once KaTeX loads.
+// Convert common Unicode math characters + inline math patterns (like L_1,
+// U/∪/∩, ∈, ⊆ etc.) into $...$-wrapped LaTeX so renderSolutionText can hand
+// them off to KaTeX. Idempotent — if the text already uses $...$ wrapping
+// we leave it alone.
+const _UNI_TO_TEX = {
+  '∈': '\\in', '∉': '\\notin',
+  '∪': '\\cup', '∩': '\\cap',
+  '⊆': '\\subseteq', '⊂': '\\subset', '⊇': '\\supseteq', '⊃': '\\supset',
+  '≠': '\\neq', '≥': '\\geq', '≤': '\\leq',
+  '×': '\\times', '÷': '\\div', '·': '\\cdot',
+  '→': '\\to', '←': '\\leftarrow', '↔': '\\leftrightarrow',
+  '⇒': '\\Rightarrow', '⇐': '\\Leftarrow', '⇔': '\\Leftrightarrow',
+  '∧': '\\land', '∨': '\\lor', '¬': '\\neg',
+  '∀': '\\forall', '∃': '\\exists', '∅': '\\emptyset',
+  '∞': '\\infty', '√': '\\surd',
+  'Σ': '\\Sigma', 'Π': '\\Pi', 'Δ': '\\Delta', 'Ω': '\\Omega', 'Φ': '\\Phi',
+  'α': '\\alpha', 'β': '\\beta', 'γ': '\\gamma', 'δ': '\\delta',
+  'ε': '\\varepsilon', 'θ': '\\theta', 'λ': '\\lambda', 'μ': '\\mu',
+  'π': '\\pi', 'ρ': '\\rho', 'σ': '\\sigma', 'τ': '\\tau',
+  'φ': '\\varphi', 'ψ': '\\psi', 'ω': '\\omega',
+};
+const _MATH_UNI_RE = /[∈∉∪∩⊆⊂⊇⊃≠≥≤×÷·→←↔⇒⇐⇔∧∨¬∀∃∅∞√ΣΠΔΩΦαβγδεθλμπρστφψω]/;
+const _UNI_TO_TEX_RE = /[∈∉∪∩⊆⊂⊇⊃≠≥≤×÷·→←↔⇒⇐⇔∧∨¬∀∃∅∞√ΣΠΔΩΦαβγδεθλμπρστφψω]/g;
+const _HEBREW_RE = /[֐-׿]/;
+const _MATH_MARKER_RE = /[_^\\∈∉∪∩⊆⊂⊇⊃≠≥≤×÷·→←↔⇒⇐⇔∧∨¬∀∃∅∞√]/;
+function autoMathify(text) {
+  if (typeof text !== 'string' || !text) return text || '';
+  // Respect existing $...$ wrapping — author already marked math explicitly.
+  if (/\$[^$\n]+?\$/.test(text)) return text;
+
+  // Walk char-by-char. Each maximal run of non-Hebrew chars that contains at
+  // least one math marker gets Unicode → LaTeX-substituted and wrapped in $...$.
+  // Hebrew runs and mark-free ASCII runs pass through untouched.
+  const out = [];
+  let buf = '';
+  let bufHebrew = null;
+
+  function flush() {
+    if (!buf) return;
+    if (bufHebrew === false && _MATH_MARKER_RE.test(buf)) {
+      const leading  = buf.match(/^\s*/)[0];
+      const trailing = buf.match(/\s*$/)[0];
+      let inner = buf.slice(leading.length, buf.length - trailing.length);
+      inner = inner.replace(_UNI_TO_TEX_RE, ch => ' ' + (_UNI_TO_TEX[ch] || ch) + ' ');
+      // Treat common CS complexity classes as upright operator names so they
+      // don't render as italic letter-by-letter (coRE → c·o·R·E). Ordered
+      // longest-first so coRE matches before RE, coNP before NP, etc.
+      const CS_OPS = ['coNPC', 'coNP', 'coRE', 'NPC', 'NP', 'RE', 'PSPACE', 'EXPTIME', 'EXPSPACE', 'LOGSPACE', 'NLOGSPACE', 'ACC'];
+      for (const name of CS_OPS) {
+        inner = inner.replace(new RegExp('\\b' + name + '\\b', 'g'), `\\mathrm{${name}}`);
+      }
+      inner = inner.replace(/\s+/g, ' ').trim();
+      out.push(leading + '$' + inner + '$' + trailing);
+    } else {
+      out.push(buf);
+    }
+    buf = '';
+  }
+
+  for (const ch of text) {
+    // Whitespace + most punctuation are "neutral" — they attach to the
+    // current run instead of triggering a Hebrew/non-Hebrew split.
+    const isNeutral = /[\s,.;:!?()\[\]{}\-"']/.test(ch);
+    if (isNeutral) {
+      if (bufHebrew === null) bufHebrew = false; // start a non-Hebrew run by default
+      buf += ch;
+      continue;
+    }
+    const isHebrew = _HEBREW_RE.test(ch);
+    if (bufHebrew === null) { bufHebrew = isHebrew; buf = ch; continue; }
+    if (isHebrew !== bufHebrew) { flush(); bufHebrew = isHebrew; buf = ch; }
+    else buf += ch;
+  }
+  flush();
+  return out.join('');
+}
+
+function renderSolutionText(raw) {
+  if (!raw) return '';
+  raw = autoMathify(raw);
+  const tokens = raw.split(/((?:\$\$[\s\S]+?\$\$|\$[^$\n]+?\$))/);
+  return tokens.map(tok => {
+    if (tok.startsWith('$$') && tok.endsWith('$$') && tok.length > 4) {
+      return renderTexToken(tok.slice(2, -2), true);
+    }
+    if (tok.startsWith('$') && tok.endsWith('$') && tok.length > 2) {
+      return renderTexToken(tok.slice(1, -1), false);
+    }
+    let h = escapeHtml(tok);
+    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/\n/g, '<br>');
+    return h;
+  }).join('');
+}
+
+function renderTexToken(tex, displayMode) {
+  if (window.katex) {
+    try { return window.katex.renderToString(tex, { displayMode, throwOnError: false }); }
+    catch { /* fall through to pending placeholder */ }
+  }
+  const disp = displayMode ? '1' : '0';
+  return `<span class="tex-pending" data-tex="${escapeHtml(tex)}" data-display="${disp}">${escapeHtml(displayMode ? '$$' + tex + '$$' : '$' + tex + '$')}</span>`;
+}
+
+function upgradePendingTex(root) {
+  if (!window.katex) return;
+  const scope = root || document;
+  const nodes = scope.querySelectorAll ? scope.querySelectorAll('.tex-pending') : [];
+  nodes.forEach(el => {
+    const tex = el.getAttribute('data-tex') || '';
+    const disp = el.getAttribute('data-display') === '1';
+    try {
+      const html = window.katex.renderToString(tex, { displayMode: disp, throwOnError: false });
+      const wrap = document.createElement('span');
+      wrap.innerHTML = html;
+      el.replaceWith(...wrap.childNodes);
+    } catch {
+      el.classList.remove('tex-pending');
+      el.classList.add('tex-failed');
+    }
+  });
+}
+
+(function wireKatexUpgrade() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const tryUpgrade = () => upgradePendingTex(document);
+  if (window.katex) { tryUpgrade(); }
+  else {
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (window.katex) { clearInterval(iv); tryUpgrade(); }
+      else if (tries > 200) { clearInterval(iv); } // ~10s
+    }, 50);
+  }
+  try {
+    const mo = new MutationObserver(muts => {
+      if (!window.katex) return;
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (!n || n.nodeType !== 1) continue;
+          if (n.classList?.contains('tex-pending')) { upgradePendingTex(n.parentNode || document); continue; }
+          if (n.querySelector?.('.tex-pending')) upgradePendingTex(n);
+        }
+      }
+    });
+    const start = () => mo.observe(document.body, { childList: true, subtree: true });
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start, { once: true });
+  } catch {}
+})();
+
+// Shared overlay that shows the set-context reference image (scenario / data
+// table / code block) for a grouped question. Used by both quiz renderers
+// (lightbox + slider) and the file-manager thumbnail button.
+function openSetContextModal(url, text, qNum) {
+  const hasImg = url && String(url).startsWith('http');
+  const hasText = text && String(text).trim().length > 0;
+  if (!hasImg && !hasText) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'set-context-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:99999;display:grid;place-items:center;padding:20px;cursor:zoom-out;';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:12px;padding:16px;max-width:min(90vw,900px);max-height:90vh;overflow:auto;cursor:default;direction:rtl;" onclick="event.stopPropagation()">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:14px;font-weight:600;color:#1e40af;">מידע לסט השאלות${qNum ? ' — רפרנס לשאלה #' + escapeHtml(String(qNum)) : ''}</div>
+        <button type="button" style="background:none;border:none;cursor:pointer;font-size:22px;color:#6b7280;" title="סגור">×</button>
+      </div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">זהו המידע המשותף (תיאור הניסוי / טבלת נתונים / קוד / קטע) שמשמש את כל השאלות בסט.</div>
+      ${hasImg ? `<img src="${url}" alt="רפרנס לסט" style="width:100%;display:block;border-radius:8px;border:1px solid #e5e7eb;${hasText ? 'margin-bottom:12px;' : ''}" />` : ''}
+      ${hasText ? `<div style="font-size:15px;line-height:1.7;direction:rtl;color:#1e293b;">${renderSolutionText(String(text).trim())}</div>` : ''}
+    </div>
+  `;
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', close);
+  overlay.querySelector('button[title="סגור"]').addEventListener('click', close);
+  const esc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } };
+  document.addEventListener('keydown', esc);
+  document.body.appendChild(overlay);
 }
 // Upload with real XHR byte-level progress tracking.
 // Returns { ok, status, data }. The returned promise has an .abort() method.
@@ -1286,7 +1532,7 @@ async function renderPdfPage(pdfUrl, pageNum, scale = 1.5) {
   }
   try {
     if (!window.pdfjsLib) { console.error('[renderPdfPage] pdfjsLib not loaded'); return null; }
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js';
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
     // Cache the PDF document to avoid re-downloading
     if (!_pdfDocCache[pdfUrl]) {
       _pdfDocCache[pdfUrl] = await window.pdfjsLib.getDocument(pdfUrl).promise;
@@ -1311,6 +1557,707 @@ async function renderPdfPage(pdfUrl, pageNum, scale = 1.5) {
 function examPdfUrl(userId, examId) {
   const sbUrl = window._sbConfig?.SUPABASE_URL || window.APP_CONFIG?.SUPABASE_URL || '';
   return `${sbUrl}/storage/v1/object/public/exam-pages/exams/${userId}/${examId}/exam.pdf`;
+}
+
+// Derive the raw Cloudinary PDF URL from a question's image_path. The image_path
+// is a Cloudinary crop transform over the original PDF — we strip the transforms
+// and swap the extension to .pdf. Returns null when the URL doesn't match the
+// expected Cloudinary pattern (e.g. text-only questions).
+function cloudinaryPdfUrlFromImagePath(imagePath) {
+  if (typeof imagePath !== 'string') return null;
+  const cloudM = imagePath.match(/^https:\/\/res\.cloudinary\.com\/([^/]+)\//);
+  if (!cloudM) return null;
+  const idM = imagePath.match(/\/q_auto\/(.+?)\.(?:png|jpg|jpeg)(?:\?|$)/);
+  if (!idM) return null;
+  return `https://res.cloudinary.com/${cloudM[1]}/image/upload/${idM[1]}.pdf`;
+}
+
+// Build the solution-PDF URL by swapping the publicId segment to the one
+// stored on the exam row. Callers that only have the question's image_path
+// should pass the solution pdf publicId explicitly — see openSolutionViewer.
+function cloudinaryPdfUrlFromPublicId(cloudName, publicId) {
+  if (!cloudName || !publicId) return null;
+  return `https://res.cloudinary.com/${cloudName}/image/upload/${publicId}.pdf`;
+}
+
+// =====================================================
+// PdfCropTool — shared full-screen modal that renders a PDF page with PDF.js
+// and lets the user drag out a rectangle to crop (mode='crop') or just view
+// (mode='view'). Used by:
+//   - "צלם מחדש" (reshoot question — mode='crop')
+//   - "תקן תשובה" (solution viewer — mode='view', with right-side radios panel)
+//   - "+ הוסף מידע נלווה" (context creation — mode='crop')
+//
+// API:
+//   const tool = openPdfCropTool({
+//     pdfUrl, initialPage=1, mode='crop', title='',
+//     hint='', showConfidenceBanner=false,
+//     rightPanel=null,  // optional DOM node rendered beside the viewer
+//     saveLabel='שמור חיתוך', allowEmptySave=false,
+//     onSave: async ({page, xNorm, yNorm, wNorm, hNorm, totalPages}) => void|false,
+//     onCancel: () => void,
+//   });
+//   tool.close();  // programmatic close
+//
+// onSave returning `false` (sync or async) prevents the modal from closing —
+// useful for showing validation errors inline.
+// =====================================================
+function openPdfCropTool(opts = {}) {
+  const {
+    pdfUrl,
+    initialPage = 1,
+    mode = 'crop',
+    title = 'חיתוך',
+    hint = '',
+    showConfidenceBanner = false,
+    rightPanel = null,
+    saveLabel = 'שמור חיתוך',
+    allowEmptySave = false,
+    onSave,
+    onCancel,
+  } = opts;
+
+  if (!pdfUrl) {
+    toast('לא נמצא קובץ PDF לחיתוך', 'error');
+    if (typeof onCancel === 'function') onCancel();
+    return { close() {} };
+  }
+  if (!window.pdfjsLib) {
+    toast('הכלי לחיתוך PDF עוד לא נטען — נסה שוב בעוד רגע', 'error');
+    if (typeof onCancel === 'function') onCancel();
+    return { close() {} };
+  }
+
+  // --- state ---
+  let currentPage = Math.max(1, parseInt(initialPage, 10) || 1);
+  let totalPages = null;
+  let selRect = null; // { x, y, w, h } in canvas CSS pixels; null = no selection
+  let isBusy = false;
+  let zoom = 1; // 1 = auto-fit to stage width; user can zoom in/out via +/-
+
+  // --- DOM ---
+  const overlay = document.createElement('div');
+  overlay.className = 'pdf-crop-overlay';
+  overlay.innerHTML = `
+    <div class="pdf-crop-shell">
+      <header class="pdf-crop-header">
+        <div class="pdf-crop-title">${escapeHtml(title)}</div>
+        <button type="button" class="pdf-crop-close" title="סגור" aria-label="סגור">×</button>
+      </header>
+      ${showConfidenceBanner ? `
+        <div class="pdf-crop-banner" role="alert">
+          העמוד זוהה אוטומטית — אם לא רואים את הפריט הנכון, דפדפו בחצים.
+        </div>` : ''}
+      ${hint ? `<div class="pdf-crop-hint">${escapeHtml(hint)}</div>` : ''}
+      <div class="pdf-crop-body">
+        <div class="pdf-crop-stage">
+          <div class="pdf-crop-canvas-wrap" tabindex="0">
+            <div class="pdf-crop-loading">טוען עמוד...</div>
+          </div>
+        </div>
+        ${rightPanel ? `<aside class="pdf-crop-side"></aside>` : ''}
+      </div>
+      <footer class="pdf-crop-footer">
+        <div class="pdf-crop-pagenav">
+          <button type="button" class="pdf-crop-prev" title="עמוד קודם">→</button>
+          <span class="pdf-crop-pagelabel">עמוד <input type="number" class="pdf-crop-pageinp" min="1" value="${currentPage}" /> <span class="pdf-crop-pagetotal"></span></span>
+          <button type="button" class="pdf-crop-next" title="עמוד הבא">←</button>
+          <span class="pdf-crop-zoombar">
+            <button type="button" class="pdf-crop-zoomout" title="הקטן">−</button>
+            <span class="pdf-crop-zoomlabel">100%</span>
+            <button type="button" class="pdf-crop-zoomin" title="הגדל">+</button>
+          </span>
+          ${mode === 'crop' ? '<button type="button" class="pdf-crop-reset" title="נקה חיתוך">אפס חיתוך</button>' : ''}
+        </div>
+        <div class="pdf-crop-actions">
+          <button type="button" class="btn btn-ghost btn-sm pdf-crop-cancel">בטל</button>
+          <button type="button" class="btn btn-primary btn-sm pdf-crop-save">${escapeHtml(saveLabel)}</button>
+        </div>
+      </footer>
+    </div>
+  `;
+  if (rightPanel instanceof HTMLElement) {
+    overlay.querySelector('.pdf-crop-side').appendChild(rightPanel);
+  }
+
+  const canvasWrap = overlay.querySelector('.pdf-crop-canvas-wrap');
+  const stageEl    = overlay.querySelector('.pdf-crop-stage');
+  const pageInp    = overlay.querySelector('.pdf-crop-pageinp');
+  const pageTotal  = overlay.querySelector('.pdf-crop-pagetotal');
+  const prevBtn    = overlay.querySelector('.pdf-crop-prev');
+  const nextBtn    = overlay.querySelector('.pdf-crop-next');
+  const resetBtn   = overlay.querySelector('.pdf-crop-reset');
+  const saveBtn    = overlay.querySelector('.pdf-crop-save');
+  const cancelBtn  = overlay.querySelector('.pdf-crop-cancel');
+  const closeBtn   = overlay.querySelector('.pdf-crop-close');
+  const zoomInBtn  = overlay.querySelector('.pdf-crop-zoomin');
+  const zoomOutBtn = overlay.querySelector('.pdf-crop-zoomout');
+  const zoomLabel  = overlay.querySelector('.pdf-crop-zoomlabel');
+
+  let pdfDoc = null;
+  let currentCanvas = null;
+
+  function close() {
+    document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', onResize);
+    overlay.remove();
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); cancelBtn.click(); }
+    else if (e.key === 'Enter' && e.target === document.body) { e.preventDefault(); saveBtn.click(); }
+    else if (e.key === 'ArrowLeft')  { nextBtn.click(); }  // RTL: left = next
+    else if (e.key === 'ArrowRight') { prevBtn.click(); }
+  }
+
+  async function loadPdf() {
+    try {
+      pdfDoc = await window.pdfjsLib.getDocument(pdfUrl).promise;
+      totalPages = pdfDoc.numPages || 1;
+      pageTotal.textContent = `מתוך ${totalPages}`;
+      pageInp.max = String(totalPages);
+      if (currentPage > totalPages) currentPage = totalPages;
+      await renderCurrent();
+    } catch (e) {
+      console.error('[PdfCropTool] load failed', e);
+      canvasWrap.innerHTML = `<div class="pdf-crop-err">שגיאה בטעינת ה-PDF (${escapeHtml(e?.message || 'unknown')}). נסה לרענן.</div>`;
+    }
+  }
+
+  async function renderCurrent() {
+    selRect = null;
+    canvasWrap.innerHTML = '<div class="pdf-crop-loading">טוען עמוד...</div>';
+    try {
+      const page = await pdfDoc.getPage(currentPage);
+      // Measure the STAGE container (not the wrap — wrap is inline-block
+      // around a tiny placeholder so its clientWidth is near zero at this
+      // moment). Stage is flex:1 and fills the body, so its clientWidth is
+      // the real available viewport width.
+      const stageRect = stageEl.getBoundingClientRect();
+      const padding = 32; // matches .pdf-crop-stage padding on both sides
+      const availW = Math.max(280, Math.floor(stageRect.width - padding));
+      // On narrow screens, use nearly all available width. On wide screens,
+      // cap at 1400 so ultra-wide monitors don't render a huge blurry PDF.
+      const fitW = Math.min(availW, 1400);
+      const viewport1 = page.getViewport({ scale: 1 });
+      const cssScale = (fitW / viewport1.width) * zoom;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const viewport = page.getViewport({ scale: cssScale * dpr });
+      const canvas = document.createElement('canvas');
+      canvas.width  = viewport.width;
+      canvas.height = viewport.height;
+      canvas.style.width  = (viewport1.width * cssScale) + 'px';
+      canvas.style.height = (viewport1.height * cssScale) + 'px';
+      canvas.className = 'pdf-crop-canvas';
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      canvasWrap.innerHTML = '';
+      canvasWrap.appendChild(canvas);
+      currentCanvas = canvas;
+      if (mode === 'crop') attachCropOverlay();
+      pageInp.value = String(currentPage);
+      if (zoomLabel) zoomLabel.textContent = Math.round(zoom * 100) + '%';
+    } catch (e) {
+      console.error('[PdfCropTool] render failed', e);
+      canvasWrap.innerHTML = `<div class="pdf-crop-err">שגיאה בטעינת עמוד ${currentPage}.</div>`;
+    }
+  }
+
+  function attachCropOverlay() {
+    // Interactive rectangle overlay over currentCanvas.
+    const layer = document.createElement('div');
+    layer.className = 'pdf-crop-layer';
+    canvasWrap.appendChild(layer);
+
+    const rectEl = document.createElement('div');
+    rectEl.className = 'pdf-crop-rect';
+    rectEl.style.display = 'none';
+    layer.appendChild(rectEl);
+
+    // 8 resize handles (corners + mid-edges).
+    const handleKinds = ['nw','n','ne','e','se','s','sw','w'];
+    const handles = {};
+    for (const k of handleKinds) {
+      const h = document.createElement('div');
+      h.className = `pdf-crop-handle pdf-crop-handle-${k}`;
+      h.dataset.kind = k;
+      rectEl.appendChild(h);
+      handles[k] = h;
+    }
+
+    function bounds() {
+      const r = currentCanvas.getBoundingClientRect();
+      const lr = layer.getBoundingClientRect();
+      return { w: r.width, h: r.height, lrLeft: lr.left, lrTop: lr.top };
+    }
+
+    function paintRect() {
+      if (!selRect) { rectEl.style.display = 'none'; return; }
+      rectEl.style.display = 'block';
+      rectEl.style.left   = selRect.x + 'px';
+      rectEl.style.top    = selRect.y + 'px';
+      rectEl.style.width  = selRect.w + 'px';
+      rectEl.style.height = selRect.h + 'px';
+    }
+
+    // ── pointer behavior ────────────────────────────────────────────────
+    let drag = null;  // { mode:'new'|'move'|'resize', kind, startX, startY, origRect }
+    function getXY(ev) {
+      const b = bounds();
+      return { x: ev.clientX - b.lrLeft, y: ev.clientY - b.lrTop, b };
+    }
+    function onDown(ev) {
+      if (ev.button && ev.button !== 0) return;
+      const t = ev.target;
+      const { x, y } = getXY(ev);
+      ev.preventDefault();
+      layer.setPointerCapture?.(ev.pointerId);
+      if (t.classList.contains('pdf-crop-handle')) {
+        drag = { mode: 'resize', kind: t.dataset.kind, startX: x, startY: y, origRect: { ...selRect } };
+      } else if (selRect && x >= selRect.x && x <= selRect.x + selRect.w && y >= selRect.y && y <= selRect.y + selRect.h) {
+        drag = { mode: 'move', startX: x, startY: y, origRect: { ...selRect } };
+      } else {
+        selRect = { x, y, w: 0, h: 0 };
+        drag = { mode: 'new', startX: x, startY: y };
+      }
+    }
+    function onMove(ev) {
+      if (!drag) return;
+      const { x, y, b } = getXY(ev);
+      if (drag.mode === 'new') {
+        const nx = Math.min(drag.startX, x), ny = Math.min(drag.startY, y);
+        const nw = Math.max(2, Math.abs(x - drag.startX)), nh = Math.max(2, Math.abs(y - drag.startY));
+        selRect = clampRect({ x: nx, y: ny, w: nw, h: nh }, b);
+      } else if (drag.mode === 'move') {
+        const dx = x - drag.startX, dy = y - drag.startY;
+        const r = { x: drag.origRect.x + dx, y: drag.origRect.y + dy, w: drag.origRect.w, h: drag.origRect.h };
+        r.x = Math.max(0, Math.min(b.w - r.w, r.x));
+        r.y = Math.max(0, Math.min(b.h - r.h, r.y));
+        selRect = r;
+      } else if (drag.mode === 'resize') {
+        const o = drag.origRect;
+        const k = drag.kind;
+        let { x: nx, y: ny, w: nw, h: nh } = o;
+        if (k.includes('e')) nw = Math.max(10, x - o.x);
+        if (k.includes('s')) nh = Math.max(10, y - o.y);
+        if (k.includes('w')) { const right = o.x + o.w; nx = Math.min(x, right - 10); nw = right - nx; }
+        if (k.includes('n')) { const bot = o.y + o.h;   ny = Math.min(y, bot   - 10); nh = bot   - ny; }
+        selRect = clampRect({ x: nx, y: ny, w: nw, h: nh }, b);
+      }
+      paintRect();
+    }
+    function onUp(ev) {
+      drag = null;
+      layer.releasePointerCapture?.(ev.pointerId);
+      // If the user just clicked without dragging, discard trivial selection.
+      if (selRect && (selRect.w < 10 || selRect.h < 10)) { selRect = null; paintRect(); }
+    }
+    function clampRect(r, b) {
+      const x = Math.max(0, Math.min(b.w - 10, r.x));
+      const y = Math.max(0, Math.min(b.h - 10, r.y));
+      const w = Math.max(10, Math.min(b.w - x, r.w));
+      const h = Math.max(10, Math.min(b.h - y, r.h));
+      return { x, y, w, h };
+    }
+    layer.addEventListener('pointerdown', onDown);
+    layer.addEventListener('pointermove', onMove);
+    layer.addEventListener('pointerup',   onUp);
+    layer.addEventListener('pointercancel', onUp);
+  }
+
+  // --- page nav ---
+  function gotoPage(p) {
+    if (!Number.isFinite(p) || p < 1 || (totalPages && p > totalPages)) return;
+    currentPage = p;
+    renderCurrent();
+  }
+  prevBtn.addEventListener('click', () => gotoPage(currentPage - 1));
+  nextBtn.addEventListener('click', () => gotoPage(currentPage + 1));
+  pageInp.addEventListener('change', () => gotoPage(parseInt(pageInp.value, 10)));
+  if (resetBtn) resetBtn.addEventListener('click', () => { selRect = null; const rectEl = canvasWrap.querySelector('.pdf-crop-rect'); if (rectEl) rectEl.style.display = 'none'; });
+
+  // Zoom controls — each step is 25%, clamped [0.5, 3].
+  if (zoomInBtn) zoomInBtn.addEventListener('click', () => {
+    zoom = Math.min(3, +(zoom + 0.25).toFixed(2));
+    renderCurrent();
+  });
+  if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => {
+    zoom = Math.max(0.5, +(zoom - 0.25).toFixed(2));
+    renderCurrent();
+  });
+
+  // Re-render on viewport resize so the fit-to-width math updates (e.g. user
+  // rotates their phone). Debounced to avoid thrash while dragging windows.
+  let resizeT = null;
+  const onResize = () => {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => { if (pdfDoc) renderCurrent(); }, 160);
+  };
+  window.addEventListener('resize', onResize);
+
+  // --- actions ---
+  async function doSave() {
+    if (isBusy) return;
+    let payload;
+    if (mode === 'crop') {
+      if (!selRect && !allowEmptySave) {
+        toast('סמן אזור לחיתוך עם העכבר לפני השמירה', 'error');
+        return;
+      }
+      let norm = null;
+      if (selRect && currentCanvas) {
+        const rect = currentCanvas.getBoundingClientRect();
+        norm = {
+          xNorm: selRect.x / rect.width,
+          yNorm: selRect.y / rect.height,
+          wNorm: selRect.w / rect.width,
+          hNorm: selRect.h / rect.height,
+        };
+      }
+      payload = { page: currentPage, totalPages, ...(norm || {}) };
+    } else {
+      payload = { page: currentPage, totalPages };
+    }
+    if (typeof onSave !== 'function') { close(); return; }
+    isBusy = true;
+    saveBtn.disabled = true;
+    const origText = saveBtn.textContent;
+    saveBtn.innerHTML = '<span class="qv-spinner"></span> שומר...';
+    try {
+      const result = await onSave(payload);
+      if (result === false) { // caller wants us to stay open
+        isBusy = false; saveBtn.disabled = false; saveBtn.textContent = origText;
+        return;
+      }
+      close();
+    } catch (e) {
+      console.error('[PdfCropTool] onSave threw', e);
+      toast('שגיאה בשמירה', 'error');
+      isBusy = false; saveBtn.disabled = false; saveBtn.textContent = origText;
+    }
+  }
+  saveBtn.addEventListener('click', doSave);
+  cancelBtn.addEventListener('click', () => { close(); if (typeof onCancel === 'function') onCancel(); });
+  closeBtn.addEventListener('click', () => { close(); if (typeof onCancel === 'function') onCancel(); });
+
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
+  loadPdf();
+
+  return { close, gotoPage, getPage: () => currentPage, getTotalPages: () => totalPages };
+}
+
+// Helper: extract a 1-based page number from a Cloudinary crop URL (`pg_{N}`).
+function parsePgFromUrl(url) {
+  if (typeof url !== 'string') return null;
+  const m = url.match(/\/pg_(\d+)[,/]/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) && n >= 1 ? n : null;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Flow: צלם מחדש (reshoot question — manual crop)
+// Replaces the old Gemini-powered reanalyze mode:'image_only' flow.
+// Opens the exam PDF at the page where the question lives, lets the
+// user drag out a new rectangle, persists it as a Cloudinary transform URL.
+// Self-heals pdf_page: the page the user cropped from becomes the new
+// stored page (user_confirmed), overriding any stale detected value.
+// ─────────────────────────────────────────────────────────────────
+async function openReshootCropTool(q, onUpdated) {
+  const pdfUrl = cloudinaryPdfUrlFromImagePath(q.image_path);
+  if (!pdfUrl) {
+    toast('לשאלה זו אין קובץ מקור ב-Cloudinary — לא ניתן לחתוך ידנית', 'error');
+    return;
+  }
+  const initialPage = q.pdf_page || parsePgFromUrl(q.image_path) || 1;
+  const needsBanner = q.pdf_page_confidence !== 'user_confirmed';
+  const preview = (q.question_text || '').toString().slice(0, 140);
+  openPdfCropTool({
+    pdfUrl,
+    initialPage,
+    mode: 'crop',
+    title: `חיתוך שאלה #${q.question_number || ''}`,
+    hint: preview ? `טקסט השאלה הצפוי: ${preview}` : 'גררו עם העכבר לסימון אזור החיתוך',
+    showConfidenceBanner: needsBanner,
+    saveLabel: 'שמור חיתוך',
+    onSave: async ({ page, xNorm, yNorm, wNorm, hNorm }) => {
+      const tk = await Auth.getToken();
+      if (!tk) { toast('תוקף ההתחברות פג. התחבר שוב.', 'error'); return false; }
+      const r = await fetch(`/api/questions/${encodeURIComponent(q.id)}/recrop`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page, xNorm, yNorm, wNorm, hNorm }),
+      });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      if (!r.ok || !data.ok) {
+        toast([data.error, data.detail].filter(Boolean).join(' — ') || `שגיאה (${r.status})`, 'error');
+        return false;
+      }
+      // Mutate the question object in place so the caller's view updates.
+      q.image_path = data.image_path;
+      q.pdf_page = data.pdf_page;
+      q.pdf_page_confidence = 'user_confirmed';
+      toast('התמונה עודכנה בהצלחה', 'success');
+      if (typeof onUpdated === 'function') onUpdated(q, data);
+    },
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Flow: תקן תשובה (fix answer — manual with solution viewer)
+// Opens a two-pane modal: solution PDF on the left (opens on the
+// auto-detected solution page; yellow banner + page nav if not
+// user-confirmed), and a right panel with the question stem + option
+// radios. Save persists correct_idx AND the current page as
+// solution_pdf_page (self-heal, user_confirmed).
+// ─────────────────────────────────────────────────────────────────
+async function openFixAnswerModal(q, courseId, onUpdated) {
+  // Solution PDF URL — prefer exam.solution_pdf_path, fallback to exam_pdf_path.
+  const tk = await Auth.getToken();
+  if (!tk) { toast('תוקף ההתחברות פג. התחבר שוב.', 'error'); return; }
+
+  // We don't have the exam row on hand here. Fetch it via the Cloudinary
+  // publicId embedded in the question's image_path as a fallback, but best
+  // to get it from the exam API. For simplicity we derive both PDFs from
+  // image_path — they share the same Cloudinary cloud, and the backend has
+  // the public_id. Since we don't currently expose solution_pdf_path to the
+  // frontend, we fall back to exam_pdf if no separate solution exists.
+  //
+  // Get exam metadata via list-exams filter (expensive for a single row).
+  // Simpler: fetch through list-questions returns the exam-level path via
+  // a separate call. We expose it through a lightweight GET. For now,
+  // request the question's exam directly via a minimal fetch.
+  let solutionPdfUrl = null;
+  try {
+    const rExam = await fetch(`/api/courses/${courseId}/exams`, {
+      headers: { Authorization: `Bearer ${tk}` },
+    });
+    if (rExam.ok) {
+      const list = await rExam.json();
+      const ex = (list?.exams || list || []).find(e => e.id === q.exam_id);
+      const cloud = (q.image_path || '').match(/^https:\/\/res\.cloudinary\.com\/([^/]+)\//)?.[1];
+      if (ex?.solution_pdf_path && cloud) {
+        solutionPdfUrl = cloudinaryPdfUrlFromPublicId(cloud, ex.solution_pdf_path);
+      } else if (ex?.exam_pdf_path && cloud) {
+        solutionPdfUrl = cloudinaryPdfUrlFromPublicId(cloud, ex.exam_pdf_path);
+      }
+    }
+  } catch (e) {
+    console.warn('[fix-answer] exam lookup failed', e);
+  }
+  if (!solutionPdfUrl) {
+    solutionPdfUrl = cloudinaryPdfUrlFromImagePath(q.image_path);
+  }
+  if (!solutionPdfUrl) {
+    toast('קובץ הפתרונות לא זמין — לא ניתן להציג', 'error');
+    return;
+  }
+
+  const initialPage = q.solution_pdf_page || q.pdf_page || parsePgFromUrl(q.image_path) || 1;
+  const needsBanner = (q.solution_pdf_page_confidence || 'unknown') !== 'user_confirmed';
+
+  // Build the right-side panel — minimal. Just the question number + one
+  // radio per option, labeled only with the Hebrew letter (א/ב/ג/ד/...).
+  // The user reads the actual question text and options from the solution
+  // PDF on the left, so repeating them here would add noise without value.
+  const numOpts = q.num_options || 4;
+  const letters = ['א','ב','ג','ד','ה','ו','ז','ח','ט','י'];
+  const currentIdx = q.correct_idx;
+  const panel = document.createElement('div');
+  panel.innerHTML = `
+    <h3 style="font-size:16px;margin:0 0 4px;font-weight:700;">שאלה #${escapeHtml(String(q.question_number || ''))}</h3>
+    <div style="font-size:13px;color:var(--gray-600);margin-bottom:16px;">בחרו את התשובה הנכונה לפי הפתרון שבעמוד:</div>
+    <div class="fa-radios" style="display:flex;flex-direction:column;gap:8px;">
+      ${Array.from({length: numOpts}, (_, i) => {
+        const idx = i + 1;
+        const letter = letters[i] || String(idx);
+        const checked = currentIdx === idx ? 'checked' : '';
+        return `
+          <label style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:1.5px solid var(--gray-200);border-radius:10px;cursor:pointer;font-size:18px;font-weight:700;${checked ? 'background:#eff6ff;border-color:#3b82f6;color:#1d4ed8;' : 'color:var(--gray-800);'}">
+            <input type="radio" name="fa-answer" value="${idx}" ${checked} style="flex-shrink:0;width:18px;height:18px;cursor:pointer;" />
+            <span>${letter}</span>
+          </label>`;
+      }).join('')}
+    </div>
+  `;
+
+  openPdfCropTool({
+    pdfUrl: solutionPdfUrl,
+    initialPage,
+    mode: 'view',
+    title: `תקן תשובה — שאלה #${q.question_number || ''}`,
+    hint: 'סקרו את הפתרון בעמוד משמאל (דפדפו לעמוד הנכון אם צריך) ובחרו את התשובה הנכונה מימין.',
+    showConfidenceBanner: needsBanner,
+    rightPanel: panel,
+    saveLabel: 'שמור תשובה',
+    onSave: async ({ page }) => {
+      const selected = panel.querySelector('input[name="fa-answer"]:checked');
+      if (!selected) { toast('בחרו תשובה לפני השמירה', 'error'); return false; }
+      const correctIdx = parseInt(selected.value, 10);
+      const r = await fetch(`/api/courses/${courseId}/questions/${encodeURIComponent(q.id)}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ correct_idx: correctIdx, solution_pdf_page: page }),
+      });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      if (!r.ok || !data.ok) {
+        toast(data.error || `שגיאה בשמירה (${r.status})`, 'error');
+        return false;
+      }
+      q.correct_idx = correctIdx;
+      q.answer_confidence = 'manual';
+      q.solution_pdf_page = page;
+      q.solution_pdf_page_confidence = 'user_confirmed';
+      q.general_explanation = null;
+      q.option_explanations = null;
+      toast('התשובה נשמרה. צור הסבר מחדש כדי להתאים לתשובה החדשה.', 'success');
+      if (typeof onUpdated === 'function') onUpdated(q, data);
+    },
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Flow: הוסף/חתוך-מחדש מידע נלווה (user-managed context image)
+// Shared for two entry points:
+//   - "+ הוסף מידע נלווה"           → opts = {} (new group_id)
+//   - card action "חתוך מחדש"       → opts = { recropGroupId: 'U-abc' }
+// After the user saves a crop, the question-picker modal opens to choose
+// which exam questions this info applies to. Posts to /api/exams/:id/context.
+// ─────────────────────────────────────────────────────────────────
+function openContextCropTool(examId, examQs, opts, onDone) {
+  const firstQ = (examQs || []).find(q => typeof q.image_path === 'string' && q.image_path.startsWith('http'));
+  const pdfUrl = firstQ ? cloudinaryPdfUrlFromImagePath(firstQ.image_path) : null;
+  if (!pdfUrl) {
+    toast('קובץ המבחן לא זמין ב-Cloudinary — לא ניתן להוסיף מידע נלווה', 'error');
+    return;
+  }
+  const initialPage = (firstQ && firstQ.pdf_page) || 1;
+
+  openPdfCropTool({
+    pdfUrl,
+    initialPage,
+    mode: 'crop',
+    title: opts?.recropGroupId ? `חיתוך מחדש למידע: ${opts.recropGroupId}` : 'חיתוך מידע נלווה חדש',
+    hint: 'סמנו את אזור המידע (טבלה / קטע / דיאגרמה) שרוצים לשתף בין מספר שאלות, ואז שמרו.',
+    saveLabel: opts?.recropGroupId ? 'שמור חיתוך חדש' : 'המשך לבחירת שאלות',
+    onSave: async ({ page, xNorm, yNorm, wNorm, hNorm }) => {
+      if (opts?.recropGroupId) {
+        // Recrop only — don't change question assignments.
+        const tk = await Auth.getToken();
+        const r = await fetch(`/api/exams/${examId}/context/${encodeURIComponent(opts.recropGroupId)}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ page, xNorm, yNorm, wNorm, hNorm }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data.ok) { toast(data.error || `שגיאה (${r.status})`, 'error'); return false; }
+        toast('החיתוך של המידע עודכן', 'success');
+        if (typeof onDone === 'function') onDone();
+        return;
+      }
+      // New context: crop saved → proceed to question picker.
+      openContextQuestionPicker(examId, examQs, null, async (questionIds) => {
+        if (!questionIds || questionIds.length === 0) {
+          toast('בחר לפחות שאלה אחת לשיוך', 'error');
+          return false;
+        }
+        const tk = await Auth.getToken();
+        const r = await fetch(`/api/exams/${examId}/context`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ page, xNorm, yNorm, wNorm, hNorm, questionIds }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data.ok) { toast(data.error || `שגיאה (${r.status})`, 'error'); return false; }
+        toast(`נוסף מידע נלווה ושוייך ל-${data.assigned} שאלות`, 'success');
+        if (typeof onDone === 'function') onDone();
+      }, { pendingCrop: true });
+    },
+  });
+}
+
+// Question-picker modal. Pre-checks existing members if `existing` is provided
+// (edit flow). `onSubmit` receives the new array of question IDs and may
+// return `false` to keep the modal open on validation error.
+function openContextQuestionPicker(examId, examQs, existing, onSubmit, options = {}) {
+  const currentIds = new Set((existing?.question_ids || []).map(n => parseInt(n, 10)));
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(10,15,30,0.75);z-index:99999;display:grid;place-items:center;padding:20px;direction:rtl;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;max-width:520px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
+      <header style="padding:14px 18px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:700;font-size:15px;">${existing ? `ערוך שיוך לקבוצה "${escapeHtml(existing.group_id || '')}"` : (options.pendingCrop ? 'לאלו שאלות לשייך את המידע?' : 'בחר שאלות לשיוך')}</div>
+        <button class="px-close" type="button" style="background:none;border:none;cursor:pointer;font-size:22px;color:#6b7280;">×</button>
+      </header>
+      <div style="padding:12px 18px;font-size:12.5px;color:#64748b;">סמנו את השאלות שמשתמשות במידע הזה. השאלות המסומנות יציגו כפתור "מידע לסט" בזמן התרגול.</div>
+      <div class="ep-ctx-question-picker" style="margin:0 18px;">
+        ${examQs.map(q => {
+          const isChecked = currentIds.has(parseInt(q.id, 10));
+          const preview = (q.question_text || '').toString().slice(0, 80) || 'שאלה ' + q.question_number;
+          return `
+            <label>
+              <input type="checkbox" value="${q.id}" ${isChecked ? 'checked' : ''} />
+              <span><strong>#${escapeHtml(String(q.question_number || ''))}</strong> ${escapeHtml(preview)}${q.group_id && q.group_id !== existing?.group_id ? ` <span style="color:#ea580c;font-size:10px;">(כבר בקבוצה: ${escapeHtml(q.group_id)})</span>` : ''}</span>
+            </label>`;
+        }).join('')}
+      </div>
+      <footer style="padding:14px 18px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+        <div style="font-size:12px;color:#64748b;" class="px-count">0 מסומנות</div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost btn-sm px-cancel" type="button">בטל</button>
+          <button class="btn btn-primary btn-sm px-save" type="button">שמור שיוך</button>
+        </div>
+      </footer>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  const countEl = overlay.querySelector('.px-count');
+  const updateCount = () => {
+    const n = overlay.querySelectorAll('input[type="checkbox"]:checked').length;
+    countEl.textContent = `${n} מסומנות`;
+  };
+  updateCount();
+  overlay.addEventListener('change', (e) => { if (e.target.matches('input[type="checkbox"]')) updateCount(); });
+  overlay.querySelector('.px-close').addEventListener('click', close);
+  overlay.querySelector('.px-cancel').addEventListener('click', close);
+
+  overlay.querySelector('.px-save').addEventListener('click', async () => {
+    const checked = [...overlay.querySelectorAll('input[type="checkbox"]:checked')]
+      .map(cb => parseInt(cb.value, 10)).filter(Boolean);
+
+    // Conflict detection — any checked question already in ANOTHER group?
+    const conflicts = examQs.filter(q =>
+      checked.includes(parseInt(q.id, 10)) && q.group_id && q.group_id !== (existing?.group_id || null)
+    );
+    if (conflicts.length) {
+      const nums = conflicts.map(q => '#' + q.question_number).join(', ');
+      const ok = confirm(`השאלות ${nums} כבר משוייכות לקבוצה קיימת (${conflicts.map(c => c.group_id).join(', ')}). המשך תחליף את השיוך. להמשיך?`);
+      if (!ok) return;
+    }
+
+    // Edit flow uses PATCH; create flow delegates to onSubmit (which calls POST).
+    if (existing && !options.pendingCrop) {
+      const tk = await Auth.getToken();
+      const r = await fetch(`/api/exams/${examId}/context/${encodeURIComponent(existing.group_id)}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionIds: checked }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) { toast(data.error || `שגיאה (${r.status})`, 'error'); return; }
+      toast('השיוך עודכן', 'success');
+      close();
+      if (typeof onSubmit === 'function') onSubmit(checked);
+      return;
+    }
+    // Create flow: pass the chosen IDs up; caller POSTs with the crop coords.
+    const result = await (typeof onSubmit === 'function' ? onSubmit(checked) : null);
+    if (result !== false) close();
+  });
 }
 
 function pickRandom(arr, n) {
@@ -1341,8 +2288,8 @@ function pickRandomGrouped(arr, n) {
   // Sort each group by numeric question number so Q5→Q6→Q7 stay in order.
   for (const list of groups.values()) {
     list.sort((a, b) => {
-      const an = parseInt(a?.number || a?.q_number || 0, 10) || 0;
-      const bn = parseInt(b?.number || b?.q_number || 0, 10) || 0;
+      const an = parseInt(a?.question_number || a?.questionNumber || a?.number || 0, 10) || 0;
+      const bn = parseInt(b?.question_number || b?.questionNumber || b?.number || 0, 10) || 0;
       return an - bn;
     });
   }
@@ -1437,15 +2384,16 @@ function renderTrialBanner(container) {
       </div>
     `;
     container.prepend(banner);
-  } else if (plan === 'free' && state.user.trialUsed) {
+  } else if (plan === 'free') {
     const banner = document.createElement('div');
     banner.className = 'trial-banner';
     banner.innerHTML = `
       <div class="trial-banner-content">
         <div class="trial-banner-info">
-          <div class="trial-banner-title"><strong>חשבון חינמי</strong></div>
-          <div class="trial-banner-sub">אפשרויות שדרוג יהיו זמינות בקרוב</div>
+          <div class="trial-banner-title"><strong>פלאן חינמי פעיל</strong></div>
+          <div class="trial-banner-sub">יש לך מגבלות יומיות — שדרג ל-Basic לפי הצורך</div>
         </div>
+        <button class="trial-banner-cta" style="cursor:pointer;background:#2563eb;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:600;" onclick="location.hash='#pricing';navigate('/')">הצג תוכניות</button>
       </div>
     `;
     container.prepend(banner);
@@ -1460,7 +2408,27 @@ function getRoute() {
 function navigate(path) {
   location.hash = '#' + path;
 }
-window.addEventListener('hashchange', renderRoute);
+window.addEventListener('hashchange', () => {
+  // Reset mobile pinch-zoom when user navigates to a new page so each route
+  // starts at fit-to-screen. Users can still zoom again per-page if needed.
+  resetMobileZoom();
+  renderRoute();
+});
+
+// Toggle the viewport to force the browser back to 100% zoom. Briefly swaps
+// to a non-scalable viewport then restores the scalable one. Safari / Chrome
+// on mobile both honor this sequence.
+function resetMobileZoom() {
+  try {
+    const m = document.querySelector('meta[name="viewport"]');
+    if (!m) return;
+    const restore = 'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover';
+    m.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+    requestAnimationFrame(() => {
+      m.setAttribute('content', restore);
+    });
+  } catch {}
+}
 
 // Global event delegation for [data-route] links — always works regardless
 // of whether individual render functions attach their own handlers.
@@ -1491,9 +2459,54 @@ document.addEventListener('click', (e) => {
 function setCourseContext(courseId) {
   const course = CourseRegistry.get(courseId);
   if (course) { state.course = course; return true; }
-  // Fallback for unknown courseId — try to treat as numeric Supabase id
-  state.course = { id: courseId, name: `קורס ${courseId}`, color: '#3b82f6' };
+  // Not cached yet — use a neutral loading label (NOT "קורס {id}", which is
+  // misleading when the row actually belongs to another user) and resolve
+  // asynchronously. resolveCourseAsync will either populate the real name or
+  // redirect back to the dashboard if the course doesn't exist / isn't ours.
+  state.course = { id: courseId, name: 'טוען קורס...', color: '#3b82f6' };
+  resolveCourseAsync(courseId);
   return true;
+}
+
+// Fetch a single course by id, populate the registry, update state.course,
+// and re-render the current route if we're still on that course. If the row
+// can't be fetched because the user doesn't own it (or it doesn't exist),
+// bounce them back to the dashboard — otherwise they'd sit on a page with a
+// placeholder title and any action (upload, practice) would 403.
+async function resolveCourseAsync(courseId) {
+  if (!courseId || courseId === 'tohna1') return;
+  const bounceHome = (msg) => {
+    if (state.course && String(state.course.id) !== String(courseId)) return; // user moved on
+    toast(msg, 'warning');
+    navigate('/dashboard');
+  };
+  try {
+    const token = await Auth.getToken();
+    if (!token) return;
+    const r = await fetch(`/api/courses/${encodeURIComponent(courseId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (r.status === 404 || r.status === 403) {
+      return bounceHome('הקורס הזה לא שייך לחשבון שלך. מחזיר אותך לדשבורד.');
+    }
+    if (!r.ok) return;
+    const course = await r.json();
+    if (!course || !course.id) return bounceHome('הקורס לא נמצא.');
+    // Cache in registry so subsequent navigations use the real name.
+    const idStr = String(course.id);
+    if (course.parent_id) {
+      if (!state.subCourses.find(c => String(c.id) === idStr)) state.subCourses.push(course);
+    } else {
+      if (!state.courses.find(c => String(c.id) === idStr)) state.courses.push(course);
+    }
+    // Only update if we're still on this course (user hasn't navigated away).
+    if (state.course && String(state.course.id) === idStr) {
+      state.course = course;
+      try { renderRoute(); } catch {}
+    }
+  } catch (e) {
+    console.warn('[resolveCourseAsync]', e?.message || e);
+  }
 }
 
 function renderRoute() {
@@ -1501,6 +2514,21 @@ function renderRoute() {
     const route = getRoute();
     const path = route.split('?')[0];
     const params = new URLSearchParams(route.split('?')[1] || '');
+
+    // ===== Modelim plan gating =====
+    // Drive a body class so CSS can hide upload / lab / file-management UI in
+    // one place. Plan='modelim' is set by the handle_new_user trigger when
+    // seed_mode_enabled is on (see supabase/migrations/modelim_plan_and_seed.sql).
+    // Admin users on the modelim plan are exempt — they need full access to
+    // manage content for everyone else.
+    const isModelim = state.user?.plan === 'modelim' && !state.user?.isAdmin;
+    document.body.classList.toggle('plan-modelim', !!isModelim);
+    if (isModelim) {
+      // Route guards — these are all AI or creation flows the user can't reach.
+      if (path === '/study' || path.startsWith('/study/')) return navigate('/dashboard');
+      const courseMatch = path.match(/^\/course\/([^/]+)\/(lab|study)$/);
+      if (courseMatch) return navigate(`/course/${courseMatch[1]}`);
+    }
 
     if (path === '/' || path === '') return renderLanding();
     if (path === '/login') return renderAuth(params.get('signup') === '1');
@@ -1520,6 +2548,9 @@ function renderRoute() {
       const courseId = courseMatch[1];
       const page = courseMatch[2] || '';
       setCourseContext(courseId);
+      // Exam-scoped subroutes: /course/{courseId}/exam/{examId}/review
+      const examReviewMatch = page.match(/^exam\/([^/]+)\/review$/);
+      if (examReviewMatch) return renderExamReview(courseId, examReviewMatch[1]);
       if (page === '' || page === 'dashboard') return renderCourseDashboard();
       if (page === 'quiz') return state.quiz ? renderQuiz() : navigate(`/course/${courseId}`);
       if (page === 'summary') return renderSummary();
@@ -1580,31 +2611,61 @@ function reviewQueueForCourse(uid, courseId) {
   return p.reviewQueue || [];
 }
 
-// ===== Topic taxonomy — normalize raw topic strings into canonical buckets =====
-// Topics in answers.json are very granular ("Method Overriding (private)",
-// "Wildcards (extends/super)", etc.). We bucket them into ~14 canonical themes
-// so the analytics show meaningful aggregates instead of 60 unique labels.
-const TOPIC_BUCKETS = [
-  { id: 'generics',     name: 'Generics & Wildcards', icon: '🧬', color: '#7c3aed', match: /generic|wildcard|<\?|extends |super /i },
-  { id: 'streams',      name: 'Streams API',          icon: '🌊', color: '#0ea5e9', match: /stream/i },
-  { id: 'overriding',   name: 'Method Overriding',    icon: '🔁', color: '#f59e0b', match: /overrid/i },
-  { id: 'overloading',  name: 'Method Overloading',   icon: '↔️', color: '#ec4899', match: /overload/i },
-  { id: 'resolution',   name: 'Method Resolution',    icon: '🎯', color: '#ef4444', match: /method resolution|resolution/i },
-  { id: 'inner',        name: 'Inner Classes',        icon: '📦', color: '#8b5cf6', match: /inner class|nested/i },
-  { id: 'exceptions',   name: 'Exceptions',           icon: '⚠️', color: '#f97316', match: /exception|try.?catch|throw/i },
-  { id: 'equals',       name: 'equals & hashCode',    icon: '🔑', color: '#10b981', match: /equals|hashcode|hashing/i },
-  { id: 'iterators',    name: 'Iterators & Iterable', icon: '🔄', color: '#06b6d4', match: /iterator|iterable/i },
-  { id: 'lambdas',      name: 'Lambdas & Functional', icon: 'λ',  color: '#3b82f6', match: /lambda|functional|predicate|bifunction|comparator/i },
-  { id: 'patterns',     name: 'Design Patterns',      icon: '🏛️', color: '#0d9488', match: /design pattern|observer|factory|bridge|singleton/i },
-  { id: 'constructors', name: 'Constructors',         icon: '🏗️', color: '#65a30d', match: /constructor/i },
-  { id: 'static',       name: 'Static / Instance',    icon: '⚡', color: '#eab308', match: /static|instance field|instance method/i },
-  { id: 'visibility',   name: 'Visibility / Access',  icon: '🔒', color: '#64748b', match: /visibility|private|public|access/i },
-  { id: 'casting',      name: 'Casting & Types',      icon: '🎭', color: '#dc2626', match: /cast|classcast|inherit/i },
+// ===== Topic taxonomy — dual-mode bucket resolver =====
+// Two strategies run in order so Insights work for any subject:
+//   1. FIXED BUCKETS — specialised regex overlay for the built-in tohna1 Java
+//      course. answers.json ships with very granular topic strings ("Method
+//      Overriding (private)", "Wildcards (extends/super)", …). Matching them
+//      into ~14 themes keeps the UI tidy for that specific course.
+//   2. DIRECT TOPIC STRINGS — for any cloud course (biology, chemistry, math,
+//      …) the server-side Gemini labeler already produced short canonical
+//      topic strings like "גנטיקה מנדלית", "Design Patterns", "פוטוסינתזה".
+//      We bucket those by the string itself so the aggregate mirrors exactly
+//      what appears in the user's exams — no hardcoded per-subject taxonomy.
+const TOPIC_BUCKETS_TOHNA1 = [
+  { id: 'generics',     name: 'Generics & Wildcards', icon: null, color: '#7c3aed', match: /generic|wildcard|<\?|extends |super /i },
+  { id: 'streams',      name: 'Streams API',          icon: null, color: '#0ea5e9', match: /stream/i },
+  { id: 'overriding',   name: 'Method Overriding',    icon: null, color: '#f59e0b', match: /overrid/i },
+  { id: 'overloading',  name: 'Method Overloading',   icon: null, color: '#ec4899', match: /overload/i },
+  { id: 'resolution',   name: 'Method Resolution',    icon: null, color: '#ef4444', match: /method resolution|resolution/i },
+  { id: 'inner',        name: 'Inner Classes',        icon: null, color: '#8b5cf6', match: /inner class|nested/i },
+  { id: 'exceptions',   name: 'Exceptions',           icon: null, color: '#f97316', match: /exception|try.?catch|throw/i },
+  { id: 'equals',       name: 'equals & hashCode',    icon: null, color: '#10b981', match: /equals|hashcode|hashing/i },
+  { id: 'iterators',    name: 'Iterators & Iterable', icon: null, color: '#06b6d4', match: /iterator|iterable/i },
+  { id: 'lambdas',      name: 'Lambdas & Functional', icon: null, color: '#3b82f6', match: /lambda|functional|predicate|bifunction|comparator/i },
+  { id: 'patterns',     name: 'Design Patterns',      icon: null, color: '#0d9488', match: /design pattern|observer|factory|bridge|singleton/i },
+  { id: 'constructors', name: 'Constructors',         icon: null, color: '#65a30d', match: /constructor/i },
+  { id: 'static',       name: 'Static / Instance',    icon: null, color: '#eab308', match: /static|instance field|instance method/i },
+  { id: 'visibility',   name: 'Visibility / Access',  icon: null, color: '#64748b', match: /visibility|private|public|access/i },
+  { id: 'casting',      name: 'Casting & Types',      icon: null, color: '#dc2626', match: /cast|classcast|inherit/i },
 ];
+
+// Palette used for dynamically-clustered topics (any non-tohna1 course). Same
+// topic string → same color across renders thanks to the hash below.
+const DYNAMIC_TOPIC_PALETTE = [
+  '#7c3aed', '#0ea5e9', '#f59e0b', '#ec4899', '#ef4444',
+  '#8b5cf6', '#f97316', '#10b981', '#06b6d4', '#3b82f6',
+  '#0d9488', '#65a30d', '#eab308', '#64748b', '#dc2626',
+];
+function colorForTopicKey(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = ((h << 5) - h + key.charCodeAt(i)) | 0;
+  return DYNAMIC_TOPIC_PALETTE[Math.abs(h) % DYNAMIC_TOPIC_PALETTE.length];
+}
 function bucketsForTopic(topicStr) {
   if (!topicStr) return [];
-  const found = TOPIC_BUCKETS.filter(b => b.match.test(topicStr));
-  return found.length ? found : [{ id: 'other', name: 'אחר', icon: '📌', color: '#94a3b8' }];
+  const s = String(topicStr).trim();
+  if (!s) return [];
+  // tohna1 regex overlay first — collapses granular Java-specific topics
+  // into 14 stable themes. Falls through for any other subject.
+  const fixed = TOPIC_BUCKETS_TOHNA1.filter(b => b.match.test(s));
+  if (fixed.length) return fixed;
+  // Dynamic cluster: the Gemini labeler already produces short canonical
+  // strings, so we trust them 1:1. Key is the normalized string; display
+  // name is the original casing/spacing.
+  const canon = s.replace(/\s+/g, ' ');
+  const key = canon.toLowerCase();
+  return [{ id: 'topic:' + key, name: canon, icon: null, color: colorForTopicKey(key) }];
 }
 
 // ===== Pattern analysis engine =====
@@ -2421,15 +3482,22 @@ async function renderDashboard() {
   ];
   const todayQuote = QUOTES[Math.floor(Date.now() / 86400000) % QUOTES.length];
 
-  // Aggregate stats across ALL courses
+  // Aggregate stats across ALL courses.
+  // Source of truth: Supabase via /api/stats/summary. localStorage is only
+  // consulted for the admin built-in `tohna1` course, whose attempts live
+  // locally by design (see memory: project_admin_local_data.md).
   const allCourseIds = CourseRegistry.list().map(c => String(c.id));
-  const aggStats = allCourseIds.reduce((acc, cid) => {
-    const s = Progress.stats(state.user.email, cid);
-    acc.total += s.total; acc.unique += s.unique;
-    acc.correct += s.correct; acc.wrong += s.wrong;
-    acc.reviewCount += s.reviewCount;
-    return acc;
-  }, { total: 0, unique: 0, correct: 0, wrong: 0, reviewCount: 0 });
+  const summary = await Progress.fetchSummary();
+  const dbAgg = summary?.aggregate || { total: 0, unique: 0, correct: 0, wrong: 0, reviewCount: 0 };
+  const aggStats = { ...dbAgg };
+  if (allCourseIds.includes('tohna1')) {
+    const local = Progress.stats(state.user.email, 'tohna1');
+    aggStats.total += local.total;
+    aggStats.unique += local.unique;
+    aggStats.correct += local.correct;
+    aggStats.wrong += local.wrong;
+    aggStats.reviewCount += local.reviewCount;
+  }
   const accuracy = aggStats.unique > 0 ? Math.round((aggStats.correct / aggStats.unique) * 100) : 0;
   const hasActivity = aggStats.total > 0;
   const hasCourses = allCourseIds.length > 0;
@@ -2449,13 +3517,20 @@ async function renderDashboard() {
     sg.className = '';
     sg.innerHTML = `
       <div class="dash-welcome-banner">
-        <div class="dash-welcome-icon">🎓</div>
-        <h2>ברוך הבא ל-ExamPrep!</h2>
-        <p>הוסף את הקורס הראשון שלך כדי להתחיל לתרגל שאלות אמריקאיות.</p>
-        <button class="btn btn-primary btn-lg" id="btn-welcome-add-course">+ הוסף קורס ראשון</button>
+        <div class="dash-welcome-content">
+          <div class="dash-welcome-icon">
+            <img src="/public/images/logo.png?v=20260410-8" alt="ExamPrep" class="dash-welcome-logo-img">
+          </div>
+          <h2>ברוך הבא ל-ExamPrep!</h2>
+          <p>בחר תחום לימוד כדי להתחיל לתרגל שאלות אמריקאיות.</p>
+          <button class="btn btn-primary btn-lg" id="btn-welcome-add-course">+ הוסף תחום לימוד</button>
+        </div>
+        <div class="dash-welcome-visual" aria-hidden="true">
+          <img src="/public/images/marketing-hero.png" alt="" class="dash-welcome-hero-img">
+        </div>
       </div>
     `;
-    sg.querySelector('#btn-welcome-add-course')?.addEventListener('click', () => showAddCourseModal());
+    sg.querySelector('#btn-welcome-add-course')?.addEventListener('click', () => showAddDegreeModal());
   } else {
     sg.className = 'metric-grid dash-metric-grid';
     sg.innerHTML = `
@@ -2497,7 +3572,15 @@ async function renderDashboard() {
   // Courses — dynamic list from CourseRegistry
   const cg = document.getElementById('dash-courses');
   const allCourses = CourseRegistry.list();
-  const activeCourses = allCourses.filter(c => !c.archived);
+  // For admin: if a "מדעי המחשב" degree exists, hide the builtin tohna1 from the
+  // top-level dashboard (it will appear inside the degree as a sub-course instead).
+  // Modelim-plan admins (the course-library owner) don't want tohna1 anywhere —
+  // they manage only the seeded modelim content.
+  const isModelimAdmin = state.user?.isAdmin && state.user?.plan === 'modelim';
+  const csDegreeForAdmin = state.user?.isAdmin && !isModelimAdmin
+    ? allCourses.find(c => c.is_degree && c.name.includes('מדעי המחשב'))
+    : null;
+  const activeCourses = allCourses.filter(c => !c.archived && !(isModelimAdmin && c.id === 'tohna1') && !(csDegreeForAdmin && c.id === 'tohna1'));
   const archivedCourses = allCourses.filter(c => c.archived);
 
   function renderCourseCard(c) {
@@ -2512,12 +3595,18 @@ async function renderDashboard() {
       qCount = c.total_questions || 0;
       eCount = c.total_pdfs || 0;
     }
-    const cStats = Progress.stats(state.user.email, String(c.id));
+    const cid = String(c.id);
+    // tohna1 stats live in localStorage (admin-only built-in); everything
+    // else comes from the server-side summary so the card reflects the DB.
+    const cStats = cid === 'tohna1'
+      ? Progress.stats(state.user.email, cid)
+      : (summary?.perCourse?.[cid] || { total: 0, unique: 0, correct: 0, wrong: 0, reviewCount: 0 });
     const covPct = qCount > 0 ? Math.min(100, Math.round((cStats.unique / qCount) * 100)) : 0;
     const accPct = cStats.unique > 0 ? Math.round((cStats.correct / cStats.unique) * 100) : 0;
     const hasProgress = cStats.total > 0;
-    const cid = String(c.id);
-    const childCount = c.child_count || 0;
+    // Admin: CS degree shows builtin tohna1 as a synthetic sub-course, so add 1 to child_count.
+    // Modelim-plan admins don't get that injection (they own only the seeded content).
+    const childCount = (c.child_count || 0) + (state.user?.isAdmin && !isModelimAdmin && c.is_degree && c.name.includes('מדעי המחשב') ? 1 : 0);
     return `
       <div class="course-card${c.is_degree ? ' degree-card' : ''}" style="--course-color:${escapeHtml(c.color || '#3b82f6')}" data-course="${escapeHtml(cid)}" data-is-degree="${c.is_degree ? '1' : '0'}">
         ${!c.isBuiltin ? `<button class="course-menu-btn" data-course-id="${c.id}" data-course-name="${escapeHtml(c.name)}" data-archived="${c.archived || false}" title="אפשרויות">⋯</button>` : ''}
@@ -2628,11 +3717,15 @@ async function renderDashboard() {
     }
   });
 
-  // "מה ללמוד היום?" widget — find weakest course with questions
+  // "מה ללמוד היום?" widget — find weakest course with questions.
+  // Same DB-first rule as the per-course cards above.
   const studyCourses = CourseRegistry.list().filter(c => !c.archived).map(c => {
+    const cid = String(c.id);
     const qCount = c.id === 'tohna1' ? Data.allQuestions().length : (c.total_questions || 0);
     if (qCount === 0) return null;
-    const s = Progress.stats(state.user.email, String(c.id));
+    const s = cid === 'tohna1'
+      ? Progress.stats(state.user.email, cid)
+      : (summary?.perCourse?.[cid] || { total: 0, unique: 0, correct: 0 });
     const acc = s.unique > 0 ? Math.round((s.correct / s.unique) * 100) : (s.total > 0 ? 0 : -1);
     return { c, qCount, acc, total: s.total };
   }).filter(Boolean);
@@ -2750,8 +3843,8 @@ async function renderDashboard() {
   document.getElementById('btn-add-course-card')?.addEventListener('click', () => showAddDegreeModal());
   document.getElementById('btn-add-course')?.addEventListener('click', () => showAddDegreeModal());
 
-  // Show onboarding tour for new users (first time only)
-  if (!localStorage.getItem('ep_onboarding_v2')) {
+  // Show onboarding tour every visit while the user has no degrees/courses
+  if (!hasCourses && !sessionStorage.getItem('ep_onboarding_skip')) {
     setTimeout(() => showOnboardingTour(), 600);
   }
 
@@ -2764,7 +3857,7 @@ async function renderDashboard() {
       תצוגת משתמש חדש
     `;
     demoBtn.addEventListener('click', () => {
-      localStorage.removeItem('ep_onboarding_v2');
+      sessionStorage.removeItem('ep_onboarding_skip');
       showOnboardingTour();
     });
     document.querySelector('.app-content')?.appendChild(demoBtn);
@@ -2781,13 +3874,24 @@ async function renderDegreeDashboard(degreeId) {
   if (!degree) return navigate('/dashboard');
 
   state.degree = degree;
-  const subCourses = await CourseRegistry.listSubCourses(degreeId);
+  let subCourses = await CourseRegistry.listSubCourses(degreeId);
+
+  // For admin: inject the builtin tohna1 course as the first sub-course of any
+  // "מדעי המחשב" degree so its data appears inside the degree hierarchy.
+  // Modelim-plan admins don't want tohna1 — they manage only the seeded content.
+  const isModelimAdmin = state.user?.isAdmin && state.user?.plan === 'modelim';
+  if (state.user?.isAdmin && !isModelimAdmin && degree.name.includes('מדעי המחשב')) {
+    subCourses = [CourseRegistry.BUILTIN, ...subCourses];
+  }
 
   // Seed demo progress for sub-courses
   if (state.user.email === 'demo@examprep.co') seedDemoProgress(state.user.email, subCourses);
 
   // Load data for sub-courses so progress bars are accurate
   await Promise.all(subCourses.map(c => Data.ensureLoaded(c.id).catch(() => {})));
+
+  // DB-authoritative stats (same source the global dashboard reads).
+  const summary = await Progress.fetchSummary();
 
   $app.innerHTML = '';
   $app.appendChild(tmpl('tmpl-degree-dash'));
@@ -2803,11 +3907,13 @@ async function renderDegreeDashboard(degreeId) {
   function renderSubCourseCard(c) {
     const qCount = c.total_questions || 0;
     const eCount = c.total_pdfs || 0;
-    const cStats = Progress.stats(state.user.email, String(c.id));
+    const cid = String(c.id);
+    const cStats = cid === 'tohna1'
+      ? Progress.stats(state.user.email, cid)
+      : (summary?.perCourse?.[cid] || { total: 0, unique: 0, correct: 0, wrong: 0, reviewCount: 0 });
     const covPct = qCount > 0 ? Math.min(100, Math.round((cStats.unique / qCount) * 100)) : 0;
     const accPct = cStats.unique > 0 ? Math.round((cStats.correct / cStats.unique) * 100) : 0;
     const hasProgress = cStats.total > 0;
-    const cid = String(c.id);
     return `
       <div class="course-card" style="--course-color:${escapeHtml(c.color || degree.color || '#3b82f6')}" data-course="${escapeHtml(cid)}" data-is-degree="0">
         <div class="course-card-header">
@@ -2896,7 +4002,7 @@ const DEGREE_CATEGORIES = [
     degrees: [
       { name: 'הסקה כמותית',       desc: 'מתמטיקה, אלגברה, גאומטריה',  color: '#2563eb', image: _UNS('1635070041078-e363dbe005cb') },
       { name: 'אנגלית (פסיכומטרי)',desc: 'אוצר מילים, הבנת הנקרא',      color: '#0891b2', image: _UNS('1456513080510-7bf3a84b82f8') },
-      { name: 'חשיבה מילולית',     desc: 'אנלוגיות, השלמת משפטים',      color: '#7c3aed', image: _UNS('1507003211169-0a1dd7228f2d') },
+      { name: 'חשיבה מילולית',     desc: 'אנלוגיות, השלמת משפטים',      color: '#7c3aed', image: _UNS('1512820790803-83ca734da794') },
     ],
   },
   {
@@ -2913,10 +4019,10 @@ const DEGREE_CATEGORIES = [
       { name: 'מתמטיקה',           desc: 'חשבון אינפיניטסימלי, אלגברה לינארית, משוואות דיפרנציאליות', color: '#0ea5e9', image: _UNS('1635070041078-e363dbe005cb') },
       { name: 'פיזיקה',            desc: 'מכניקה, קוונטים, אלקטרומגנטיות',     color: '#d97706', image: _UNS('1636466497217-26a8cbeaf0aa') },
       { name: 'כימיה',             desc: 'כימיה אורגנית, אנאורגנית ופיזיקלית', color: '#7c3aed', image: _UNS('1532187863486-abf9dbad1b69') },
-      { name: 'ביולוגיה',          desc: 'גנטיקה, מיקרוביולוגיה, אנטומיה',    color: '#16a34a', image: _UNS('1530026186672-2cd00ffc50fe') },
+      { name: 'ביולוגיה',          desc: 'גנטיקה, מיקרוביולוגיה, אנטומיה',    color: '#16a34a', image: _UNS('1518152006812-edab29b069ac') },
       { name: 'משפטים',            desc: 'דיני חוזים, נזיקין, מנהלי',          color: '#dc2626', image: _UNS('1589829545856-d10d557cf95f') },
       { name: 'כלכלה',             desc: 'מיקרואקונומיה, מאקרו, פיננסים',      color: '#0891b2', image: _UNS('1611974789855-9c2a0a7236a3') },
-      { name: 'פסיכולוגיה',        desc: 'קוגניציה, פרסונליות, מחקר',          color: '#ec4899', image: _UNS('1507003211169-0a1dd7228f2d') },
+      { name: 'פסיכולוגיה',        desc: 'קוגניציה, פרסונליות, מחקר',          color: '#ec4899', image: _UNS('1559757148-5c350d0d3c56') },
       { name: 'ניהול ומנהל עסקים', desc: 'שיווק, חשבונאות, ניהול',             color: '#f59e0b', image: _UNS('1454165804606-c3d57bc86b40') },
       { name: 'הנדסה',             desc: 'מתמטיקה הנדסית, פיזיקה, תכנות',      color: '#64748b', image: _UNS('1518770660439-4636190af475') },
       { name: 'רפואה',             desc: 'אנטומיה, פיזיולוגיה, ביוכימיה',      color: '#ef4444', image: _UNS('1505751172876-fa1923c5c528') },
@@ -2928,6 +4034,7 @@ const DEGREE_CATEGORIES = [
 
 function showAddDegreeModal() {
   const plan = state.user?.plan || 'free';
+  // Free plan now has courses=5; server enforces the limit
   const planDef = PLANS[plan] || PLANS.free;
   if (planDef.maxCourses !== -1 && state.courses.length >= planDef.maxCourses) {
     showPaywallModal('course_limit');
@@ -3084,10 +4191,22 @@ function showAddSubCourseModal(degree) {
     const btn = document.getElementById('asc-submit');
     btn.disabled = true; btn.textContent = 'יוצר קורס...';
     try {
-      const course = await CourseRegistry.create(name, desc || null, selectedColor, null, { parent_id: degree.id });
+      // Refresh the course list from the server first. Without this, a stale
+      // state.courses (e.g. degree deleted in another tab, or a cached client
+      // after a partial create) would cause /api/courses to reject the insert
+      // with the misleading "קורס האב לא נמצא" error.
+      await CourseRegistry.refresh();
+      const liveDegree = CourseRegistry.get(degree.id);
+      if (!liveDegree) {
+        close();
+        toast('התחום אינו זמין יותר — רענן את הדף', 'error');
+        navigate('/dashboard');
+        return;
+      }
+      const course = await CourseRegistry.create(name, desc || null, selectedColor, null, { parent_id: liveDegree.id });
       close();
       toast(`הקורס "${course.name}" נוצר בהצלחה!`, 'success');
-      renderDegreeDashboard(degree.id);
+      renderDegreeDashboard(liveDegree.id);
     } catch (err) {
       btn.disabled = false; btn.textContent = 'צור קורס';
       errEl.textContent = err.message || 'שגיאה ביצירת קורס';
@@ -3406,17 +4525,21 @@ async function loadCourseExams(courseId, containerEl) {
             grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">אין שאלות במבחן זה.</p>';
             return;
           }
-          grid.innerHTML = examQs.map(q => `
+          grid.innerHTML = examQs.map(q => {
+            const previewText = (q.question_text || q.general_explanation || ('שאלה ' + q.question_number)).toString().slice(0, 80);
+            const safePreview = escapeHtml(previewText);
+            return `
             <div class="exam-q-thumb" data-q-id="${q.id}">
               ${q.image_path === 'text-only'
-                ? `<div class="exam-q-thumb-text">${(q.general_explanation || 'שאלה ' + q.question_number).slice(0, 60)}...</div>`
-                : `<img src="${Data.imageUrl(q.image_path)}" alt="שאלה ${q.question_number}" loading="lazy" />`}
+                ? `<div class="exam-q-thumb-text">${safePreview}</div>`
+                : `<img src="${Data.imageUrl(q.image_path)}" alt="שאלה ${q.question_number}" data-fallback-text="${safePreview}" loading="lazy" onload="EmThumbFallback.check(this)" onerror="EmThumbFallback.swap(this)" />`}
               <div class="exam-q-thumb-info">
                 <span>#${q.question_number}</span>
                 <button class="btn-icon-sm q-delete-btn" data-q-id="${q.id}" data-q-num="${q.question_number}" title="מחק שאלה">✕</button>
               </div>
             </div>
-          `).join('');
+          `;
+          }).join('');
           // Wire question delete buttons
           grid.querySelectorAll('.q-delete-btn').forEach(qBtn => {
             qBtn.addEventListener('click', (ev) => {
@@ -3629,22 +4752,20 @@ function showExamManagementModal(courseId) {
       else examsData.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
       listEl.innerHTML = examsData.map(ex => {
-        const statusLabel = { pending: 'ממתין', processing: 'מעבד...', ready: 'מוכן', failed: 'נכשל' }[ex.status] || ex.status;
-        const statusCls = ex.status === 'ready' ? 'color:var(--green-600)' : (ex.status === 'failed' ? 'color:var(--red-500)' : '');
+        const statusLabel = { pending: 'ממתין', processing: 'מעבד...', awaiting_review: 'ממתין לאישור', ready: 'מוכן', failed: 'נכשל' }[ex.status] || ex.status;
+        const statusCls = ex.status === 'ready' ? 'color:var(--green-600)' : (ex.status === 'failed' ? 'color:var(--red-500)' : (ex.status === 'awaiting_review' ? 'color:#b45309;font-weight:600' : ''));
         const canExpand = ex.status === 'ready' && (ex.question_count || 0) > 0;
+        const isAwaitingReview = ex.status === 'awaiting_review';
         return `
-          <div class="em-exam-row" data-exam-id="${ex.id}" style="border-bottom:1px solid var(--border-soft);">
+          <div class="em-exam-row" data-exam-id="${ex.id}" style="border-bottom:1px solid var(--border-soft);${isAwaitingReview ? 'background:#fffbeb;' : ''}">
             <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;" class="em-row-header">
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--brand-500)" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               <div style="flex:1;min-width:0;">
                 <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ex.name)}</div>
                 <div style="font-size:12px;color:var(--text-muted);">${ex.question_count || 0} שאלות · <span style="${statusCls}">${statusLabel}</span></div>
               </div>
+              ${isAwaitingReview ? `<button class="em-review-btn" data-exam-id="${ex.id}" type="button" style="flex-shrink:0;border:1px solid #fcd34d;background:#fffbeb;color:#92400e;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:inherit;font-weight:600;">פתח סקירה</button>` : ''}
               ${canExpand ? `<svg class="em-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-muted)" stroke-width="2" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>` : ''}
-              <button class="em-solution-btn" data-exam-id="${ex.id}" title="עדכן פתרון" style="flex-shrink:0;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:inherit;display:flex;align-items:center;gap:4px;">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6m0 0l-3-3m3 3l3-3"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
-                עדכן פתרון
-              </button>
               <button class="em-delete-btn" data-exam-id="${ex.id}" data-exam-name="${escapeHtml(ex.name)}" data-q-count="${ex.question_count || 0}" title="מחק מבחן" style="flex-shrink:0;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:inherit;display:flex;align-items:center;gap:4px;">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 מחק
@@ -3654,10 +4775,19 @@ function showExamManagementModal(courseId) {
           </div>`;
       }).join('');
 
+      // Wire review buttons for awaiting_review exams
+      listEl.querySelectorAll('.em-review-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const examId = btn.dataset.examId;
+          navigate(`/course/${courseId}/exam/${examId}/review`);
+        });
+      });
+
       // Wire expand (click on row header)
       listEl.querySelectorAll('.em-row-header').forEach(header => {
         header.addEventListener('click', async (e) => {
-          if (e.target.closest('.em-delete-btn') || e.target.closest('.em-solution-btn')) return;
+          if (e.target.closest('.em-delete-btn')) return;
           const row = header.closest('.em-exam-row');
           const examId = row.dataset.examId;
           const grid = row.querySelector('.em-questions-grid');
@@ -3701,8 +4831,16 @@ function showExamManagementModal(courseId) {
             const genBtnDisabled = allDone ? 'disabled' : '';
             const genBtnTitle = allDone ? '' : 'AI ינתח כל שאלה ויפיק הסבר מפורט לתשובה הנכונה ולכל התשובות הלא נכונות. כ-15 שניות.';
 
-            const unknownCount = examQs.filter(q => q.answer_confidence === 'unknown' || q.answer_confidence === 'uncertain').length;
-            const revBtnLabel = `🔍 בדוק תשובות עם AI${unknownCount > 0 ? ` (${unknownCount} לא ודאיות)` : ''}`;
+            const pendingCount = examQs.filter(q => q.answer_confidence === 'unknown' || q.answer_confidence === 'uncertain').length;
+            const revBtnLabel = `🔍 בדוק תשובות עם AI${pendingCount > 0 ? ` (${pendingCount} לא ודאיות)` : ''}`;
+            const pendingBar = pendingCount > 0 ? `
+              <div style="grid-column:1/-1;display:flex;align-items:flex-start;gap:10px;padding:12px 14px;margin-bottom:8px;background:#fff7ed;border:1.5px solid #f97316;border-radius:10px;">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#c2410c;flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <div style="flex:1;font-size:13px;color:#7c2d12;">
+                  <strong>${pendingCount} שאלות ממתינות לאישור תשובה</strong>
+                  <div style="font-size:12px;margin-top:3px;color:#9a3412;">שאלות אלו <strong>לא יופיעו בתרגול</strong> עד שתעדכן את התשובה. לחץ על כל שאלה מסומנת ואשר / תקן את התשובה הנכונה.</div>
+                </div>
+              </div>` : '';
 
             const genBar = `
               <div class="em-gen-bar" style="grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:6px;background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #fcd34d;border-radius:10px;">
@@ -3713,17 +4851,24 @@ function showExamManagementModal(courseId) {
                 </div>
                 <button class="btn btn-primary btn-sm em-gen-btn" data-exam-id="${examId}" ${genBtnDisabled} style="white-space:nowrap;">${genBtnLabel}</button>
               </div>
-              <div class="em-rev-bar" style="grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:10px;">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#1d4ed8;flex-shrink:0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                <div style="flex:1;font-size:13px;color:#1e40af;">
-                  <strong>בדיקת תשובות עם AI</strong>
-                  <div style="font-size:11px;color:#1d4ed8;opacity:0.85;">AI ינתח כל שאלה על פי תמונתה ויאמת / יתקן תשובות לא ודאיות.</div>
-                </div>
-                <button class="btn btn-sm em-rev-btn" data-exam-id="${examId}" style="white-space:nowrap;background:#2563eb;color:#fff;border:none;">${revBtnLabel}</button>
-              </div>
             `;
 
-            grid.innerHTML = genBar + examQs.map(q => {
+            // Context bar — lets the user manually crop "accompanying info"
+            // (passages / tables / diagrams) from the exam PDF and attach it
+            // to one or more questions. Uses group_id / context_image_path
+            // columns that already power the existing "מידע לסט" button.
+            const contextBar = `
+              <div class="ep-ctx-bar">
+                <div style="display:flex;align-items:center;gap:8px;flex:1;">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0369a1;"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+                  <div style="font-size:13px;color:#0c4a6e;"><strong>מידע נלווה</strong> — קטעי רקע שמשרתים מספר שאלות (טבלה, קטע קריאה, דיאגרמה).</div>
+                </div>
+                <button class="ep-ctx-add-btn" data-exam-id="${examId}" type="button">+ הוסף מידע נלווה</button>
+              </div>
+              <div class="ep-ctx-list" data-exam-id="${examId}" style="grid-column:1/-1;"></div>
+            `;
+
+            grid.innerHTML = pendingBar + genBar + contextBar + examQs.map(q => {
               const hasSolution = !!q.general_explanation;
               const needsReview = q.answer_confidence === 'unknown';
               const isUncertain = q.answer_confidence === 'uncertain';
@@ -3734,20 +4879,186 @@ function showExamManagementModal(courseId) {
                   ? `<div style="${badgeStyle}background:#ea580c;" title="הזיהוי לא ודאי - לחץ על השאלה לאמת">⚠ לא ודאי</div>`
                   : (hasSolution ? `<div style="${badgeStyle}background:var(--green-500);">✓ פתרון</div>` : '');
               const borderColor = needsReview ? '#dc2626' : (isUncertain ? '#ea580c' : 'var(--border-soft)');
+              // Set-context button — shown only for questions that are part
+              // of a group (have context_image_path). Opens a modal preview
+              // of the shared scenario/data/passage. Positioned top-left so
+              // it doesn't collide with the top-right answer badge.
+              const ctxBtn = (q.context_image_path && String(q.context_image_path).startsWith('http'))
+                ? `<button class="em-q-ctx-btn" data-ctx-url="${escapeHtml(q.context_image_path)}" data-q-num="${q.question_number}" title="הצג את המידע לסט השאלות" style="position:absolute;top:4px;left:4px;background:#2563eb;color:white;border:none;border-radius:4px;padding:3px 7px;font-size:11px;font-weight:700;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.2);z-index:2;">מידע לסט</button>`
+                : '';
+              const hasRegenSolution = !!(q.general_explanation && String(q.general_explanation).trim());
+              const regenLabel = hasRegenSolution ? 'רענן פתרון AI' : 'צור פתרון AI';
+              // Preview text: prefer question_text (set at upload from text-layer
+              // extraction) over general_explanation (null until AI solution runs).
+              const previewText = (q.question_text || q.general_explanation || ('שאלה ' + q.question_number)).toString().slice(0, 80);
+              const safePreview = escapeHtml(previewText);
               return `
               <div class="em-q-thumb" data-q-id="${q.id}" style="border:1px solid ${borderColor};border-radius:8px;overflow:hidden;position:relative;min-height:80px;background:var(--gray-50);">
                 <div class="em-q-render" style="display:grid;place-items:center;min-height:70px;font-size:11px;color:var(--text-muted);">
                   ${q.image_path === 'text-only'
-                    ? `<div style="padding:8px;">${(q.general_explanation || 'שאלה ' + q.question_number).slice(0, 50)}...</div>`
-                    : `<img src="${q.image_path.startsWith('http') ? q.image_path : Data.imageUrl(q.image_path)}" alt="שאלה ${q.question_number}" style="width:100%;display:block;" loading="lazy" onerror="this.parentElement.innerHTML='<div style=padding:8px>#${q.question_number}</div>'" />`}
+                    ? `<div style="padding:8px;">${safePreview}</div>`
+                    : `<img src="${q.image_path.startsWith('http') ? q.image_path : Data.imageUrl(q.image_path)}" alt="שאלה ${q.question_number}" data-fallback-text="${safePreview}" style="width:100%;display:block;" loading="lazy" onload="EmThumbFallback.check(this)" onerror="EmThumbFallback.swap(this)" />`}
                 </div>
                 ${badge}
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--gray-100);font-size:11px;">
-                  <span>#${q.question_number}</span>
-                  <button class="em-q-delete" data-q-id="${q.id}" data-q-num="${q.question_number}" title="מחק שאלה" style="border:none;background:none;cursor:pointer;color:var(--text-muted);font-size:14px;">✕</button>
+                ${ctxBtn}
+                <div style="display:flex;flex-direction:column;gap:4px;padding:4px 8px;background:var(--gray-100);font-size:11px;">
+                  <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                    <button class="em-q-retake-btn" data-q-id="${q.id}" data-q-num="${q.question_number}" title="צלם את תמונת השאלה מחדש" style="flex:1;border:1px solid #c7d2fe;background:#eef2ff;color:#3730a3;border-radius:4px;padding:3px 6px;cursor:pointer;font-size:10px;font-family:inherit;font-weight:600;">צלם מחדש</button>
+                    <button class="em-q-chkans-btn" data-q-id="${q.id}" data-q-num="${q.question_number}" title="בדוק את התשובה הנכונה מול קובץ הפתרון" style="flex:1;border:1px solid #fcd34d;background:#fffbeb;color:#92400e;border-radius:4px;padding:3px 6px;cursor:pointer;font-size:10px;font-family:inherit;font-weight:600;">בדוק פתרון</button>
+                    <button class="em-q-regen-btn" data-q-id="${q.id}" data-q-num="${q.question_number}" title="${hasRegenSolution ? 'צור פתרון AI חדש במקום הקיים' : 'צור פתרון AI מפורט לשאלה זו'}" style="flex:1;border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;border-radius:4px;padding:3px 6px;cursor:pointer;font-size:10px;font-family:inherit;font-weight:600;">${regenLabel}</button>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                    <span style="display:flex;align-items:center;gap:4px;">#${q.question_number}${(needsReview || isUncertain) ? `<span style="font-size:9px;background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;border-radius:3px;padding:1px 5px;font-weight:700;">לא במאגר</span>` : ''}</span>
+                    <button class="em-q-delete" data-q-id="${q.id}" data-q-num="${q.question_number}" title="מחק שאלה" style="border:none;background:none;cursor:pointer;color:var(--text-muted);font-size:14px;">✕</button>
+                  </div>
                 </div>
               </div>
             `;}).join('');
+
+            // Wire the "נתח מחדש" and "צור/רענן פתרון AI" per-question buttons.
+            const wirePerQBtn = (selector, endpointSuffix, labelWhileWorking, successMsg, bodyData = {}) => {
+              grid.querySelectorAll(selector).forEach(btn => {
+                btn.addEventListener('click', async (ev) => {
+                  ev.stopPropagation();
+                  if (btn.disabled) return;
+                  const qId = btn.getAttribute('data-q-id');
+                  const origHtml = btn.innerHTML;
+                  btn.disabled = true;
+                  btn.innerHTML = `<span class="qv-spinner"></span> ${labelWhileWorking}`;
+                  const restore = () => { btn.disabled = false; btn.innerHTML = origHtml; };
+                  try {
+                    const tk = await Auth.getToken();
+                    if (!tk) { toast('תוקף ההתחברות פג. התחבר שוב.', 'error'); restore(); return; }
+                    const r = await fetch(`/api/questions/${encodeURIComponent(qId)}/${endpointSuffix}`, {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+                      body: JSON.stringify(bodyData),
+                    });
+                    let data = {};
+                    try { data = await r.json(); } catch {}
+                    if (r.status === 401) { toast('תוקף ההתחברות פג. התחבר שוב.', 'error'); restore(); return; }
+                    if (r.status === 402) { restore(); if (typeof showPaywallModal === 'function') showPaywallModal(data.trial_expired ? 'trial_ended' : 'ai_quota'); else toast(data.guidance || 'פיצ\'ר פרימיום', 'warning'); return; }
+                    if (r.status === 429) { toast(data.guidance || 'הגעת למגבלה היומית', 'error'); restore(); return; }
+                    if (!r.ok || !data.ok) {
+                      const msg = [data.error, data.detail].filter(Boolean).join(' — ') || `שגיאה (${r.status})`;
+                      toast(msg, 'error');
+                      restore();
+                      return;
+                    }
+                    toast(successMsg, 'success');
+                    // Refresh this exam's grid so the updated row shows.
+                    grid.style.display = 'none';
+                    chevron.style.transform = '';
+                    setTimeout(() => header.click(), 100);
+                  } catch (e) {
+                    console.error('[per-q-btn]', e);
+                    toast('שגיאה לא צפויה', 'error');
+                    restore();
+                  }
+                });
+              });
+            };
+            // "צלם מחדש" — opens the manual PDF crop tool (no Gemini call).
+            grid.querySelectorAll('.em-q-retake-btn').forEach(btn => {
+              btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                if (btn.disabled) return;
+                const qId = btn.getAttribute('data-q-id');
+                const qRow = examQs.find(x => String(x.id) === String(qId));
+                if (!qRow) { toast('שאלה לא נמצאה', 'error'); return; }
+                openReshootCropTool(qRow, () => {
+                  // Refresh the grid so the new image shows.
+                  grid.style.display = 'none';
+                  chevron.style.transform = '';
+                  setTimeout(() => header.click(), 100);
+                });
+              });
+            });
+            // "בדוק פתרון" — opens the solution PDF viewer on the correct page.
+            grid.querySelectorAll('.em-q-chkans-btn').forEach(btn => {
+              btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                if (btn.disabled) return;
+                const qId = btn.getAttribute('data-q-id');
+                const qRow = examQs.find(x => String(x.id) === String(qId));
+                if (!qRow) { toast('שאלה לא נמצאה', 'error'); return; }
+                openFixAnswerModal(qRow, courseId, () => {
+                  grid.style.display = 'none';
+                  chevron.style.transform = '';
+                  setTimeout(() => header.click(), 100);
+                });
+              });
+            });
+            wirePerQBtn('.em-q-regen-btn',   'regenerate-answer',  'יוצר...',  'פתרון ה-AI עודכן');
+
+            // Wire the "מידע לסט" (set-context) buttons — open a modal with the context image.
+            grid.querySelectorAll('.em-q-ctx-btn').forEach(btn => {
+              btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                openSetContextModal(btn.getAttribute('data-ctx-url'), btn.getAttribute('data-q-num'));
+              });
+            });
+
+            // Context management: list + create/edit/delete.
+            const ctxListEl = grid.querySelector(`.ep-ctx-list[data-exam-id="${examId}"]`);
+            const ctxAddBtn = grid.querySelector(`.ep-ctx-add-btn[data-exam-id="${examId}"]`);
+            const refreshContextList = async () => {
+              if (!ctxListEl) return;
+              try {
+                const tk = await Auth.getToken();
+                const r = await fetch(`/api/exams/${examId}/context`, { headers: { Authorization: `Bearer ${tk}` } });
+                const data = await r.json().catch(() => ({}));
+                const contexts = Array.isArray(data.contexts) ? data.contexts : [];
+                if (contexts.length === 0) { ctxListEl.innerHTML = ''; return; }
+                ctxListEl.innerHTML = contexts.map(c => `
+                  <div class="ep-ctx-card" data-group-id="${escapeHtml(c.group_id)}">
+                    ${c.context_image_path ? `<img src="${c.context_image_path}" alt="מידע נלווה ${escapeHtml(c.group_id)}" />` : '<div style="background:#f1f5f9;padding:30px;text-align:center;font-size:11px;color:#64748b;border-radius:6px;margin-bottom:8px;">ללא תמונה</div>'}
+                    <div class="ep-ctx-card-meta">קבוצה: ${escapeHtml(c.group_id)}${c.context_pdf_page ? ` • עמוד ${c.context_pdf_page}` : ''}</div>
+                    <div class="ep-ctx-card-qs">שאלות: ${(c.question_numbers || []).map(n => '#' + n).join(', ') || '—'}</div>
+                    <div class="ep-ctx-card-actions">
+                      <button class="ep-ctx-edit"  data-group-id="${escapeHtml(c.group_id)}" type="button">ערוך שיוך</button>
+                      <button class="ep-ctx-recrop" data-group-id="${escapeHtml(c.group_id)}" type="button">חתוך מחדש</button>
+                      <button class="ep-ctx-del danger" data-group-id="${escapeHtml(c.group_id)}" type="button">מחק</button>
+                    </div>
+                  </div>
+                `).join('');
+                // Wire the action buttons on each card.
+                ctxListEl.querySelectorAll('.ep-ctx-del').forEach(btn => {
+                  btn.addEventListener('click', async () => {
+                    const gid = btn.dataset.groupId;
+                    if (!confirm(`למחוק את קבוצת המידע "${gid}"? השאלות המשוייכות יאבדו את הקישור למידע הזה.`)) return;
+                    const tk2 = await Auth.getToken();
+                    const r = await fetch(`/api/exams/${examId}/context/${encodeURIComponent(gid)}`, {
+                      method: 'DELETE', headers: { Authorization: `Bearer ${tk2}` },
+                    });
+                    if (r.ok) { toast('מידע נלווה נמחק', 'success'); refreshContextList(); grid.style.display='none'; chevron.style.transform=''; setTimeout(() => header.click(), 100); }
+                    else toast('שגיאה במחיקה', 'error');
+                  });
+                });
+                ctxListEl.querySelectorAll('.ep-ctx-edit').forEach(btn => {
+                  btn.addEventListener('click', () => {
+                    const gid = btn.dataset.groupId;
+                    const c = contexts.find(x => x.group_id === gid);
+                    if (!c) return;
+                    openContextQuestionPicker(examId, examQs, c, () => refreshContextList());
+                  });
+                });
+                ctxListEl.querySelectorAll('.ep-ctx-recrop').forEach(btn => {
+                  btn.addEventListener('click', () => {
+                    const gid = btn.dataset.groupId;
+                    openContextCropTool(examId, examQs, { recropGroupId: gid }, () => refreshContextList());
+                  });
+                });
+              } catch (e) {
+                console.warn('[context-list] failed', e);
+              }
+            };
+            if (ctxAddBtn) {
+              ctxAddBtn.addEventListener('click', () => {
+                openContextCropTool(examId, examQs, {}, () => refreshContextList());
+              });
+            }
+            refreshContextList();
 
             // Wire the "Generate AI solutions" button
             const genBtn = grid.querySelector('.em-gen-btn');
@@ -3916,37 +5227,6 @@ function showExamManagementModal(courseId) {
               });
             });
           } catch { grid.innerHTML = '<p class="muted" style="grid-column:1/-1;">שגיאה בטעינה.</p>'; }
-        });
-      });
-
-      // Wire solution-upload buttons
-      listEl.querySelectorAll('.em-solution-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const examId = btn.dataset.examId;
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'application/pdf';
-          input.onchange = async () => {
-            const file = input.files[0];
-            if (!file) return;
-            btn.disabled = true;
-            btn.textContent = 'מעלה...';
-            const fd = new FormData();
-            fd.append('solFile', file);
-            try {
-              const t = await Auth.getToken();
-              const r = await fetch(`/api/exams/${examId}/solution`, { method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: fd });
-              const j = await r.json();
-              if (j.ok) {
-                toast(`זוהו תשובות ל-${j.answered}/${j.total} שאלות${j.warnings?.length ? ' — ' + j.warnings[0] : ''}`, j.answered > 0 ? 'success' : 'warning', 8000);
-              } else {
-                toast(j.error || 'שגיאה בעדכון פתרון', 'error');
-              }
-            } catch { toast('שגיאת רשת', 'error'); }
-            finally { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6m0 0l-3-3m3 3l3-3"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg> עדכן פתרון'; }
-          };
-          input.click();
         });
       });
 
@@ -4175,6 +5455,7 @@ function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, ma
           <button id="qv-prev" class="btn btn-ghost btn-sm" style="font-family:inherit;font-size:18px;padding:4px 10px;" title="שאלה קודמת (←)">‹</button>
           <span id="qv-title" style="font-weight:600;font-size:15px;"></span>
           <button id="qv-next" class="btn btn-ghost btn-sm" style="font-family:inherit;font-size:18px;padding:4px 10px;" title="שאלה הבאה (→)">›</button>
+          <button id="qv-ctx-btn" type="button" title="הצג מידע לסט השאלות" style="display:none;background:#2563eb;color:white;border:none;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">הקשר לסט</button>
         </div>
         <div style="display:flex;gap:8px;">
           <span id="qv-counter" style="font-size:12px;color:var(--text-muted);align-self:center;"></span>
@@ -4200,13 +5481,36 @@ function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, ma
     const imgSrc = isTextOnly ? null : (q.image_path?.startsWith('http') ? q.image_path : Data.imageUrl(q.image_path, courseId));
     titleEl.textContent = `שאלה #${q.question_number || q.section || ''}`;
     counterEl.textContent = questions.length > 1 ? `${currentIndex + 1} / ${questions.length}` : '';
+    // Set-context pill — shown when this question is part of a group.
+    const ctxBtnEl = viewer.querySelector('#qv-ctx-btn');
+    if (ctxBtnEl) {
+      const ctxUrl = q.context_image_path;
+      if (ctxUrl && String(ctxUrl).startsWith('http')) {
+        ctxBtnEl.style.display = '';
+        ctxBtnEl.onclick = () => openSetContextModal(ctxUrl, q.question_number);
+      } else {
+        ctxBtnEl.style.display = 'none';
+        ctxBtnEl.onclick = null;
+      }
+    }
     prevBtn.disabled = currentIndex === 0;
     nextBtn.disabled = currentIndex === questions.length - 1;
     prevBtn.style.opacity = currentIndex === 0 ? '0.3' : '1';
     nextBtn.style.opacity = currentIndex === questions.length - 1 ? '0.3' : '1';
+    const qvFallbackText = escapeHtml((q.question_text || q.general_explanation || 'שאלה ' + (q.question_number || '')).toString().slice(0, 500));
     const imageHtml = isTextOnly
-      ? `<div style="padding:24px;font-size:15px;line-height:1.8;direction:rtl;">${escapeHtml(q.general_explanation || 'שאלה ללא תמונה')}</div>`
-      : `<img src="${imgSrc}" alt="שאלה" style="width:100%;display:block;" />`;
+      ? `<div style="padding:24px;font-size:15px;line-height:1.8;direction:rtl;">${escapeHtml(q.general_explanation || q.question_text || 'שאלה ללא תמונה')}</div>`
+      : `<img src="${imgSrc}" alt="שאלה" data-fallback-text="${qvFallbackText}" style="width:100%;display:block;" onload="EmThumbFallback.check(this)" onerror="EmThumbFallback.swap(this)" />`;
+    // Cross-page context image — page-2 sub-questions need the scenario from page 1.
+    // Rendered ABOVE the question image with a small label so students don't miss it.
+    // Same-page set members have the context baked into their own crop, so we skip
+    // the extra image for them to avoid redundancy.
+    const ctxImgHtml = (q.context_image_path && String(q.context_image_path).startsWith('http') && q.context_cross_page)
+      ? `<div class="qv-ctx-image" style="margin:0 0 10px;padding:8px;border:1px solid #c7d2fe;border-radius:10px;background:#eff6ff;">
+          <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:6px;direction:rtl;">מידע לסט השאלות (מעמוד קודם)</div>
+          <img src="${q.context_image_path}" alt="הקשר לסט" style="width:100%;display:block;border-radius:6px;" />
+        </div>`
+      : '';
     const contextHtml = (q.context_text && String(q.context_text).trim())
       ? `<div class="quiz-context" style="margin:0 0 14px;">
           <button type="button" class="quiz-context-toggle" id="qv-ctx-toggle" aria-expanded="false">
@@ -4214,10 +5518,11 @@ function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, ma
             <span class="quiz-context-label">הקשר לשאלה — לחץ להצגה</span>
             <svg class="quiz-context-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
-          <div class="quiz-context-body" id="qv-ctx-body" hidden>${escapeHtml(q.context_text)}</div>
+          <div class="quiz-context-body" id="qv-ctx-body" hidden>${renderSolutionText(q.context_text)}</div>
         </div>`
       : '';
     bodyEl.innerHTML = `
+      ${ctxImgHtml}
       ${contextHtml}
       <div class="qv-image-wrap">${imageHtml}</div>
       <div class="qv-solution-section">
@@ -4275,15 +5580,120 @@ function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, ma
   }
 
   function wireSolutionPanelActions(q, panel) {
-    // Event delegation for "תקן תשובה" toggle — survives innerHTML re-renders
+    // "תקן תשובה" — opens the solution-PDF viewer modal with radios on the right.
     panel.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-action="correct-toggle"]');
       if (!btn) return;
-      const pane = panel.querySelector('[data-panel="correct"]');
-      if (!pane) return;
-      const hidden = pane.style.display === 'none';
-      pane.style.display = hidden ? 'block' : 'none';
-      btn.textContent = hidden ? '✖ סגור' : '✏️ תקן תשובה';
+      e.preventDefault();
+      openFixAnswerModal(q, courseId, () => {
+        // Re-render the solution panel with the new correct answer.
+        panel.innerHTML = renderSolutionPanel(q);
+        wireSolutionPanelActions(q, panel);
+        // Refresh the question image at the top of the viewer too — the
+        // reshoot flow also writes image_path, though fix-answer doesn't.
+        if (q.image_path) {
+          const imgEl = viewer.querySelector('.qv-image-wrap img');
+          if (imgEl && !q.image_path.includes('?t=')) {
+            const sep = q.image_path.includes('?') ? '&' : '?';
+            imgEl.src = q.image_path + sep + 't=' + Date.now();
+          }
+        }
+      });
+    });
+
+    // "צלם מחדש" inside the solution panel — opens the manual crop tool.
+    panel.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action="retake-image"]');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      openReshootCropTool(q, (updated) => {
+        // Re-render solution panel so the new image_path takes effect if we
+        // show a thumbnail anywhere. Also cache-bust the big question image
+        // at the top of the viewer.
+        if (updated?.image_path) {
+          const imgEl = viewer.querySelector('.qv-image-wrap img');
+          if (imgEl) {
+            const sep = updated.image_path.includes('?') ? '&' : '?';
+            imgEl.src = updated.image_path + sep + 't=' + Date.now();
+          }
+        }
+        panel.innerHTML = renderSolutionPanel(q);
+        wireSolutionPanelActions(q, panel);
+      });
+    });
+
+    // "בדוק פתרון" — opens the same solution viewer as "תקן תשובה" so the
+    // user can flip to the solution page and verify / correct the answer.
+    panel.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action="check-answer"]');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      openFixAnswerModal(q, courseId, () => {
+        panel.innerHTML = renderSolutionPanel(q);
+        wireSolutionPanelActions(q, panel);
+      });
+    });
+
+    // Wire the remaining AI action buttons in the solution panel
+    panel.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-action="regen-solution"]');
+      if (!btn || btn.disabled) return;
+      const cfgMap = {
+        'regen-solution': { endpoint: 'regenerate-answer', body: {},                       label: 'יוצר...',  success: 'הפתרון המפורט עודכן' },
+      };
+      const cfg = cfgMap[btn.dataset.action];
+      if (!cfg) return;
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.innerHTML = `<span class="qv-spinner"></span> ${cfg.label}`;
+      const restore = () => { btn.disabled = false; btn.textContent = origText; };
+      try {
+        const tk = await Auth.getToken();
+        if (!tk) { toast('תוקף ההתחברות פג. התחבר שוב.', 'error'); restore(); return; }
+        const r = await fetch(`/api/questions/${encodeURIComponent(q.id)}/${cfg.endpoint}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(cfg.body),
+        });
+        let data = {};
+        try { data = await r.json(); } catch {}
+        if (r.status === 401) { toast('תוקף ההתחברות פג. התחבר שוב.', 'error'); restore(); return; }
+        if (r.status === 402) { restore(); showPaywallModal(data.trial_expired ? 'trial_ended' : 'ai_quota'); return; }
+        if (r.status === 429) { toast(data.guidance || 'הגעת למגבלה היומית', 'error'); restore(); return; }
+        if (!r.ok || !data.ok) { toast([data.error, data.detail].filter(Boolean).join(' — ') || `שגיאה (${r.status})`, 'error'); restore(); return; }
+        // Merge updated fields into q
+        if (data.question) {
+          Object.assign(q, data.question);
+        } else {
+          if (data.general_explanation  != null) q.general_explanation  = data.general_explanation;
+          if (data.option_explanations  != null) q.option_explanations  = data.option_explanations;
+          // Enrichment fields from the upgraded prompt — pill + distractor panels
+          // render automatically in renderSolutionPanel() when present.
+          if (data.concept_tag         !== undefined) q.concept_tag         = data.concept_tag;
+          if (data.distractor_analysis !== undefined) q.distractor_analysis = data.distractor_analysis;
+        }
+        // Refresh the on-screen question image if reanalyze produced a new
+        // image_path. Without this the user sees "התמונה עודכנה בהצלחה" but
+        // the same (bad) crop stays on screen — the solution panel below
+        // re-renders but the question image above doesn't.
+        if (data.question?.image_path) {
+          const newSrc = data.question.image_path.startsWith('http')
+            ? data.question.image_path
+            : Data.imageUrl(data.question.image_path, courseId);
+          const imgEl = viewer.querySelector('.qv-image-wrap img');
+          if (imgEl) {
+            const sep = newSrc.includes('?') ? '&' : '?';
+            imgEl.src = newSrc + sep + 't=' + Date.now();
+          }
+        }
+        panel.innerHTML = renderSolutionPanel(q);
+        wireSolutionPanelActions(q, panel);
+        toast(cfg.success, 'success');
+      } catch (err) {
+        console.error('[solution-panel-ai]', err);
+        toast('שגיאה לא צפויה', 'error');
+        restore();
+      }
     });
 
     // Wire the manual answer save button (present in both 'unknown' and collapsible panel)
@@ -4311,9 +5721,14 @@ function showQuestionViewer(qOrArr, courseIdOrStartIndex, onDeleteOrCourseId, ma
           }
           q.correct_idx = newIdx;
           q.answer_confidence = 'manual';
+          // The old cached explanations were written for the PREVIOUS correct
+          // answer; drop them so the user sees the "שפר הסבר עם AI" button and
+          // regenerates with the new premise.
+          q.general_explanation = null;
+          q.option_explanations = null;
           panel.innerHTML = renderSolutionPanel(q);
           wireSolutionPanelActions(q, panel);
-          toast('התשובה נשמרה בהצלחה', 'success');
+          toast('התשובה נשמרה. צור הסבר מחדש כדי להתאים לתשובה החדשה.', 'success');
         } catch (e) {
           toast('שגיאה בשמירה', 'error');
           manualSaveBtn.disabled = false; manualSaveBtn.textContent = orig;
@@ -4498,7 +5913,12 @@ function renderSolutionPanel(q) {
     answerBlock = `
       <div class="qv-sol-correct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
         <span class="qv-sol-badge">תשובה נכונה: ${correctLetter}</span>
-        <button data-action="correct-toggle" type="button" style="font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px 0;text-decoration:underline;">✏️ תקן תשובה</button>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button data-action="retake-image"  type="button" style="font-size:11px;border:1px solid #c7d2fe;background:#eef2ff;color:#3730a3;border-radius:4px;padding:3px 8px;cursor:pointer;font-family:inherit;font-weight:600;">צלם מחדש</button>
+          <button data-action="check-answer"  type="button" style="font-size:11px;border:1px solid #fcd34d;background:#fffbeb;color:#92400e;border-radius:4px;padding:3px 8px;cursor:pointer;font-family:inherit;font-weight:600;" title="הצג את עמוד הפתרון הנכון מהקובץ">בדוק פתרון</button>
+          <button data-action="regen-solution" type="button" style="font-size:11px;border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;border-radius:4px;padding:3px 8px;cursor:pointer;font-family:inherit;font-weight:600;">פתרון מפורט</button>
+          <button data-action="correct-toggle" type="button" style="font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px 0;text-decoration:underline;">תקן תשובה</button>
+        </div>
       </div>
       <div data-panel="correct" style="display:none;margin-bottom:16px;padding:12px 14px;background:var(--gray-50);border:1px solid var(--border-soft);border-radius:10px;">
         <p style="margin:0 0 8px;font-size:12px;color:var(--text-muted);">בחר תשובה נכונה:</p>
@@ -4508,26 +5928,49 @@ function renderSolutionPanel(q) {
 
   // Cached rich explanations — show them immediately.
   if (hasGeneral || hasOpts) {
+    // Layer 4/5: per-distractor misconception analysis (optional, nullable).
+    const distractorAnalysis = Array.isArray(q.distractor_analysis) ? q.distractor_analysis : [];
+    const distractorByIdx = {};
+    for (const d of distractorAnalysis) {
+      const i = parseInt(d?.idx, 10);
+      if (i) distractorByIdx[i] = d;
+    }
+
     const optsHtml = opts.length > 0 ? opts.map(o => {
       const idx = parseInt(o.idx, 10);
       const letter = letters[idx - 1] || String(idx);
-      const cls = o.isCorrect ? 'qv-sol-opt--correct' : 'qv-sol-opt--wrong';
-      const mark = o.isCorrect ? '✓ נכונה' : '✗ שגויה';
+      const isCorrect = idx === q.correct_idx;
+      const cls = isCorrect ? 'qv-sol-opt--correct' : 'qv-sol-opt--wrong';
+      const mark = isCorrect ? '✓ נכונה' : '✗ שגויה';
+      const dist = !isCorrect ? distractorByIdx[idx] : null;
+      const distHtml = (dist && (dist.misconception || dist.why_wrong)) ? `
+        <details class="qv-distractor" style="margin-top:8px;border-top:1px dashed rgba(0,0,0,.1);padding-top:6px;">
+          <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);font-weight:600;">מה עלול להטעות כאן?</summary>
+          ${dist.misconception ? `<div class="sol-text" style="margin-top:6px;font-size:13px;"><strong>הטעיה:</strong> ${renderSolutionText(String(dist.misconception))}</div>` : ''}
+          ${dist.why_wrong ? `<div class="sol-text" style="margin-top:4px;font-size:13px;"><strong>למה שגוי:</strong> ${renderSolutionText(String(dist.why_wrong))}</div>` : ''}
+        </details>` : '';
       return `
         <div class="qv-sol-opt ${cls}">
           <div class="qv-sol-opt-head">
             <span class="qv-sol-opt-letter">${letter}</span>
             <span class="qv-sol-opt-mark">${mark}</span>
           </div>
-          <p>${escapeHtml(o.explanation || '')}</p>
+          <div class="sol-text">${renderSolutionText(o.explanation || '')}</div>
+          ${distHtml}
         </div>`;
     }).join('') : '';
+
+    // Layer 5: concept pill (shows when ensemble populated concept_tag).
+    const conceptPill = q.concept_tag
+      ? `<span class="qv-concept-pill" style="display:inline-block;margin-right:8px;padding:2px 10px;font-size:11px;font-weight:600;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:999px;">${escapeHtml(q.concept_tag)}</span>`
+      : '';
+
     return `
       ${answerBlock}
       ${hasGeneral ? `
         <div class="qv-sol-general">
-          <h4>הסבר כללי</h4>
-          <p>${escapeHtml(q.general_explanation)}</p>
+          <h4 style="display:flex;align-items:center;gap:6px;">הסבר כללי ${conceptPill}</h4>
+          <div class="sol-text">${renderSolutionText(q.general_explanation)}</div>
         </div>` : ''}
       ${optsHtml ? `
         <div class="qv-sol-options">
@@ -4548,33 +5991,38 @@ function renderSolutionPanel(q) {
 }
 
 // =====================================================
-// New-user onboarding tour — 4-step spotlight walkthrough
+// New-user onboarding tour — 5-step spotlight walkthrough
 // =====================================================
 function showOnboardingTour() {
-  if (localStorage.getItem('ep_onboarding_v2')) return;
 
   const steps = [
     {
       title: 'ברוך הבא ל-ExamPrep',
-      body: 'כאן תתרגל שאלות אמריקאיות מבחינות אמיתיות ותעקוב אחר ההתקדמות שלך. הנה סיור קצר שיעזור לך להתחיל.',
+      body: 'כאן תתרגל שאלות מבחינות אמיתיות ותעקוב אחר ההתקדמות שלך. הנה סיור קצר שיעזור לך להתחיל.',
       anchor: null,
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>`,
+      icon: `<img src="/public/images/logo.png?v=20260410-8" alt="ExamPrep" style="width:26px;height:auto;display:block;">`,
     },
     {
-      title: 'הוסף קורס',
-      body: 'לחץ על "הוסף קורס חדש" כדי ליצור קורס ולהעלות קבצי מבחן PDF. המערכת תחלץ שאלות אוטומטית.',
+      title: 'בחר תחום לימוד',
+      body: 'לחץ כאן כדי לבחור תחום: פסיכומטרי, אמירם, או קורסים אקדמיים. התחום הוא המסגרת — בתוכו תוסיף קורסים.',
       anchor: '#btn-add-course-card',
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`,
     },
     {
+      title: 'הוסף קורס בתוך התחום',
+      body: 'לאחר בחירת תחום, תיכנס לדף התחום. שם תוכל להוסיף קורס ספציפי — למשל "חשבון" או "אנגלית".',
+      anchor: null,
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
+    },
+    {
       title: 'העלה מבחן PDF',
-      body: 'לאחר יצירת קורס, לחץ על הקורס ואז על "העלה מבחן PDF". ניתן להוסיף גם קובץ פתרון — ה-AI יזהה את התשובות הנכונות.',
+      body: 'לחץ על קורס ואז על "העלה מבחן PDF". ניתן להוסיף גם קובץ פתרון — ה-AI יחלץ שאלות ויזהה תשובות נכונות.',
       anchor: null,
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>`,
     },
     {
       title: 'תרגל ועקוב אחר ההתקדמות',
-      body: 'בתוך כל קורס תמצא: תרגול שאלות, ביקורת טעויות, תובנות מותאמות אישית, ומעבדת מבחן מדומה. בהצלחה!',
+      body: 'בתוך כל קורס תמצא: תרגול שאלות, ביקורת טעויות, תובנות אישיות ומבחן מדומה. בהצלחה!',
       anchor: null,
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
     },
@@ -4608,10 +6056,43 @@ function showOnboardingTour() {
 
     overlay.style.cssText = spotlightStyle;
     overlay.className = 'onboarding-overlay' + (anchorRect ? ' onboarding-has-spotlight' : '');
+
+    // Compute tooltip position: prefer below anchor, flip above if off-screen,
+    // center vertically on narrow mobile screens.
+    let tipStyle = '';
+    if (anchorRect) {
+      const TIP_H = 270;
+      const TIP_W = 340;
+      const pad = 12;
+      const isMobile = window.innerWidth < 520;
+      if (isMobile) {
+        // On mobile always center horizontally; place below or center vertically
+        const tipLeft = pad;
+        const spaceBelow = window.innerHeight - anchorRect.bottom - pad;
+        const tipTop = spaceBelow >= TIP_H
+          ? anchorRect.bottom + 14
+          : Math.max(pad, Math.round((window.innerHeight - TIP_H) / 2));
+        tipStyle = `style="top:${tipTop}px;left:${tipLeft}px;right:${pad}px;width:auto;"`;
+      } else {
+        const spaceBelow = window.innerHeight - anchorRect.bottom - pad;
+        const spaceAbove = anchorRect.top - pad;
+        let tipTop;
+        if (spaceBelow >= TIP_H) {
+          tipTop = anchorRect.bottom + 14;
+        } else if (spaceAbove >= TIP_H) {
+          tipTop = anchorRect.top - TIP_H - 10;
+        } else {
+          tipTop = Math.max(pad, Math.round((window.innerHeight - TIP_H) / 2));
+        }
+        const tipLeft = Math.max(pad, Math.min(anchorRect.left, window.innerWidth - TIP_W - pad));
+        tipStyle = `style="top:${tipTop}px;left:${tipLeft}px;"`;
+      }
+    }
+
     overlay.innerHTML = `
       ${anchorRect ? `<div class="onboarding-spotlight" style="top:${anchorRect.top - 8}px;left:${anchorRect.left - 8}px;width:${anchorRect.width + 16}px;height:${anchorRect.height + 16}px;"></div>` : ''}
       <div class="onboarding-tooltip ${anchorRect ? 'onboarding-tooltip--anchored' : 'onboarding-tooltip--center'}"
-           ${anchorRect ? `style="top:${Math.min(anchorRect.bottom + 18, window.innerHeight - 200)}px;left:${Math.max(8, Math.min(anchorRect.left, window.innerWidth - 360))}px;"` : ''}>
+           ${tipStyle}>
         <div class="onboarding-header">
           <div class="onboarding-step-icon">${step.icon}</div>
           <div class="onboarding-step-counter">שלב <span>${current + 1}</span> מתוך ${steps.length}</div>
@@ -4637,7 +6118,7 @@ function showOnboardingTour() {
   }
 
   function done() {
-    localStorage.setItem('ep_onboarding_v2', '1');
+    sessionStorage.setItem('ep_onboarding_skip', '1');
     overlay.classList.add('onboarding-exit');
     setTimeout(() => overlay.remove(), 400);
   }
@@ -4938,10 +6419,7 @@ function showUploadPdfModal(courseId) {
       errEl.textContent = `קובץ הפתרון גדול מדי (מקסימום ${maxMb}MB)`; return;
     }
 
-    // Free plan block
-    if (plan === 'free') {
-      showPaywallModal('pdf_upload'); return;
-    }
+    // Server enforces pdf_day quota for all plans including free
 
     const btn = document.getElementById('up-submit');
     btn.disabled = true;
@@ -4954,18 +6432,18 @@ function showUploadPdfModal(courseId) {
     let processingInterval = null;
     let processingStart = null;
     const processingSteps = [
-      { at: 0, text: '📄 ממיר עמודי PDF לתמונות...' },
-      { at: 3, text: '🔍 סורק את המסמך וקורא טקסט...' },
-      { at: 6, text: '📐 מזהה מבנה שאלות בדף...' },
-      { at: 10, text: '✂️ חותך שאלות מהמבחן...' },
-      { at: 15, text: '🎨 מעבד תמונות שאלה באיכות גבוהה...' },
-      { at: 20, text: '🤖 מנתח קובץ פתרון עם AI...' },
-      { at: 28, text: '📋 AI מחפש את התשובות הנכונות לכל שאלה...' },
-      { at: 35, text: '✅ מתאים תשובות לשאלות...' },
-      { at: 42, text: '💾 שומר שאלות ותמונות בענן...' },
-      { at: 50, text: '📊 מעדכן סטטיסטיקות הקורס...' },
-      { at: 60, text: '🧹 מנקה קבצים זמניים...' },
-      { at: 75, text: '⏳ כמעט סיימנו, עוד שנייה...' },
+      { at: 0, text: 'ממיר עמודי PDF לתמונות...' },
+      { at: 3, text: 'סורק את המסמך וקורא טקסט...' },
+      { at: 6, text: 'מזהה מבנה שאלות בדף...' },
+      { at: 10, text: 'חותך שאלות מהמבחן...' },
+      { at: 15, text: 'מעבד תמונות שאלה באיכות גבוהה...' },
+      { at: 20, text: 'מנתח קובץ פתרון עם AI...' },
+      { at: 28, text: 'AI מחפש את התשובות הנכונות לכל שאלה...' },
+      { at: 35, text: 'מתאים תשובות לשאלות...' },
+      { at: 42, text: 'שומר שאלות ותמונות בענן...' },
+      { at: 50, text: 'מעדכן סטטיסטיקות הקורס...' },
+      { at: 60, text: 'מנקה קבצים זמניים...' },
+      { at: 75, text: 'כמעט סיימנו, עוד שנייה...' },
     ];
     function startProcessingPhase() {
       processingStart = Date.now();
@@ -4982,41 +6460,118 @@ function showUploadPdfModal(courseId) {
 
     try {
       const token = await Auth.getToken();
-      const form = new FormData();
-      form.append('courseId', courseId);
-      form.append('name', name);
-      form.append('examPdf', examFile);
-      if (solFile) form.append('solutionPdf', solFile);
-      const totalSize = examFile.size + (solFile?.size || 0);
 
-      // Phase 1: Real XHR upload progress (0-50%)
+      // ===== Direct-to-Cloudinary upload path =====
+      // Browser → Cloudinary directly (bypasses Vercel's 4.5MB body limit so
+      // any size PDF always works), then a tiny JSON POST to /api/upload with
+      // the publicIds for server-side processing.
+      const totalSize = examFile.size + (solFile?.size || 0);
       _uploading = true;
-      _uploadRequest = uploadWithProgress({
-        url: '/api/upload',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-        timeoutMs: 180000,
-        onUploadProgress(loaded, total) {
-          const uploadPct = (loaded / total) * 50;
-          fill.style.width = uploadPct + '%';
-          const pctDone = Math.round((loaded / total) * 100);
-          const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
-          const mbTotal = (total / (1024 * 1024)).toFixed(1);
-          if (pctDone < 30) statusEl.textContent = `📤 מעלה קובץ... ${mbLoaded}MB מתוך ${mbTotal}MB`;
-          else if (pctDone < 60) statusEl.textContent = `📡 שולח נתונים לשרת... ${pctDone}%`;
-          else if (pctDone < 90) statusEl.textContent = `📦 מעביר את הקובץ... ${pctDone}%`;
-          else statusEl.textContent = `✅ ההעלאה כמעט הושלמה... ${pctDone}%`;
+
+      statusEl.textContent = '📤 מכין העלאה מאובטחת...';
+      const signResp = await fetch('/api/upload-sign', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        onUploadDone() {
-          startProcessingPhase();
-        },
+        body: JSON.stringify({ courseId }),
       });
-      const res = await _uploadRequest;
+      if (!signResp.ok) {
+        let msg = 'לא ניתן להתחיל העלאה';
+        try { const d = await signResp.json(); msg = d.error || msg; } catch {}
+        if (signResp.status === 401) throw new Error('תוקף ההתחברות פג — התחבר שוב');
+        throw new Error(msg);
+      }
+      const signData = await signResp.json();
+
+      // Upload one file directly to Cloudinary with byte-level progress.
+      function uploadOneToCloudinary(file, params, progressCb) {
+        return new Promise((resolve, reject) => {
+          const form = new FormData();
+          form.append('file', file);
+          form.append('public_id', params.publicId);
+          form.append('api_key', params.apiKey);
+          form.append('timestamp', params.timestamp);
+          form.append('signature', params.signature);
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', params.uploadUrl);
+          xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable && progressCb) progressCb(e.loaded, e.total);
+          });
+          xhr.addEventListener('load', () => {
+            let data; try { data = JSON.parse(xhr.responseText); } catch { data = {}; }
+            if (xhr.status >= 200 && xhr.status < 300 && data.public_id) resolve(data.public_id);
+            else reject(new Error(data.error?.message || `Cloudinary error ${xhr.status}`));
+          });
+          xhr.addEventListener('error', () => reject(new Error('שגיאת רשת בהעלאה לענן')));
+          xhr.addEventListener('abort', () => reject(new Error('__aborted__')));
+          xhr.addEventListener('timeout', () => reject(new Error('ההעלאה נמשכה יותר מדי זמן')));
+          xhr.timeout = 300000;
+          xhr.send(form);
+          _uploadRequest = { abort: () => xhr.abort() };
+        });
+      }
+
+      // Track combined progress across both parallel uploads (examFile + solFile)
+      // so the 0-50% phase fills smoothly based on total bytes transferred.
+      let examLoaded = 0, solLoaded = 0;
+      const updateCombinedProgress = () => {
+        const loaded = examLoaded + solLoaded;
+        const uploadPct = (loaded / totalSize) * 50;
+        fill.style.width = uploadPct + '%';
+        const pctDone = Math.round((loaded / totalSize) * 100);
+        const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
+        const mbTotal = (totalSize / (1024 * 1024)).toFixed(1);
+        if (pctDone < 30) statusEl.textContent = `📤 מעלה קובץ... ${mbLoaded}MB מתוך ${mbTotal}MB`;
+        else if (pctDone < 60) statusEl.textContent = `📡 מעלה לענן... ${pctDone}%`;
+        else if (pctDone < 90) statusEl.textContent = `📦 מסיים העלאה... ${pctDone}%`;
+        else statusEl.textContent = `✅ ההעלאה כמעט הושלמה... ${pctDone}%`;
+      };
+
+      const examUploadP = uploadOneToCloudinary(examFile, signData.exam, (loaded) => {
+        examLoaded = loaded; updateCombinedProgress();
+      });
+      const solUploadP = solFile
+        ? uploadOneToCloudinary(solFile, signData.solution, (loaded) => {
+            solLoaded = loaded; updateCombinedProgress();
+          })
+        : Promise.resolve(null);
+
+      const [examPublicId, solPublicId] = await Promise.all([examUploadP, solUploadP]);
+      startProcessingPhase();
+
+      // Small JSON POST — the server downloads the PDFs back from Cloudinary.
+      const r = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          name, courseId,
+          examPublicId, solPublicId,
+          examFilename: examFile.name || '',
+          solFilename: solFile?.name || '',
+        }),
+      });
+      let resJson;
+      try { resJson = await r.json(); } catch { resJson = {}; }
+      const res = { ok: r.ok, status: r.status, data: resJson };
 
       _uploading = false;
       if (processingInterval) clearInterval(processingInterval);
 
       if (!res.ok) {
+        if (res.status === 402) {
+          close();
+          showPaywallModal(res.data?.trial_expired ? 'trial_ended' : 'pdf_upload');
+          return;
+        }
+        if (res.status === 429) {
+          errEl.textContent = res.data?.guidance || res.data?.error || 'הגעת למגבלת ההעלאות היומית';
+          throw new Error(errEl.textContent);
+        }
         if ((res.status === 422 || res.status === 409) && res.data.guidance) {
           errEl.textContent = res.data.error;
           const guide = document.createElement('p');
@@ -5025,12 +6580,30 @@ function showUploadPdfModal(courseId) {
           errEl.insertAdjacentElement('afterend', guide);
           throw new Error(res.data.error);
         }
-        throw new Error(res.data.error || 'שגיאה בהעלאה');
+        // 403/404 on the course access check → this courseId doesn't belong
+        // to the signed-in user. Close the modal and bounce home instead of
+        // leaving them stuck on a page they can't actually upload to.
+        if (res.status === 403 || res.status === 404) {
+          close();
+          toast(res.data.error || 'הקורס הזה לא שייך לחשבון שלך.', 'warning');
+          navigate('/dashboard');
+          return;
+        }
+        // Include server-side diagnostic if present (helps debug prod failures).
+        const baseMsg = res.data.error || 'שגיאה בהעלאה';
+        const fullMsg = res.data.detail ? `${baseMsg} — ${res.data.detail}` : baseMsg;
+        throw new Error(fullMsg);
       }
 
       statusEl.textContent = '✅ הושלם!';
       fill.style.width = '100%';
-      toast(res.data.question_count ? `המבחן הועלה בהצלחה! ${res.data.question_count} שאלות זוהו.` : 'המבחן הועלה בהצלחה!', 'success');
+      const needsReview = res.data.status === 'awaiting_review';
+      const reviewCount = res.data.review_count || 0;
+      if (needsReview) {
+        toast(`המבחן הועלה. ${reviewCount} שאלות דורשות אישור — פותח מסך סקירה...`, 'warning', 4000);
+      } else {
+        toast(res.data.question_count ? `המבחן הועלה בהצלחה! ${res.data.question_count} שאלות זוהו.` : 'המבחן הועלה בהצלחה!', 'success');
+      }
       if (res.data.warnings && res.data.warnings.length) {
         res.data.warnings.forEach((w, i) => setTimeout(() => toast(w, 'warning', 8000), 1500 + i * 2000));
       }
@@ -5041,6 +6614,12 @@ function showUploadPdfModal(courseId) {
       // Brief pause so user sees "הושלם" before modal closes
       await new Promise(r => setTimeout(r, 600));
       close();
+
+      // If the upload needs human review, navigate straight to the Review screen.
+      if (needsReview && res.data.exam_id) {
+        navigate(`/course/${courseId}/exam/${res.data.exam_id}/review`);
+        return;
+      }
 
       // Refresh data and reopen exam management modal.
       // refreshCourseState re-fetches the courses list (so total_questions /
@@ -5062,6 +6641,7 @@ function showUploadPdfModal(courseId) {
     } catch (err) {
       _uploading = false;
       if (processingInterval) clearInterval(processingInterval);
+      document.getElementById('up-progress').style.display = 'none';
       if (err.message === '__aborted__') {
         toast('ההעלאה בוטלה', 'warning');
         return; // modal already closed by guardedClose
@@ -5078,6 +6658,7 @@ function showUploadPdfModal(courseId) {
 function showAddCourseModal() {
   // Client-side course quota check
   const plan = state.user?.plan || 'free';
+  // Free plan now has courses=5; server enforces the limit
   const planDef = PLANS[plan] || PLANS.free;
   if (planDef.maxCourses !== -1 && state.courses.length >= planDef.maxCourses) {
     showPaywallModal('course_limit');
@@ -5153,9 +6734,79 @@ function showBatchModal() {
     .map(ex => `<option value="${ex.id}">${escapeHtml(ex.label)} (${ex.questions.length} שאלות)</option>`)
     .join('');
 
+  const READY = q => q.answer_confidence !== 'uncertain' && q.answer_confidence !== 'unknown';
+  const SIZES = [
+    { v: 5,  label: '5 שאלות (מהיר)' },
+    { v: 10, label: '10 שאלות' },
+    { v: 15, label: '15 שאלות' },
+    { v: 20, label: '20 שאלות' },
+    { v: 30, label: '30 שאלות (אתגר)' },
+    { v: 50, label: '50 שאלות (מבחן ארוך)' },
+  ];
+
+  function updateAvailableSize() {
+    const type = document.getElementById('batch-type').value;
+    let pool, totalPool;
+    if (type === 'exam') {
+      const ex = Data.metadata.exams.find(e => e.id === examSelect.value);
+      pool = ex ? ex.questions.filter(READY) : [];
+      totalPool = ex ? ex.questions : [];
+    } else if (type === 'review') {
+      const rq = Progress.load(state.user.email, state.course?.id).reviewQueue || [];
+      pool = Data.practiceQuestions().filter(q => rq.includes(q.id));
+      totalPool = Data.allQuestions().filter(q => rq.includes(q.id));
+    } else if (type === 'unanswered') {
+      const seen = new Set(Progress.history(state.user.email, state.course?.id).map(a => a.questionId));
+      pool = Data.practiceQuestions().filter(q => !seen.has(q.id));
+      totalPool = Data.allQuestions().filter(q => !seen.has(q.id));
+    } else {
+      pool = Data.practiceQuestions();
+      totalPool = Data.allQuestions();
+    }
+
+    const available = pool.length;
+    const pending = totalPool.length - available;
+    const sizeSelect = document.getElementById('batch-size');
+    const prevVal = parseInt(sizeSelect.value, 10) || 20;
+
+    // Standard sizes that fit + "כל X" when no exact standard match
+    let html = '';
+    let hasExact = false;
+    for (const s of SIZES) {
+      if (s.v < available) html += `<option value="${s.v}">${s.label}</option>`;
+      else if (s.v === available) { html += `<option value="${s.v}">${s.label}</option>`; hasExact = true; }
+    }
+    if (!hasExact && available > 0) {
+      html += `<option value="${available}">כל ${available} השאלות הזמינות</option>`;
+    }
+    if (!html) html = `<option value="0">אין שאלות זמינות</option>`;
+    sizeSelect.innerHTML = html;
+
+    // Keep previous if still fits, else auto-select all available
+    if (prevVal <= available && sizeSelect.querySelector(`option[value="${prevVal}"]`)) {
+      sizeSelect.value = String(prevVal);
+    } else {
+      sizeSelect.value = String(available);
+    }
+
+    // Info line about pending questions
+    const infoEl = document.getElementById('batch-available-info');
+    if (infoEl) {
+      if (pending > 0) {
+        infoEl.style.display = '';
+        infoEl.innerHTML = `<span style="color:#9a3412;font-size:12px;display:flex;align-items:center;gap:4px;"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${available} שאלות זמינות (${pending} ממתינות לאישור תשובה)</span>`;
+      } else {
+        infoEl.style.display = 'none';
+      }
+    }
+  }
+
   document.getElementById('batch-type').addEventListener('change', (e) => {
     document.getElementById('exam-row').style.display = e.target.value === 'exam' ? '' : 'none';
+    updateAvailableSize();
   });
+  examSelect.addEventListener('change', updateAvailableSize);
+  updateAvailableSize(); // populate on open
 
   // Toggle for exam mode
   let examMode = false;
@@ -5172,14 +6823,14 @@ function showBatchModal() {
 
     let questions = [];
     if (type === 'random') {
-      questions = pickRandomGrouped(Data.allQuestions(), size);
+      questions = pickRandomGrouped(Data.practiceQuestions(), size);
     } else if (type === 'exam') {
       const ex = Data.metadata.exams.find(e => e.id === examSelect.value);
       if (!ex) return;
-      questions = pickRandomGrouped(ex.questions, size);
+      questions = pickRandomGrouped(ex.questions.filter(READY), size);
     } else if (type === 'review') {
       const rq = Progress.load(state.user.email, state.course?.id).reviewQueue || [];
-      const all = Data.allQuestions().filter(q => rq.includes(q.id));
+      const all = Data.practiceQuestions().filter(q => rq.includes(q.id));
       if (!all.length) {
         toast('אין שאלות בתור החזרה. תרגל קצת ואז חזור!', '');
         return;
@@ -5187,7 +6838,7 @@ function showBatchModal() {
       questions = pickRandomGrouped(all, size);
     } else if (type === 'unanswered') {
       const seen = new Set(Progress.history(state.user.email, state.course?.id).map(a => a.questionId));
-      const all = Data.allQuestions().filter(q => !seen.has(q.id));
+      const all = Data.practiceQuestions().filter(q => !seen.has(q.id));
       if (!all.length) {
         toast('עברת על כל השאלות! נסה מקבץ אקראי.', 'success');
         return;
@@ -5265,7 +6916,7 @@ function renderQuiz() {
   const imgEl = document.getElementById('quiz-image');
   const wrap = imgEl.parentElement;
   if (q._isAi) {
-    // Replace image with a text/code panel
+    // Replace image with a text/code panel (also removes any overlay button inside)
     wrap.innerHTML = `
       <div class="ai-q-stem-card">
         <div class="ai-q-stem-text">${escapeHtml(q._stem || '')}</div>
@@ -5280,6 +6931,39 @@ function renderQuiz() {
     document.getElementById('quiz-image').src = Data.imageUrl(q.image);
   }
 
+  // Set-context overlay button — shown on the image for grouped questions.
+  // Replaces the old pill button; works for image-only, text-only, and both.
+  document.getElementById('quiz-set-ctx-btn')?.remove();
+  if (!q._isAi && ap.groupId && (ap.contextImagePath || ap.contextText)) {
+    wrap.style.position = 'relative';
+    const ctxBtn = document.createElement('button');
+    ctxBtn.id = 'quiz-set-ctx-btn';
+    ctxBtn.type = 'button';
+    ctxBtn.title = 'הצג מידע לסט השאלות';
+    ctxBtn.style.cssText = 'position:absolute;top:8px;left:8px;background:rgba(37,99,235,0.92);color:#fff;border:none;border-radius:20px;padding:4px 12px 4px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px;z-index:10;box-shadow:0 2px 6px rgba(0,0,0,0.25);';
+    ctxBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> הקשר לסט`;
+    ctxBtn.addEventListener('click', () => openSetContextModal(ap.contextImagePath, ap.contextText, ap.questionNumber || cur));
+    wrap.appendChild(ctxBtn);
+  }
+
+  // Cross-page set: show the shared context (scenario/data table from an
+  // earlier page) as an image ABOVE the question image. Only inlined for
+  // cross-page members — same-page crops already include the context.
+  const ctxImgUrl = (ap && ap.contextImagePath && String(ap.contextImagePath).startsWith('http') && ap.contextCrossPage)
+    ? ap.contextImagePath : null;
+  const existingCtxImg = document.getElementById('quiz-context-image-wrap');
+  if (existingCtxImg) existingCtxImg.remove();
+  if (ctxImgUrl && wrap && !q._isAi) {
+    const ctxImgDiv = document.createElement('div');
+    ctxImgDiv.id = 'quiz-context-image-wrap';
+    ctxImgDiv.style.cssText = 'margin:0 0 10px;padding:8px;border:1px solid #c7d2fe;border-radius:10px;background:#eff6ff;';
+    ctxImgDiv.innerHTML = `
+      <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:6px;direction:rtl;">מידע לסט השאלות (מעמוד קודם)</div>
+      <img src="${ctxImgUrl}" alt="הקשר לסט" style="width:100%;display:block;border-radius:6px;" />
+    `;
+    wrap.parentElement.insertBefore(ctxImgDiv, wrap);
+  }
+
   // Context panel — for questions that are part of a "set" sharing a passage/
   // diagram/data block. Click toggles; content is the same across all members
   // of the group so users can reference the set intro from any question.
@@ -5290,7 +6974,7 @@ function renderQuiz() {
   if (ctxWrap && ctxToggle && ctxBody) {
     if (ctxText && ctxText.trim().length > 0) {
       ctxWrap.classList.remove('hidden');
-      ctxBody.textContent = ctxText;
+      ctxBody.innerHTML = renderSolutionText(ctxText);
       ctxBody.hidden = true;
       ctxToggle.setAttribute('aria-expanded', 'false');
       const label = ctxToggle.querySelector('.quiz-context-label');
@@ -5490,9 +7174,9 @@ function showSolutionPanel(q, dataParam) {
   // If the instructor's own solution text is rich enough, show it verbatim
   // (we skip AI-generated explanations for these questions on the server).
   if (data.instructorSolutionText && data.hasRichSolution) {
-    html += `<div class="solution-general solution-instructor"><strong>פתרון המרצה:</strong>${renderExplanation(data.instructorSolutionText)}</div>`;
+    html += `<div class="solution-general solution-instructor"><strong>פתרון המרצה:</strong>${renderSolutionText(data.instructorSolutionText)}</div>`;
   } else if (exp?.general) {
-    html += `<div class="solution-general"><strong>הסבר כללי:</strong>${renderExplanation(exp.general)}</div>`;
+    html += `<div class="solution-general"><strong>הסבר כללי:</strong>${renderSolutionText(exp.general)}</div>`;
   }
   for (let i = 1; i <= numOpts; i++) {
     const isCorrect = i === data.correctIdx;
@@ -5505,7 +7189,7 @@ function showSolutionPanel(q, dataParam) {
     html += `
       <div class="${cls.join(' ')}">
         <span class="opt-num">${i}.</span><span class="opt-label">${escapeHtml(labelTxt)}${isUserSel && !isCorrect ? ' — הבחירה שלך' : ''}${isUserSel && isCorrect ? ' ← הבחירה הנכונה שלך!' : ''}</span>
-        <div>${renderExplanation(expTxt)}</div>
+        <div>${renderSolutionText(expTxt)}</div>
       </div>
     `;
   }
@@ -5619,6 +7303,8 @@ function endQuiz() {
   Progress.saveBatch(state.user.email, batchSummary, state.course?.id);
   // Push final totals to the cloud so remote history shows the outcome.
   Progress.finalizeBatch(state.user.email, batchSummary, state.course?.id);
+  // Next dashboard render must re-fetch from DB so the new attempts show up.
+  Progress.invalidateSummary();
   state.lastBatch = batchSummary;
   navigate(`/course/${state.course?.id || 'tohna1'}/summary`);
 }
@@ -5758,7 +7444,7 @@ function renderMistakeReview() {
 
         <div class="review-explanation">
           <h4>הסבר מפורט</h4>
-          ${exp?.general ? `<div class="general">${renderExplanation(exp.general)}</div>` : ''}
+          ${exp?.general ? `<div class="general">${renderSolutionText(exp.general)}</div>` : ''}
           <div class="review-options">
             <h5>הסבר לכל אופציה:</h5>
     `;
@@ -5773,7 +7459,7 @@ function renderMistakeReview() {
       html += `
         <div class="${cls.join(' ')}">
           <span class="opt-num">${i}.</span><span class="opt-label">${escapeHtml(labelTxt)}${isUserSel && !isCorrect ? ' — הבחירה שלך' : ''}</span>
-          <div>${renderExplanation(expTxt)}</div>
+          <div>${renderSolutionText(expTxt)}</div>
         </div>
       `;
     }
@@ -5885,6 +7571,12 @@ function buildMockExam(courseId, opts) {
 }
 
 // ===== Render: Insights =====
+// Tracks which courses have already fired a topic-extraction call in this
+// browser session so opening/closing Insights repeatedly doesn't thrash the
+// Gemini labeler. The server still self-terminates (returns 0) when every
+// question already has a topic, so this is just a UX-latency optimization.
+const _insightsTopicRequested = new Set();
+
 async function renderInsights() {
   if (!state.user) state.user = Auth.current();
   if (!state.user) return navigate('/login');
@@ -5902,8 +7594,54 @@ async function renderInsights() {
 
   const uid = state.user.email;
   const courseId = state.course.id;
-  const questions = questionsForCourse(courseId);
-  const exams = examsForCourse(courseId);
+  let questions = questionsForCourse(courseId);
+  let exams = examsForCourse(courseId);
+
+  // AUTO TOPIC EXTRACTION: any cloud course (non-tohna1) where the user has
+  // uploaded 3+ exams gets its questions labeled with canonical topic strings
+  // before we compute insights. Without topics the analysis output is empty —
+  // so we block until the labeler finishes, then re-enter this render with
+  // populated data. Runs at most once per course per session.
+  const isCloudCourse = String(courseId) !== 'tohna1';
+  const missingTopicCount = isCloudCourse
+    ? questions.filter(q => !(Data.reveal(q.id).topic)).length
+    : 0;
+  // Modelim plan never triggers AI topic extraction — they only see whatever
+  // topics were baked into the template account during seeding.
+  const skipAiTopics = state.user?.plan === 'modelim';
+  if (!skipAiTopics && isCloudCourse && exams.length >= 3 && missingTopicCount > 0 && !_insightsTopicRequested.has(String(courseId))) {
+    _insightsTopicRequested.add(String(courseId));
+    const banner = document.getElementById('insights-banner');
+    if (banner) {
+      banner.className = 'insights-banner ok';
+      banner.innerHTML = `<strong>מזהה נושאים אוטומטית…</strong> מנתח ${missingTopicCount} שאלות כדי לבנות את מפת הנושאים של "${escapeHtml(state.course.name)}". זה לוקח כ-15 שניות.`;
+    }
+    try {
+      const token = await Auth.getToken();
+      const res = await fetch('/api/ai/extract-topics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ courseId }),
+      });
+      if (res.ok) {
+        const body = await res.json().catch(() => null);
+        if (body?.labeled > 0) {
+          // Topics were just written to the DB — invalidate the course cache
+          // so Data.ensureLoaded re-fetches with the new topic column values.
+          Data._loadedSet.delete(courseId);
+          delete Data._cache[courseId];
+        }
+      } else {
+        console.warn('[insights] topic extraction HTTP', res.status);
+      }
+    } catch (e) {
+      console.warn('[insights] topic extraction failed:', e?.message);
+    }
+    // Re-render with fresh data. The session flag we just set prevents
+    // recursion (the next pass sees it and skips the auto-trigger branch).
+    return renderInsights();
+  }
+
   const attempts = attemptsForCourse(uid, courseId);
   const analysis = analyzeQuestionBank(questions, attempts);
   const hard = identifyHardQuestions(questions, attempts, 12);
@@ -5914,7 +7652,10 @@ async function renderInsights() {
   const examCount = exams.length;
   if (examCount < minRecommended) {
     banner.className = 'insights-banner warn';
-    banner.innerHTML = `<strong>הניתוח יעבוד טוב יותר עם יותר מבחנים.</strong> כרגע יש בקורס "${escapeHtml(state.course.name)}" רק <strong>${examCount}</strong> מבחנים. המלצה: לפחות <strong>${minRecommended}</strong> מבחנים שונים כדי שנוכל לזהות דפוסים אמיתיים של מה שחוזר.`;
+    banner.innerHTML = `<strong>הניתוח יעבוד טוב יותר עם יותר מבחנים.</strong> כרגע יש בקורס "${escapeHtml(state.course.name)}" רק <strong>${examCount}</strong> מבחנים. המלצה: לפחות <strong>${minRecommended}</strong> מבחנים שונים — ברגע שתעלה עוד, מפת הנושאים תיבנה אוטומטית.`;
+  } else if (analysis.length === 0) {
+    banner.className = 'insights-banner warn';
+    banner.innerHTML = `<strong>${examCount} מבחנים</strong> בקורס "${escapeHtml(state.course.name)}" — אבל עדיין לא הצלחנו לזהות נושאי ליבה. ייתכן שחסר טקסט בשאלות (למשל סריקות ללא OCR). נסה לצור פתרונות AI לאחד המבחנים — זה מחלץ טקסט ומאפשר לנו לזהות דפוסים.`;
   } else {
     banner.className = 'insights-banner ok';
     banner.innerHTML = `<strong>${examCount} מבחנים</strong> בקורס "${escapeHtml(state.course.name)}" — מספיק כדי לזהות דפוסים אמיתיים. ${questions.length} שאלות נותחו · ${analysis.length} נושאי ליבה זוהו.`;
@@ -6005,6 +7746,300 @@ async function renderInsights() {
   document.getElementById('btn-practice-hard').addEventListener('click', () => {
     startQuiz({ questions: hard.map(h => h.q), timerSeconds: 0, examMode: false });
   });
+}
+
+// ===== Render: Exam Review (awaiting_review) =====
+// Side-by-side screen shown for exams with status='awaiting_review'.
+// Lists every question that Gemini flagged as unknown/uncertain; the user
+// picks the correct answer (PATCH correct_idx → answer_confidence=manual)
+// and then clicks "סיים סקירה" to promote the exam to 'ready'.
+async function renderExamReview(courseId, examId) {
+  if (!state.user) state.user = Auth.current();
+  if (!state.user) return navigate('/login');
+  if (!state.course || String(state.course.id) !== String(courseId)) setCourseContext(courseId);
+
+  $app.innerHTML = `
+    <div class="container" style="padding:20px 16px 60px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
+        <button class="btn btn-soft btn-sm" data-route="/course/${courseId}" type="button">← חזרה לקורס</button>
+        <h1 style="margin:0;font-size:20px;">סקירת מבחן</h1>
+      </div>
+      <div id="exr-body"><p class="muted" style="padding:40px;text-align:center;">טוען...</p></div>
+    </div>
+  `;
+
+  const bodyEl = document.getElementById('exr-body');
+  const tk = await Auth.getToken();
+  if (!tk) { bodyEl.innerHTML = '<p class="muted" style="text-align:center;padding:40px;">נדרש להתחבר.</p>'; return; }
+
+  // Fetch exam + questions in parallel.
+  let exam, allQs;
+  try {
+    const [examRes, qRes] = await Promise.all([
+      fetch(`/api/courses/${courseId}/exams`, { headers: { Authorization: `Bearer ${tk}` } }),
+      fetch(`/api/courses/${courseId}/questions`, { headers: { Authorization: `Bearer ${tk}` } }),
+    ]);
+    if (!examRes.ok || !qRes.ok) throw new Error('fetch failed');
+    const exams = await examRes.json();
+    const qs = await qRes.json();
+    exam = (Array.isArray(exams) ? exams : []).find(e => String(e.id) === String(examId));
+    allQs = (Array.isArray(qs) ? qs : []).filter(q => String(q.exam_id) === String(examId));
+  } catch (err) {
+    bodyEl.innerHTML = `<p class="muted" style="text-align:center;padding:40px;">שגיאה בטעינה: ${escapeHtml(err.message || String(err))}</p>`;
+    return;
+  }
+
+  if (!exam) {
+    bodyEl.innerHTML = '<p class="muted" style="text-align:center;padding:40px;">מבחן לא נמצא.</p>';
+    return;
+  }
+
+  // If the exam was already finalized, redirect back to course view.
+  if (exam.status === 'ready') {
+    toast('המבחן כבר אושר ומוכן לתרגול', 'success');
+    navigate(`/course/${courseId}`);
+    return;
+  }
+
+  const letters = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י'];
+  const pending = allQs.filter(q => q.answer_confidence === 'unknown' || q.answer_confidence === 'uncertain');
+  const total = allQs.length;
+  const doneCount = total - pending.length;
+
+  if (pending.length === 0) {
+    // Nothing to review — offer to finalize immediately.
+    renderReviewEmptyState(bodyEl, courseId, examId, total);
+    return;
+  }
+
+  const headerHtml = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding:14px 16px;background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;">
+      <div>
+        <div style="font-weight:600;font-size:15px;color:#78350f;">${escapeHtml(exam.name || 'מבחן')}</div>
+        <div style="font-size:13px;color:#92400e;margin-top:2px;">${pending.length} שאלות דורשות אישור · ${doneCount} מתוך ${total} מאושרות</div>
+      </div>
+      <button class="btn btn-primary" id="exr-finalize" type="button" disabled style="opacity:0.5;">סיים סקירה</button>
+    </div>
+  `;
+
+  const cardsHtml = pending.map(q => renderReviewCard(q, letters)).join('');
+
+  bodyEl.innerHTML = `
+    <div id="exr-header">${headerHtml}</div>
+    <div id="exr-cards" style="display:flex;flex-direction:column;gap:14px;">${cardsHtml}</div>
+  `;
+
+  // Wire save buttons for each pending card.
+  pending.forEach(q => {
+    const card = document.querySelector(`[data-exr-qid="${q.id}"]`);
+    if (!card) return;
+    const saveBtn = card.querySelector('.exr-save-btn');
+    if (!saveBtn) return;
+    saveBtn.addEventListener('click', () => saveReviewAnswer(courseId, examId, total, q, card));
+  });
+
+  // Finalize button — updated live as cards are approved.
+  document.getElementById('exr-finalize').addEventListener('click', () => finalizeReviewAndGo(courseId, examId));
+  updateFinalizeButtonState();
+}
+
+// Swap the review body for the "all approved" empty-state — green banner
+// with the big "סיים סקירה ופתח לתרגול" button. Called both on initial
+// load when pending is already 0, and dynamically after the user approves
+// the last remaining card (so the screen doesn't look stuck).
+function renderReviewEmptyState(bodyEl, courseId, examId, total) {
+  if (!bodyEl) return;
+  bodyEl.innerHTML = `
+    <div style="max-width:640px;margin:40px auto;padding:28px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:14px;text-align:center;">
+      <h2 style="margin:0 0 10px;font-size:20px;color:#065f46;">כל השאלות מאושרות</h2>
+      <p style="margin:0 0 18px;color:#065f46;">${total} שאלות עברו אימות. סיים סקירה כדי לפתוח את המבחן לתרגול.</p>
+      <button class="btn btn-primary" id="exr-finalize" type="button" style="font-size:15px;padding:12px 28px;">סיים סקירה ופתח לתרגול</button>
+    </div>
+  `;
+  document.getElementById('exr-finalize').addEventListener('click', () => finalizeReviewAndGo(courseId, examId));
+}
+
+// Heuristic: text layer extraction mangles LaTeX/math PDFs (CID font encoding).
+// Detect obvious garbage so we can suppress it and rely on the image crop.
+function looksGarbled(txt) {
+  if (!txt || typeof txt !== 'string') return true;
+  const s = txt.trim();
+  if (s.length < 3) return true;
+  // Unicode replacement char → definite corruption.
+  if (s.indexOf('�') !== -1) return true;
+  // Long runs of the same Latin letter (e.g. "RRRR", "MMMM") → CID font
+  // duplication bug. Hebrew letters don't suffer this pattern.
+  if (/([A-Za-z])\1{3,}/.test(s)) return true;
+  // Heavy non-alphabetic ratio — likely symbol garbage.
+  const letters = s.match(/[\p{L}]/gu)?.length || 0;
+  if (letters > 0 && letters / s.length < 0.25) return true;
+  return false;
+}
+
+function renderReviewCard(q, letters) {
+  const numOptions = Math.max(2, Math.min(10, parseInt(q.num_options, 10) || 4));
+  const currentIdx = parseInt(q.correct_idx, 10) || null;
+  const isUncertain = q.answer_confidence === 'uncertain';
+  const isUnknown = q.answer_confidence === 'unknown';
+  const bgColor = isUnknown ? '#fef2f2' : '#fff7ed';
+  const borderColor = isUnknown ? '#fecaca' : '#fed7aa';
+  const badgeText = isUnknown ? 'תשובה לא זוהתה' : 'זיהוי לא ודאי';
+  const badgeColor = isUnknown ? '#991b1b' : '#9a3412';
+
+  // The image crop (when available) is the AUTHORITATIVE visual — math
+  // formulas, RTL layout, everything. When we have it, skip the raw text
+  // that unpdf extracted, which is often garbled for LaTeX PDFs.
+  const imgSrc = q.image_path && q.image_path !== 'text-only'
+    ? (q.image_path.startsWith('http') ? q.image_path : Data.imageUrl(q.image_path))
+    : null;
+  const hasImage = !!imgSrc;
+
+  // Show question_text only when it's legible AND there's no image — image
+  // alone is better than an image + mangled text duplicate.
+  const stemHtml = (!hasImage && q.question_text && !looksGarbled(q.question_text))
+    ? `<div style="margin-bottom:10px;font-size:14px;line-height:1.6;">${renderSolutionText(q.question_text)}</div>`
+    : '';
+
+  // Build options: when the image is shown, render just letter chips (א/ב/ג/ד)
+  // so the user picks by letter. When there's no image, include the extracted
+  // option text (but only if it's legible — otherwise fall back to letters).
+  const optsMap = q.options_text || {};
+  const showOptionTexts = !hasImage && Object.values(optsMap).every(t => !looksGarbled(String(t || '')));
+  const optsHtml = Array.from({ length: numOptions }, (_, i) => {
+    const idx = i + 1;
+    const letter = letters[i] || String(idx);
+    const txt = showOptionTexts ? (optsMap[idx] || optsMap[String(idx)] || '') : '';
+    const checked = idx === currentIdx && !isUnknown ? 'checked' : '';
+    const display = txt ? renderSolutionText(`${letter}. ${txt}`) : `<strong style="font-size:16px;">${letter}</strong>`;
+    return `
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border-soft);border-radius:8px;background:white;cursor:pointer;min-height:44px;">
+        <input type="radio" name="exr-ans-${q.id}" value="${idx}" ${checked} />
+        <div style="flex:1;font-size:14px;line-height:1.5;">${display}</div>
+      </label>
+    `;
+  }).join('');
+
+  const hintHtml = hasImage
+    ? '<div style="margin-bottom:10px;font-size:12px;color:var(--text-muted);">קרא את השאלה מהתמונה ובחר את התשובה הנכונה.</div>'
+    : '';
+
+  return `
+    <div class="exr-card" data-exr-qid="${q.id}" data-exr-conf="${q.answer_confidence}" style="padding:16px;background:${bgColor};border:1px solid ${borderColor};border-radius:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-weight:600;font-size:15px;">שאלה ${q.question_number}</div>
+        <span style="font-size:12px;color:${badgeColor};font-weight:600;">${badgeText}</span>
+      </div>
+      ${imgSrc ? `<div style="margin-bottom:12px;border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;background:white;"><img src="${escapeHtml(imgSrc)}" alt="שאלה ${q.question_number}" style="width:100%;display:block;" loading="lazy" /></div>` : ''}
+      ${stemHtml}
+      ${hintHtml}
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">${optsHtml}</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="btn btn-primary btn-sm exr-save-btn" type="button">אשר תשובה</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveReviewAnswer(courseId, examId, total, q, card) {
+  const selected = card.querySelector(`input[name="exr-ans-${q.id}"]:checked`);
+  if (!selected) { toast('בחר תשובה לפני השמירה', 'error'); return; }
+  const newIdx = parseInt(selected.value, 10);
+  const btn = card.querySelector('.exr-save-btn');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.innerHTML = '<span class="qv-spinner"></span>';
+  try {
+    const tk = await Auth.getToken();
+    const r = await fetch(`/api/courses/${courseId}/questions/${q.id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ correct_idx: newIdx }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      toast(data.error || 'שגיאה בשמירה', 'error');
+      btn.disabled = false; btn.textContent = orig;
+      return;
+    }
+    // Fade the card out of the pending list.
+    card.style.transition = 'opacity .3s, height .3s, margin .3s';
+    card.style.opacity = '0';
+    setTimeout(() => {
+      card.remove();
+      // If this was the last card, swap the whole body to the empty-state
+      // banner so the user sees the big finalize button immediately.
+      const remaining = document.querySelectorAll('#exr-cards .exr-card').length;
+      if (remaining === 0) {
+        const bodyEl = document.getElementById('exr-body');
+        renderReviewEmptyState(bodyEl, courseId, examId, total);
+      } else {
+        updateReviewProgress();
+      }
+    }, 300);
+    toast('תשובה נשמרה', 'success', 1500);
+  } catch (e) {
+    toast('שגיאה בשמירה', 'error');
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+function updateReviewProgress() {
+  const cardsContainer = document.getElementById('exr-cards');
+  const remaining = cardsContainer ? cardsContainer.querySelectorAll('.exr-card').length : 0;
+  const header = document.getElementById('exr-header');
+  if (header) {
+    const metaEl = header.querySelector('div > div:last-child');
+    if (metaEl) {
+      const current = metaEl.textContent.match(/(\d+) מתוך (\d+)/);
+      if (current) {
+        const total = parseInt(current[2], 10);
+        metaEl.textContent = `${remaining} שאלות דורשות אישור · ${total - remaining} מתוך ${total} מאושרות`;
+      }
+    }
+  }
+  updateFinalizeButtonState();
+}
+
+function updateFinalizeButtonState() {
+  const remaining = document.querySelectorAll('#exr-cards .exr-card').length;
+  const btn = document.getElementById('exr-finalize');
+  if (!btn) return;
+  if (remaining === 0) {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  } else {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+  }
+}
+
+async function finalizeReviewAndGo(courseId, examId) {
+  const btn = document.getElementById('exr-finalize');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+  try {
+    const tk = await Auth.getToken();
+    const r = await fetch('/api/exams/finalize-review', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exam_id: Number(examId) }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (r.status === 409 && Array.isArray(data.pending_numbers)) {
+        toast(`עדיין לא אושרו שאלות: ${data.pending_numbers.join(', ')}`, 'error', 6000);
+      } else {
+        toast(data.error || 'שגיאה בסגירת הסקירה', 'error');
+      }
+      if (btn) { btn.disabled = false; btn.textContent = 'סיים סקירה'; }
+      return;
+    }
+    toast('המבחן אושר ומוכן לתרגול', 'success');
+    await refreshCourseState(courseId);
+    navigate(`/course/${courseId}`);
+  } catch (e) {
+    toast('שגיאה ברשת', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'סיים סקירה'; }
+  }
 }
 
 // ===== Render: Lab =====
@@ -6170,6 +8205,7 @@ async function renderLab() {
           <button class="btn btn-primary btn-lg" id="btn-start-ai-mock">התחל מבחן דמה (${aiQuestions.length} שאלות)</button>
         </div>
       `;
+      wireAiQuestionInteractivity(mockResult);
       document.getElementById('btn-start-ai-mock').addEventListener('click', () => {
         startAiQuiz(aiQuestions, timer, mockMode === 'exam');
       });
@@ -6223,9 +8259,13 @@ async function renderLab() {
     btn.innerHTML = '<span class="ai-spinner"></span> המודל עובד... זה לוקח 10-30 שניות';
     result.innerHTML = '';
     try {
+      const labToken = await Auth.getToken();
       const res = await fetch('/api/lab/generate-questions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(labToken ? { Authorization: `Bearer ${labToken}` } : {}),
+        },
         body: JSON.stringify({
           topics: selected,
           count,
@@ -6236,32 +8276,45 @@ async function renderLab() {
       });
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 402 && data?.type === 'lab_quota') {
+          showPaywallModal('lab_quota');
+          return;
+        }
         if (data?.reason === 'no_api_key') {
           result.innerHTML = `
             <div class="ai-error">
-              <strong>🔧 מפתח ה-API של הבינה המלאכותית עוד לא מוגדר בשרת.</strong>
-              <p>כדי להפעיל את הפיצ'ר הזה, הוסף <code>GEMINI_API_KEY</code> לקובץ ה-.env של השרת ואז הפעל מחדש. אפשר לקבל מפתח חינמי ב-aistudio.google.com/apikey.</p>
+              <strong>מפתח ה-API של הבינה המלאכותית עוד לא מוגדר בשרת.</strong>
+              <p>כדי להפעיל את הפיצ'ר הזה, הוסף <code>GEMINI_API_KEY</code> לקובץ ה-.env של השרת ואז הפעל מחדש.</p>
             </div>
           `;
         } else {
-          result.innerHTML = `<div class="ai-error">❌ ${escapeHtml(data?.error || 'שגיאה לא ידועה')}</div>`;
+          result.innerHTML = `<div class="ai-error">${escapeHtml(data?.error || 'שגיאה לא ידועה')}</div>`;
         }
         return;
       }
-      // Render generated questions with delete buttons
+      // Render generated questions with delete buttons + interactive options.
       let aiPool = [...data.questions];
+      // Persist this batch so it survives navigation / reload.
+      const savedLabel = `${selected.join(', ')} · ${difficulty} · ${aiPool.length} שאלות`;
+      AI_POOL_STORAGE.add(state.course.id, {
+        label: savedLabel,
+        topics: selected,
+        difficulty,
+        questions: aiPool,
+      });
       function renderAiPool() {
         if (!aiPool.length) {
           result.innerHTML = '<div class="ai-error">הסרת את כל השאלות. צור שאלות חדשות.</div>';
+          renderAiHistory();
           return;
         }
         result.innerHTML = `
-          <div class="ai-success">✨ ${aiPool.length} שאלות מוכנות לתרגול</div>
+          <div class="ai-success">${aiPool.length} שאלות מוכנות לתרגול</div>
           <div class="ai-questions">
             ${aiPool.map((q, i) => renderAiQuestion(q, i)).join('')}
           </div>
           <div class="ai-actions">
-            <button class="btn btn-primary btn-lg" id="btn-practice-ai">🎯 תרגל ${aiPool.length} שאלות</button>
+            <button class="btn btn-primary btn-lg" id="btn-practice-ai">תרגל ${aiPool.length} שאלות</button>
           </div>
         `;
         document.getElementById('btn-practice-ai').addEventListener('click', () => {
@@ -6275,6 +8328,9 @@ async function renderLab() {
             renderAiPool();
           });
         });
+        // Wire interactive options + "הצג תשובה" button
+        wireAiQuestionInteractivity(result);
+        renderAiHistory();
       }
       renderAiPool();
     } catch (err) {
@@ -6284,31 +8340,242 @@ async function renderLab() {
       btn.innerHTML = '✨ צור שאלות חכמות';
     }
   });
+
+  // Render the persistent "previously-generated" panel at the bottom of the
+  // Lab page on every visit.
+  renderAiHistory();
 }
 
 function renderAiQuestion(q, i) {
-  // Preview does NOT reveal the correct answer or solution. Users see the full
-  // solution only inside the practice session, via the "הצג פתרון" button.
+  // Interactive preview: clickable options + "הצג תשובה" button. The correct
+  // answer + explanation are hidden until the user clicks the button, so the
+  // preview functions as a real practice item. wireAiQuestionInteractivity()
+  // attaches the click handlers after the HTML is inserted.
+  const diffLabel = q.difficulty === 'hard' ? 'קשה' : q.difficulty === 'medium' ? 'בינוני' : 'קל';
+  const correctIdx = Number.isFinite(parseInt(q.correctIdx, 10)) ? parseInt(q.correctIdx, 10) : 1;
   return `
-    <div class="ai-q-card">
+    <div class="ai-q-card" data-ai-q-idx="${i}" data-ai-correct="${correctIdx}">
       <div class="ai-q-head">
         <span class="ai-q-num">שאלה ${i + 1}</span>
-        <span class="ai-q-topic">${escapeHtml(q.topic)}</span>
-        <span class="ai-q-diff ai-q-diff-${q.difficulty}">${q.difficulty === 'hard' ? 'קשה' : q.difficulty === 'medium' ? 'בינוני' : 'קל'}</span>
+        <span class="ai-q-topic">${escapeHtml(q.topic || '')}</span>
+        <span class="ai-q-diff ai-q-diff-${q.difficulty}">${diffLabel}</span>
         <button class="ai-q-remove" data-remove-ai-q="${i}" title="הסר שאלה">✕</button>
       </div>
       ${q.code ? `<pre class="ai-q-code"><code>${escapeHtml(q.code)}</code></pre>` : ''}
       <div class="ai-q-stem">${escapeHtml(q.stem)}</div>
-      <ol class="ai-q-options">
+      <ol class="ai-q-options ai-q-options-interactive">
         ${q.options.map((opt, j) => `
-          <li>
+          <li class="ai-q-opt" data-opt-idx="${j + 1}" role="button" tabindex="0" style="cursor:pointer;">
             <span class="opt-num">${j + 1}</span>
             <span>${escapeHtml(opt)}</span>
           </li>
         `).join('')}
       </ol>
+      <div class="ai-q-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button class="btn btn-sm ai-q-reveal" type="button" data-ai-q-idx="${i}">הצג תשובה</button>
+      </div>
+      <div class="ai-q-solution" data-ai-q-idx="${i}" hidden style="margin-top:12px;padding:12px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;direction:rtl;">
+        <div style="font-weight:700;color:#166534;margin-bottom:8px;">התשובה הנכונה: ${correctIdx}</div>
+        ${q.explanationGeneral ? `<div style="margin-bottom:10px;font-size:13px;line-height:1.5;">${escapeHtml(q.explanationGeneral)}</div>` : ''}
+        ${Array.isArray(q.optionExplanations) && q.optionExplanations.length > 0 ? `
+          <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;">
+            ${q.optionExplanations.map((e, j) => {
+              const isCorr = (j + 1) === correctIdx;
+              return `<li style="padding:6px 8px;border-radius:6px;background:${isCorr ? '#dcfce7' : '#fef2f2'};font-size:12px;">
+                <strong>${j + 1}${isCorr ? ' (נכונה)' : ''}:</strong> ${escapeHtml(e || '')}
+              </li>`;
+            }).join('')}
+          </ul>
+        ` : ''}
+      </div>
     </div>
   `;
+}
+
+// Wire interactivity to each AI question card in the given container.
+// Option-click = select (only one option selected at a time).
+// "הצג תשובה" = reveal correct + color-code all options.
+function wireAiQuestionInteractivity(container) {
+  if (!container) return;
+  container.querySelectorAll('.ai-q-card').forEach(card => {
+    const correctIdx = parseInt(card.getAttribute('data-ai-correct'), 10);
+    const opts = card.querySelectorAll('.ai-q-opt');
+    const selectOpt = (li) => {
+      opts.forEach(o => {
+        o.classList.remove('selected');
+        o.style.background = '';
+        o.style.border = '';
+      });
+      li.classList.add('selected');
+      li.style.background = '#eff6ff';
+      li.style.border = '1px solid #3b82f6';
+    };
+    opts.forEach(li => {
+      li.addEventListener('click', () => selectOpt(li));
+      li.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectOpt(li); }
+      });
+    });
+    const revealBtn = card.querySelector('.ai-q-reveal');
+    const solPanel = card.querySelector('.ai-q-solution');
+    if (revealBtn && solPanel) {
+      revealBtn.addEventListener('click', () => {
+        const isHidden = solPanel.hidden;
+        if (isHidden) {
+          solPanel.hidden = false;
+          revealBtn.textContent = 'הסתר תשובה';
+          opts.forEach(li => {
+            const idx = parseInt(li.getAttribute('data-opt-idx'), 10);
+            if (idx === correctIdx) {
+              li.style.background = '#dcfce7';
+              li.style.border = '1px solid #16a34a';
+            } else if (li.classList.contains('selected')) {
+              li.style.background = '#fee2e2';
+              li.style.border = '1px solid #dc2626';
+            }
+          });
+        } else {
+          solPanel.hidden = true;
+          revealBtn.textContent = 'הצג תשובה';
+          opts.forEach(li => {
+            if (!li.classList.contains('selected')) {
+              li.style.background = '';
+              li.style.border = '';
+            } else {
+              li.style.background = '#eff6ff';
+              li.style.border = '1px solid #3b82f6';
+            }
+          });
+        }
+      });
+    }
+  });
+}
+
+// ── Persistent storage for AI-generated question pools ───────────────────────
+// User wants their generated questions preserved across navigations (and
+// across reloads). We store per-course in localStorage.
+const AI_POOL_STORAGE = {
+  KEY(courseId) { return `ep_ai_lab_pool_${courseId}`; },
+  load(courseId) {
+    try { return JSON.parse(localStorage.getItem(this.KEY(courseId))) || []; }
+    catch { return []; }
+  },
+  save(courseId, history) {
+    try {
+      // Cap at 50 entries total, each with up to ~15 questions.
+      const trimmed = (history || []).slice(-50);
+      localStorage.setItem(this.KEY(courseId), JSON.stringify(trimmed));
+    } catch (e) {
+      // Quota exceeded → drop oldest half and retry once.
+      try {
+        const half = (history || []).slice(Math.floor((history || []).length / 2));
+        localStorage.setItem(this.KEY(courseId), JSON.stringify(half));
+      } catch {}
+    }
+  },
+  add(courseId, batch) {
+    const history = this.load(courseId);
+    history.push({ id: `b_${Date.now()}`, createdAt: Date.now(), ...batch });
+    this.save(courseId, history);
+    return history;
+  },
+  removeBatch(courseId, batchId) {
+    const history = this.load(courseId).filter(b => b.id !== batchId);
+    this.save(courseId, history);
+    return history;
+  },
+};
+
+// Render the "שאלות שיצרת לאחרונה" persistent panel at the bottom of the Lab
+// page. Shows each previously-generated batch with a timestamp, a list of
+// interactive cards (same UX as a fresh generation), a "תרגל מחדש" button,
+// and a delete button. Survives navigation via localStorage.
+function renderAiHistory() {
+  const holder = document.getElementById('ai-history');
+  if (!holder) return;
+  const courseId = state.course?.id;
+  if (!courseId) { holder.innerHTML = ''; return; }
+  const history = AI_POOL_STORAGE.load(courseId);
+  if (!Array.isArray(history) || history.length === 0) {
+    holder.innerHTML = '<div class="muted" style="text-align:center;padding:12px 0;font-size:13px;">עוד לא יצרת שאלות במעבדה.</div>';
+    return;
+  }
+  // Newest first.
+  const sorted = [...history].reverse();
+  const fmtDate = (ts) => {
+    try {
+      const d = new Date(ts);
+      const diffMs = Date.now() - ts;
+      const mins = Math.floor(diffMs / 60000);
+      if (mins < 1) return 'עכשיו';
+      if (mins < 60) return `לפני ${mins} דק׳`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `לפני ${hrs} שעות`;
+      const days = Math.floor(hrs / 24);
+      if (days < 7) return `לפני ${days} ימים`;
+      return d.toLocaleDateString('he-IL');
+    } catch { return ''; }
+  };
+  holder.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <h3 style="margin:0;font-size:15px;">שאלות שיצרת לאחרונה</h3>
+      <button type="button" id="ai-history-clear" class="btn btn-ghost btn-sm" style="font-family:inherit;font-size:11px;">נקה הכל</button>
+    </div>
+    <div id="ai-history-list" style="display:flex;flex-direction:column;gap:12px;">
+      ${sorted.map(batch => `
+        <details class="ai-history-batch" data-batch-id="${batch.id}" style="border:1px solid var(--border-soft);border-radius:8px;padding:10px;background:var(--surface);">
+          <summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+            <span style="font-weight:600;font-size:13px;">${escapeHtml(batch.label || `${(batch.questions || []).length} שאלות`)}</span>
+            <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">${fmtDate(batch.createdAt)}</span>
+          </summary>
+          <div class="ai-questions" data-batch-id="${batch.id}" style="margin-top:10px;">
+            ${(batch.questions || []).map((q, i) => renderAiQuestion(q, i)).join('')}
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm ai-history-practice" data-batch-id="${batch.id}" type="button">תרגל את השאלות (${(batch.questions || []).length})</button>
+            <button class="btn btn-ghost btn-sm ai-history-delete" data-batch-id="${batch.id}" type="button" style="color:#dc2626;">מחק סט</button>
+          </div>
+        </details>
+      `).join('')}
+    </div>
+  `;
+  // Wire per-batch interactions.
+  holder.querySelectorAll('details.ai-history-batch').forEach(det => {
+    det.addEventListener('toggle', () => {
+      if (det.open) {
+        const qsWrap = det.querySelector('.ai-questions');
+        if (qsWrap && !qsWrap.dataset.wired) {
+          wireAiQuestionInteractivity(qsWrap);
+          qsWrap.dataset.wired = '1';
+        }
+      }
+    });
+  });
+  holder.querySelectorAll('.ai-history-practice').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-batch-id');
+      const batch = AI_POOL_STORAGE.load(courseId).find(b => b.id === id);
+      if (batch && Array.isArray(batch.questions) && batch.questions.length) startAiQuiz(batch.questions);
+    });
+  });
+  holder.querySelectorAll('.ai-history-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-batch-id');
+      AI_POOL_STORAGE.removeBatch(courseId, id);
+      renderAiHistory();
+    });
+  });
+  const clearBtn = holder.querySelector('#ai-history-clear');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (!confirm('לנקות את כל הסטים שיצרת במעבדה?')) return;
+      AI_POOL_STORAGE.save(courseId, []);
+      renderAiHistory();
+    });
+  }
 }
 
 // Wrap AI-generated questions into a quiz session
@@ -6656,8 +8923,9 @@ function wireTopbar(cid) {
     });
   }
 
-  // Wire "המקבצים שלי" button in topbar — opens dropdown with recent batches.
+  // Wire "המקבצים שלי" button — only visible when inside a course, not on the main dashboard.
   document.querySelectorAll('.topbar-batches-btn').forEach(btn => {
+    btn.style.display = activeCid ? '' : 'none';
     if (btn.dataset.wired) return;
     btn.dataset.wired = '1';
     btn.addEventListener('click', (e) => {
@@ -6674,7 +8942,7 @@ function wireTopbar(cid) {
   if (nameEl) nameEl.textContent = state.user.name;
   if (avatarEl) avatarEl.textContent = (state.user.name || 'U').slice(0, 1).toUpperCase();
   if (planEl) {
-    planEl.textContent = state.user.plan;
+    planEl.textContent = state.user.plan === 'modelim' ? 'מודלים חישוביים' : state.user.plan;
     if (state.user.plan === 'pro' || state.user.plan === 'education') planEl.classList.add('pro');
   }
   // The whole .app-user block is now a dropdown trigger; the in-template
@@ -6705,24 +8973,34 @@ function showBatchesDropdown(anchor) {
     return;
   }
   document.querySelectorAll('.topbar-batches-btn').forEach(b => b.setAttribute('aria-expanded', 'true'));
+  const activeCid = String(state.course?.id || '');
+  const courses = CourseRegistry.list().filter(c => !c.archived && !c.is_degree);
+  const courseName = (cid) => courses.find(c => String(c.id) === String(cid))?.name || cid;
+
   const dd = document.createElement('div');
   dd.id = 'batches-dropdown';
   dd.className = 'batches-dropdown';
   dd.innerHTML = `
-    <div class="bd-header">המקבצים האחרונים שלי</div>
+    <div class="bd-header">מקבצים אחרונים — ${escapeHtml(state.course?.name || courseName(activeCid))}</div>
     <div class="bd-body" id="bd-body"><div class="bd-empty">טוען...</div></div>
   `;
   document.body.appendChild(dd);
   const r = anchor.getBoundingClientRect();
   dd.style.cssText += `position:fixed;top:${r.bottom + 6}px;right:${Math.max(8, window.innerWidth - r.right)}px;z-index:9999;`;
-
-  const courses = CourseRegistry.list().filter(c => !c.archived && !c.is_degree);
-  const courseName = (cid) => courses.find(c => String(c.id) === String(cid))?.name || cid;
+  // Only show batches for the course currently open; fall back to all if context missing
+  const scopedCourses = activeCid ? courses.filter(c => String(c.id) === activeCid) : courses;
 
   function render(rows) {
     const body = document.getElementById('bd-body');
     if (!body) return;
-    if (!rows.length) { body.innerHTML = '<div class="bd-empty">עדיין לא תרגלת מקבצים.<br>התחל תרגול חופשי מכל קורס.</div>'; return; }
+    if (!rows.length) {
+      body.innerHTML = `<div class="bd-empty">
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted);margin-bottom:10px;"><rect x="3" y="3" width="18" height="18" rx="3"/><polyline points="9 12 11 14 15 10"/></svg>
+        <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:6px;">עדיין לא ביצעת מקבצים</div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">התחל מקבץ תרגול מהכרטיסייה "תרגול" כדי לעקוב אחר ההתקדמות שלך כאן.</div>
+      </div>`;
+      return;
+    }
     body.innerHTML = rows.map((item, i) => {
       const b = item.batch;
       const score = b.size > 0 ? Math.round((b.correct / b.size) * 100) : 0;
@@ -6750,9 +9028,9 @@ function showBatchesDropdown(anchor) {
     });
   }
 
-  // 1) Fast path: local batches across all courses
+  // 1) Fast path: local batches for the current course only
   const localRows = [];
-  for (const c of courses) {
+  for (const c of scopedCourses) {
     const cid = String(c.id);
     const list = (Progress.load(state.user.email, cid).batches || []);
     for (const b of list) if (b?.batchId) localRows.push({ cid, batch: b });
@@ -6761,7 +9039,7 @@ function showBatchesDropdown(anchor) {
   render(localRows.slice(0, 15));
 
   // 2) Merge remote (cloud-synced) batches on top of local
-  Promise.all(courses.filter(c => String(c.id) !== 'tohna1').map(c =>
+  Promise.all(scopedCourses.filter(c => String(c.id) !== 'tohna1').map(c =>
     Progress.fetchRemoteBatches(String(c.id), 15)
       .then(rows => (rows || []).map(b => ({ cid: String(c.id), batch: b })))
       .catch(() => [])
@@ -6816,7 +9094,9 @@ function toggleUserMenu(anchor) {
   if (existing) { existing.remove(); return; }
   if (!state.user) return;
 
-  const planLabel = (state.user.plan || 'free').toUpperCase();
+  const planLabel = state.user.plan === 'modelim'
+    ? 'מודלים חישוביים'
+    : (state.user.plan || 'free').toUpperCase();
   const themeMode = Theme.current();
   const themeResolved = Theme.resolved();
   const themeIcon = themeResolved === 'dark'
@@ -6905,10 +9185,10 @@ function closeUserMenuOnEsc(e) {
 
 // ===== Settings page =====
 const PLAN_INFO = {
-  trial:     { label: 'TRIAL',     desc: '14 ימים · 20 PDFs · 5 חבילות · 15 שאלות AI' },
-  free:      { label: 'FREE',      desc: 'גישת קריאה בלבד — שדרג כדי ליצור תכנים חדשים' },
-  basic:     { label: 'BASIC',     desc: '30 חבילות · 30 PDFs · 100 שאלות AI · 5 קורסים' },
-  pro:       { label: 'PRO',       desc: '150 PDFs · 500 שאלות AI · קורסים ללא הגבלה' },
+  trial:     { label: 'TRIAL',     desc: '14 ימים · 7 PDFs · 6 סיכומים · 25 AI · 20 מעבדה ביום' },
+  free:      { label: 'FREE',      desc: '5 PDFs · 4 סיכומים · 15 AI · 10 שאלות מעבדה ביום' },
+  basic:     { label: 'BASIC',     desc: '10 PDFs · 8 סיכומים · 30 AI · 25 מעבדה · 10 קורסים' },
+  pro:       { label: 'PRO',       desc: '20 PDFs · 20 סיכומים · 80 AI · 60 מעבדה · קורסים ללא הגבלה' },
   education: { label: 'EDUCATION', desc: 'הכל מ-Pro + 50 משתמשי משנה + לוח בקרה למורה' },
 };
 
@@ -7240,7 +9520,7 @@ const StudyStore = {
   },
   save(pack) {
     const all = this.list();
-    const idx = all.findIndex(p => p.id === pack.id);
+    const idx = all.findIndex(p => String(p.id) === String(pack.id));
     if (idx >= 0) all[idx] = pack; else all.unshift(pack);
     try {
       localStorage.setItem(this.KEY, JSON.stringify(all));
@@ -7273,22 +9553,25 @@ const StudyStore = {
   resetUsed() {
     localStorage.removeItem(this.USED_KEY);
   },
-  // Plan-based quota: free=2 lifetime, trial=5 lifetime, paid=unlimited.
+  // Per-day study pack limits by plan. Keep in sync with api/_lib/quotas.mjs.
+  DAILY_LIMITS: { free: 0, trial: 4, basic: 5, pro: 15, education: -1 },
   quotaForUser(user) {
     const plan = (user && user.plan) || 'free';
-    if (plan === 'free') return { lifetime: 0, used: this.usedTotal(), unlimited: false };
-    if (plan === 'trial') return { lifetime: 5, used: this.usedTotal(), unlimited: false };
-    return { lifetime: -1, used: this.usedTotal(), unlimited: true };
+    const dailyLimit = this.DAILY_LIMITS[plan] ?? 2;
+    const used = user?.studyPacksUsedToday ?? 0;
+    if (dailyLimit === -1) return { dailyLimit: -1, used, unlimited: true };
+    return { dailyLimit, used, unlimited: false };
   },
 };
 
 function showPaywallModal(context) {
   const messages = {
-    pdf_upload:   { title: 'העלאת PDFs זמינה למנויים', body: 'שדרג ל-Basic כדי להעלות עד 30 קבצי PDF בחודש ולתרגל שאלות אמיתיות ממבחנים.' },
-    ai_quota:     { title: 'הגעת למגבלת שאלות ה-AI', body: 'שדרג ל-Basic וקבל 100 שאלות AI בחודש, או ל-Pro וקבל 500.' },
-    study_pack:   { title: 'סיימת את חבילות הלימוד שלך', body: 'שדרג ל-Basic וקבל 30 חבילות לימוד מסיכום בחודש. לומדים חכם, לא קשה.' },
-    course_limit: { title: 'הגעת למגבלת הקורסים', body: 'שדרג ל-Basic ותקבל עד 5 קורסים פעילים, או ל-Pro ללא הגבלה.' },
-    trial_ended:  { title: 'ה-Trial נגמר', body: 'ה-14 ימים נגמרו, אבל הנתונים שלך נשמרים. שדרג כדי להמשיך ליצור ולתרגל.' },
+    pdf_upload:   { title: 'הגעת למגבלת ההעלאות היומית', body: 'בפלאן החינמי ניתן להעלות עד 5 בחינות ביום. נסה שוב מחר, או שדרג ל-Basic לקבל 60 קבצים בחודש.' },
+    ai_quota:     { title: 'הגעת למגבלת פעולות ה-AI היומית', body: 'בפלאן החינמי יש 15 פעולות AI ביום. נסה שוב מחר, או שדרג ל-Basic לקבל 200 בחודש.' },
+    study_pack:   { title: 'הגעת למגבלת הסיכומים היומית', body: 'בפלאן החינמי ניתן לייצר עד 4 סיכומי PDF ביום. נסה שוב מחר, או שדרג ל-Basic לקבל 50 בחודש.' },
+    lab_quota:    { title: 'הגעת למגבלת שאלות המעבדה היומית', body: 'בפלאן החינמי ניתן לייצר עד 10 שאלות מעבדה ביום. נסה שוב מחר, או שדרג ל-Basic לקבל 25 ביום.' },
+    course_limit: { title: 'הגעת למגבלת הקורסים', body: 'בפלאן החינמי יש עד 5 קורסים פעילים. שדרג ל-Basic לקבל 10 קורסים, או ל-Pro ללא הגבלה.' },
+    trial_ended:  { title: 'תקופת הניסיון המורחב הסתיימה', body: 'אתה כעת בפלאן החינמי עם מגבלות יומיות. שדרג ל-Basic כדי לקבל הרבה יותר.' },
   };
   const msg = messages[context] || { title: 'שדרג לחבילת Basic', body: 'קבל גישה מלאה לכל הפיצ\'רים: העלאת PDFs, שאלות AI, חבילות לימוד ועוד.' };
 
@@ -7334,85 +9617,101 @@ async function renderStudyList() {
   const tpl = tmpl('tmpl-study-list');
   $app.innerHTML = '';
   $app.appendChild(tpl);
+  wireTopbar();
 
-  document.getElementById('user-name').textContent = state.user.name || '';
-  document.getElementById('user-plan').textContent = state.user.plan || 'free';
-  document.getElementById('user-avatar').textContent = (state.user.name || 'U').charAt(0).toUpperCase();
-  document.getElementById('btn-logout')?.addEventListener('click', () => {
-    Auth.clear(); state.user = null; navigate('/');
-  });
   document.querySelectorAll('[data-route]').forEach(link => {
     link.addEventListener('click', (e) => { e.preventDefault(); navigate(link.getAttribute('data-route')); });
   });
 
-  const packs = StudyStore.list().filter(p => (p.courseId ?? p.course_id) === state.course.id);
   const quota = StudyStore.quotaForUser(state.user);
   const banner = document.getElementById('study-quota-banner');
   if (!quota.unlimited) {
-    const left = Math.max(0, quota.lifetime - quota.used);
+    const left = Math.max(0, quota.dailyLimit - quota.used);
+    const lockIcon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
     banner.innerHTML = `
       <div class="quota-pill ${left === 0 ? 'quota-pill-empty' : ''}">
-        <span class="quota-pill-icon">${left === 0 ? '🔒' : '✨'}</span>
+        <span class="quota-pill-icon">${left === 0 ? lockIcon : ''}</span>
         <div>
-          <strong>נשארו לך ${left} מתוך ${quota.lifetime} חבילות לימוד חינמיות</strong>
-          <small>${left === 0 ? 'שדרג ל-Basic כדי ליצור חבילות נוספות' : 'תשתמש בהן ליצור חומרי לימוד מסיכומים שונים'}</small>
+          <strong>נשארו לך ${left} מתוך ${quota.dailyLimit} סיכומי PDF היום</strong>
+          <small>${left === 0 ? 'הגעת למגבלה היומית. חדשות טובות: תוכל ליצור עוד מחר' : 'ניתן ליצור עד ' + quota.dailyLimit + ' חבילות לימוד ביום'}</small>
         </div>
       </div>`;
   } else {
     banner.innerHTML = `<div class="quota-pill quota-pill-unlimited"><span class="quota-pill-icon">⭐</span><div><strong>חבילות לימוד ללא הגבלה</strong><small>מסלול ${state.user.plan}</small></div></div>`;
   }
 
-  const grid = document.getElementById('study-list-grid');
-  const empty = document.getElementById('study-empty');
-  if (!packs.length) {
-    grid.style.display = 'none';
-    empty.style.display = 'block';
-    return;
+  function renderGrid(packs) {
+    const grid = document.getElementById('study-list-grid');
+    const empty = document.getElementById('study-empty');
+    if (!grid) return;
+    if (!packs.length) {
+      grid.style.display = 'none';
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    grid.style.display = '';
+    grid.innerHTML = packs.map(p => `
+      <a href="#/study/${p.id}" class="study-pack-card" data-route="/study/${p.id}">
+        <div class="study-pack-card-icon">${p.source_kind === 'pdf' ? '📄' : '📝'}</div>
+        <h3>${escapeHtml(p.title)}</h3>
+        <div class="study-pack-card-meta">
+          <span>${(p.materials?.questions || []).length} שאלות</span>
+          <span>${(p.materials?.flashcards || []).length} כרטיסיות</span>
+          <span>${(p.materials?.glossary || []).length} מושגים</span>
+        </div>
+        <div class="study-pack-card-date">${new Date(p.created_at).toLocaleDateString('he-IL')}</div>
+        <button class="study-pack-card-delete" data-delete="${p.id}" aria-label="מחק">🗑</button>
+      </a>
+    `).join('');
+    grid.querySelectorAll('[data-route]').forEach(link => {
+      link.addEventListener('click', (e) => {
+        if (e.target.dataset.delete) return;
+        e.preventDefault();
+        navigate(link.getAttribute('data-route'));
+      });
+    });
+    grid.querySelectorAll('[data-delete]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!confirm('למחוק את החבילה?')) return;
+        const packId = btn.dataset.delete;
+        StudyStore.remove(packId);
+        renderGrid(StudyStore.list().filter(p => String(p.courseId ?? p.course_id) === String(state.course.id)));
+        if (/^\d+$/.test(packId)) {
+          const token = await Auth.getToken().catch(() => null);
+          if (token) fetch(`/api/study/packs/${packId}`, {
+            method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
+          }).catch(() => {});
+        }
+      });
+    });
   }
-  empty.style.display = 'none';
-  grid.style.display = '';
-  grid.innerHTML = packs.map(p => `
-    <a href="#/study/${p.id}" class="study-pack-card" data-route="/study/${p.id}">
-      <div class="study-pack-card-icon">${p.source_kind === 'pdf' ? '📄' : '📝'}</div>
-      <h3>${escapeHtml(p.title)}</h3>
-      <div class="study-pack-card-meta">
-        <span>${(p.materials?.questions || []).length} שאלות</span>
-        <span>${(p.materials?.flashcards || []).length} כרטיסיות</span>
-        <span>${(p.materials?.glossary || []).length} מושגים</span>
-      </div>
-      <div class="study-pack-card-date">${new Date(p.created_at).toLocaleDateString('he-IL')}</div>
-      <button class="study-pack-card-delete" data-delete="${p.id}" aria-label="מחק">🗑</button>
-    </a>
-  `).join('');
-  grid.querySelectorAll('[data-route]').forEach(link => {
-    link.addEventListener('click', (e) => {
-      if (e.target.dataset.delete) return;
-      e.preventDefault();
-      navigate(link.getAttribute('data-route'));
-    });
-  });
-  grid.querySelectorAll('[data-delete]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      if (!confirm('למחוק את החבילה?')) return;
-      StudyStore.remove(btn.dataset.delete);
-      renderStudyList();
-    });
-  });
+
+  // Show local data immediately
+  renderGrid(StudyStore.list().filter(p => String(p.courseId ?? p.course_id) === String(state.course.id)));
+
+  // Fetch from server and merge (server is source of truth per course per user)
+  const token = await Auth.getToken().catch(() => null);
+  if (token && state.course?.id) {
+    fetch(`/api/study/packs?courseId=${state.course.id}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(r => r.ok ? r.json() : null).then(serverPacks => {
+      if (!Array.isArray(serverPacks)) return;
+      serverPacks.forEach(p => StudyStore.save({ ...p, courseId: p.course_id ?? p.courseId }));
+      renderGrid(StudyStore.list().filter(p => String(p.courseId ?? p.course_id) === String(state.course.id)));
+    }).catch(() => {});
+  }
 }
 
 async function renderStudyCreate() {
   if (!state.user) return navigate('/login');
+  if (!state.course) return navigate('/dashboard');
   const tpl = tmpl('tmpl-study-create');
   $app.innerHTML = '';
   $app.appendChild(tpl);
+  wireTopbar();
 
-  document.getElementById('user-name').textContent = state.user.name || '';
-  document.getElementById('user-plan').textContent = state.user.plan || 'free';
-  document.getElementById('user-avatar').textContent = (state.user.name || 'U').charAt(0).toUpperCase();
-  document.getElementById('btn-logout')?.addEventListener('click', () => {
-    Auth.clear(); state.user = null; navigate('/');
-  });
   document.querySelectorAll('[data-route]').forEach(link => {
     link.addEventListener('click', (e) => { e.preventDefault(); navigate(link.getAttribute('data-route')); });
   });
@@ -7658,22 +9957,43 @@ async function renderStudyCreate() {
 
 async function renderStudyPack(packId) {
   if (!state.user) return navigate('/login');
-  const pack = StudyStore.get(packId);
+  let pack = StudyStore.get(packId);
+  if (!pack) {
+    // Fallback: try fetching from server (e.g. after localStorage cleared or new device)
+    const token = await Auth.getToken().catch(() => null);
+    if (token) {
+      const r = await fetch(`/api/study/packs/${packId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      }).catch(() => null);
+      if (r?.ok) {
+        const data = await r.json().catch(() => null);
+        if (data?.id) {
+          pack = { ...data, courseId: data.course_id ?? data.courseId };
+          StudyStore.save(pack);
+        }
+      }
+    }
+  }
   if (!pack) {
     toast('חבילת הלימוד לא נמצאה', 'error');
-    const cid = pack?.courseId || state.course?.id;
+    const cid = state.course?.id;
     return navigate(cid ? `/course/${cid}/study` : '/dashboard');
   }
   const tpl = tmpl('tmpl-study-pack');
   $app.innerHTML = '';
   $app.appendChild(tpl);
+  wireTopbar();
 
-  document.getElementById('user-name').textContent = state.user.name || '';
-  document.getElementById('user-plan').textContent = state.user.plan || 'free';
-  document.getElementById('user-avatar').textContent = (state.user.name || 'U').charAt(0).toUpperCase();
-  document.getElementById('btn-logout')?.addEventListener('click', () => {
-    Auth.clear(); state.user = null; navigate('/');
-  });
+  // Rewrite back button to course-scoped URL so state.course is always set on return
+  const cid = pack.courseId || pack.course_id;
+  if (cid) {
+    document.querySelectorAll('[data-route="/study"]').forEach(el => {
+      const r = `/course/${cid}/study`;
+      el.setAttribute('data-route', r);
+      if (el.tagName === 'A') el.setAttribute('href', `#${r}`);
+    });
+  }
+
   document.querySelectorAll('[data-route]').forEach(link => {
     link.addEventListener('click', (e) => { e.preventDefault(); navigate(link.getAttribute('data-route')); });
   });
@@ -8051,6 +10371,8 @@ function showBootSkeleton() {
             daysLeft: _dl,
             planExpiresAt: profile?.plan_expires_at || null,
             trialUsed: profile?.trial_used || false,
+            studyPacksUsedToday: profile?.study_packs_used_today || 0,
+            studyPacksUsedThisMonth: profile?.study_packs_used_this_month || 0,
           };
           Auth.save(u);
           state.user = u;
@@ -8081,8 +10403,6 @@ function showBootSkeleton() {
               });
             } catch {}
             u.plan = 'trial';
-            // Clear onboarding flag so tour fires on first dashboard visit
-            try { localStorage.removeItem('ep_onboarding_v2'); } catch {}
           }
           if (getRoute() === '/' || getRoute().startsWith('/login')) {
             navigate('/dashboard');

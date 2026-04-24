@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover" />
   <title>ExamPrep · תרגול שאלות אמריקאיות חכם מ-PDF</title>
   <meta name="description" content="פלטפורמה ישראלית לתרגול שאלות אמריקאיות. העלה PDF של מבחן וקבל אפליקציית תרגול אוטומטית, סקירת טעויות מקצועית, ושאלות נוספות בעזרת בינה מלאכותית." />
   <meta name="theme-color" content="#1d4ed8" />
@@ -21,6 +21,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="dns-prefetch" href="https://esm.sh" />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
 
   <!-- Config is a tiny synchronous script (< 1KB); keep it inline-blocking so
        APP_CONFIG is available before app.js runs. -->
@@ -332,22 +334,21 @@
         <div class="container">
           <span class="section-eyebrow">מחירים</span>
           <h2 class="section-title">תוכניות שמתאימות לכל סטודנט</h2>
-          <p class="section-sub">התחל עם 14 ימים חינם. שדרג רק כשתרגיש את הערך. ניתן לבטל בכל עת.</p>
+          <p class="section-sub">התחל חינם לתמיד — ללא כרטיס אשראי. 14 ימי ניסיון מורחב למצטרפים חדשים. שדרג רק כשתרגיש את הערך.</p>
           <div class="pricing-grid">
             <div class="price-card">
-              <div class="price-badge trial-badge">14 ימים חינם</div>
-              <div class="price-name">Trial</div>
-              <div class="price-amount">0<span class="currency">₪</span></div>
-              <div class="price-desc">להתנסות בכל הפיצ'רים</div>
+              <div class="price-name">Free</div>
+              <div class="price-amount">0<span class="currency">₪</span><span class="period">/חודש</span></div>
+              <div class="price-desc">לנסות ולהתרשם</div>
               <ul class="price-features">
-                <li>20 קבצי PDF בחודש</li>
-                <li>5 חבילות לימוד מסיכום</li>
-                <li>15 שאלות בינה מלאכותית</li>
-                <li>2 קורסים פעילים</li>
-                <li>תובנות + מעקב התקדמות מלאים</li>
-                <li class="no">מוגבל ל-14 ימים</li>
+                <li>5 העלאות בחינה ביום</li>
+                <li>4 סיכומי PDF ביום</li>
+                <li>10 שאלות מעבדה ביום</li>
+                <li>15 פעולות AI ביום</li>
+                <li>5 קורסים פעילים</li>
+                <li>300 MB אחסון</li>
               </ul>
-              <a href="#/login?signup=1" class="btn btn-ghost btn-block" data-route="/login?signup=1">התחל 14 ימים חינם</a>
+              <a href="#/login?signup=1" class="btn btn-ghost btn-block" data-route="/login?signup=1">הירשם בחינם</a>
             </div>
             <div class="price-card featured">
               <div class="price-badge popular-badge">הכי פופולרי</div>
@@ -355,25 +356,26 @@
               <div class="price-amount">19.90<span class="currency">₪</span><span class="period">/חודש</span></div>
               <div class="price-desc">לסטודנט עם מבחן בשבוע הבא</div>
               <ul class="price-features">
-                <li>30 קבצי PDF בחודש</li>
-                <li>30 חבילות לימוד מסיכום בחודש</li>
-                <li>5 קורסים פעילים</li>
-                <li>100 שאלות בינה מלאכותית בחודש</li>
-                <li>בונה מבחני דמה ללא הגבלה</li>
+                <li>60 קבצי PDF בחודש (2x Free)</li>
+                <li>50 חבילות לימוד מסיכום בחודש</li>
+                <li>10 קורסים פעילים</li>
+                <li>200 שאלות בינה מלאכותית בחודש</li>
+                <li>25 שאלות מעבדה ביום</li>
                 <li>תובנות + מעקב התקדמות מלאים</li>
               </ul>
-              <a href="#/login?signup=1" class="btn btn-primary btn-block" data-route="/login?signup=1">הירשם עכשיו</a>
+              <a href="#/login?signup=1" class="btn btn-primary btn-block" data-route="/login?signup=1">התחל בחינם · 14 ימים מורחב</a>
+              <p style="text-align:center;font-size:12px;color:#6b7280;margin:8px 0 0;">ללא כרטיס אשראי</p>
             </div>
             <div class="price-card">
               <div class="price-name">Pro</div>
               <div class="price-amount">49.90<span class="currency">₪</span><span class="period">/חודש</span></div>
               <div class="price-desc">לסטודנט רציני שלא מתפשר</div>
               <ul class="price-features">
-                <li>150 קבצי PDF בחודש</li>
+                <li>150 קבצי PDF בחודש (4x Free)</li>
                 <li>150 חבילות לימוד מסיכום בחודש</li>
                 <li>קורסים בלתי מוגבלים</li>
-                <li>500 שאלות בינה מלאכותית בחודש</li>
-                <li>תובנות + מעבדה חכמה מלאה</li>
+                <li>600 שאלות בינה מלאכותית בחודש</li>
+                <li>60 שאלות מעבדה ביום</li>
                 <li>עדיפות בעיבוד + ייצוא נתונים</li>
               </ul>
               <a href="#/login?signup=1" class="btn btn-ghost btn-block" data-route="/login?signup=1">הירשם עכשיו</a>
@@ -386,7 +388,7 @@
                 <li>הכל מחבילת Pro</li>
                 <li>50 משתמשי משנה</li>
                 <li>לוח בקרה למורה</li>
-                <li>2,000 שאלות בינה מלאכותית בחודש</li>
+                <li>1,500 שאלות AI + מעבדה בחודש</li>
                 <li>הקצאת מבחנים לתלמידים</li>
                 <li>תמיכה מהירה</li>
               </ul>
@@ -405,7 +407,7 @@
           <div class="faq-list">
             <div class="faq-item">
               <button class="faq-q">מה זה "לימוד חכם מסיכום" ואיך הוא שונה מתרגול PDF? <span class="arrow">▼</span></button>
-              <div class="faq-a"><div class="faq-a-inner">"לימוד חכם מסיכום" הוא הניסיון החינמי שלנו: אתה מעלה PDF של סיכום (או מדביק טקסט) — והבינה המלאכותית יוצרת לך תוך דקה חבילת לימוד שלמה: שאלות אמריקאיות עם הסברים, כרטיסיות לזכירה, מתאר היררכי של החומר, מילון מושגי מפתח, שאלות פתוחות לחשיבה עמוקה, ומבחן עצמי משולב. תרגול PDF הוא הפיצ'ר הגדול שלנו — שם אתה מעלה PDF של מבחן אמיתי + פתרונות, והמערכת חותכת אוטומטית כל שאלה לתמונה ומייצרת אפליקציית תרגול שלמה. שניהם משלימים.</div></div>
+              <div class="faq-a"><div class="faq-a-inner">"לימוד חכם מסיכום" הוא הפיצ'ר החינמי שלנו: אתה מעלה PDF של סיכום (או מדביק טקסט) — והבינה המלאכותית יוצרת לך תוך דקה חבילת לימוד שלמה: שאלות אמריקאיות עם הסברים, כרטיסיות לזכירה, מתאר היררכי של החומר, מילון מושגי מפתח, שאלות פתוחות לחשיבה עמוקה, ומבחן עצמי משולב. תרגול PDF הוא הפיצ'ר הגדול שלנו — שם אתה מעלה PDF של מבחן אמיתי + פתרונות, והמערכת חותכת אוטומטית כל שאלה לתמונה ומייצרת אפליקציית תרגול שלמה. שניהם משלימים.</div></div>
             </div>
             <div class="faq-item">
               <button class="faq-q">איך המערכת חותכת את השאלות מה-PDF? <span class="arrow">▼</span></button>
@@ -1298,13 +1300,9 @@
           <div class="field">
             <label>מספר שאלות</label>
             <select id="batch-size">
-              <option value="5">5 שאלות (מהיר)</option>
-              <option value="10">10 שאלות</option>
-              <option value="15">15 שאלות</option>
               <option value="20" selected>20 שאלות</option>
-              <option value="30">30 שאלות (אתגר)</option>
-              <option value="50">50 שאלות (מבחן ארוך)</option>
             </select>
+            <div id="batch-available-info" style="display:none;margin-top:6px;"></div>
           </div>
           <div class="field">
             <label>סוג מקבץ</label>
@@ -1578,67 +1576,11 @@
           <div>
             <span class="page-eyebrow">מעבדה חכמה</span>
             <h1>המעבדה החכמה שלך</h1>
-            <p>שני כלים מתקדמים: בונה מבחני דמה לפי סגנון המבחנים שלך, ויוצר שאלות חדשות לחלוטין באמצעות בינה מלאכותית ברמה הגבוהה ביותר.</p>
+            <p>יוצר שאלות חדשות לחלוטין באמצעות בינה מלאכותית ברמה הגבוהה ביותר — עם פתרונות מלאים והסבר לכל אופציה.</p>
           </div>
         </div>
 
         <div class="lab-grid">
-          <!-- ===== Synthetic Mock Exam ===== -->
-          <section class="lab-card">
-            <div class="lab-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg></div>
-            <h2>מבחן דמה חכם</h2>
-            <p class="lab-card-sub">מחולל סינתטי בונה לך מקבץ תרגול מתאזן: מערבב את הנושאים שחוזרים הכי הרבה במבחנים שלך, מוסיף שאלות מאתגרות, ומבטיח כיסוי מלא של כל מה שנדרש למבחן.</p>
-
-            <div class="lab-form">
-              <div class="field">
-                <label>מקור שאלות</label>
-                <div class="lab-mode-pills">
-                  <button type="button" class="mode-pill source-pill active" data-source="existing">מהמבחנים שהעלית</button>
-                  <button type="button" class="mode-pill source-pill" data-source="ai">שאלות חדשות מ-AI <span class="lab-badge">חדש</span></button>
-                </div>
-              </div>
-              <div class="field">
-                <label>אורך מבחן הדמה</label>
-                <select id="lab-mock-size">
-                  <option value="10">10 שאלות (תרגול מהיר)</option>
-                  <option value="20" selected>20 שאלות (סטנדרט)</option>
-                  <option value="30">30 שאלות (מבחן מלא)</option>
-                  <option value="40">40 שאלות (מקסימום אתגר)</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>סגנון</label>
-                <select id="lab-mock-style">
-                  <option value="balanced">מאוזן — מערבב הכל לפי תדירות</option>
-                  <option value="hard">קשה — רק ברמה גבוהה</option>
-                  <option value="weak">החולשות שלי — מתמקד בנושאים שטעיתי בהם</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>מצב מקבץ</label>
-                <div class="lab-mode-pills">
-                  <button type="button" class="mode-pill active" data-mode="learn">מצב למידה</button>
-                  <button type="button" class="mode-pill" data-mode="exam">מצב מבחן</button>
-                </div>
-              </div>
-              <div class="field">
-                <label>טיימר</label>
-                <select id="lab-mock-timer">
-                  <option value="0">ללא טיימר</option>
-                  <option value="900">15 דקות</option>
-                  <option value="1800">30 דקות</option>
-                  <option value="2700">45 דקות</option>
-                  <option value="3600">60 דקות</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="lab-preview" id="lab-mock-preview"></div>
-            <div class="ai-result" id="mock-ai-result"></div>
-
-            <button class="btn btn-primary btn-block btn-lg" id="btn-mock-start"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>התחל מבחן דמה</button>
-          </section>
-
           <!-- ===== Smart Question Generator ===== -->
           <section class="lab-card lab-card-ai">
             <div class="lab-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.58 16.5h12.85"/></svg></div>
@@ -1678,6 +1620,12 @@
             <div class="ai-result" id="ai-result"></div>
           </section>
         </div>
+
+        <!-- Persistent history of previously-generated AI question batches.
+             Survives navigation / reload via localStorage. -->
+        <section class="lab-card" style="margin-top:20px;">
+          <div id="ai-history"></div>
+        </section>
       </main>
     </div>
   </template>
@@ -2266,7 +2214,12 @@
     })();
   </script>
 
-  <script src="/public/app.js?v=20260412-16" type="module"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <!-- PDF.js 3.11.174 UMD build — exposes window.pdfjsLib as a global so
+       app.js can use it without ESM plumbing. Used by the manual crop tool
+       (reshoot question / solution viewer / context selector). -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" crossorigin="anonymous"></script>
+  <script src="/public/app.js?v=20260423-1" type="module"></script>
   <script>
     // SW cleanup: unregister any existing service worker and delete all caches,
     // then (once per session) reload so the current page is no longer controlled

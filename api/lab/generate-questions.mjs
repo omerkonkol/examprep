@@ -5,8 +5,30 @@
 // and course name, generates MCQ questions using Gemini.
 // =====================================================
 
+import { createClient } from '@supabase/supabase-js';
 import { checkIpThrottle } from '../../lib/ipThrottle.mjs';
 import { getGeminiKeys, isQuotaError } from '../_lib/gemini-key.mjs';
+import { MODEL_CHAIN } from '../_lib/gemini-models.mjs';
+import { getQuota } from '../_lib/quotas.mjs';
+import { assertNotModelim } from '../_lib/seed-guard.mjs';
+
+function getAdmin() {
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  }
+  return null;
+}
+
+async function authenticateUser(req) {
+  const auth = req.headers['authorization'];
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const token = auth.substring(7);
+  const admin = getAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin.auth.getUser(token);
+  if (error || !data?.user) return null;
+  return data.user.id;
+}
 
 export const config = {
   api: { bodyParser: true },
@@ -15,7 +37,7 @@ export const config = {
 
 async function callGemini(prompt) {
   const { primaryKey, fallbackKey, hasPaid } = getGeminiKeys();
-  const models = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-flash-latest').split(',');
+  const models = MODEL_CHAIN.extraction;
   if (!primaryKey) {
     throw Object.assign(new Error('GEMINI_API_KEY not configured'), { http: 503, code: 'no_api_key' });
   }
@@ -104,7 +126,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Per-IP throttle: 30/day, 100/week, 24h block on breach
+  // Per-IP throttle: covers unauthenticated users
   const throttle = await checkIpThrottle(req, 'lab_generate_questions', { maxDay: 30, maxWeek: 100, blockHours: 24 });
   if (!throttle.allowed) {
     return res.status(429).json({ error: 'הגעת למכסת הבקשות. נסה שוב מאוחר יותר.', reason: throttle.reason });
@@ -113,11 +135,40 @@ export default async function handler(req, res) {
   try {
     const { topics, count, difficulty, courseName, language } = req.body || {};
 
+    const n = Math.min(Math.max(parseInt(count, 10) || 5, 1), 10);
+
+    // Per-user quota check for authenticated users
+    const userId = await authenticateUser(req);
+    if (userId) {
+      const admin = getAdmin();
+      if (admin) {
+        try { await admin.rpc('reset_user_quotas_if_needed', { p_user_id: userId }); } catch {}
+        const { data: profile } = await admin.from('profiles')
+          .select('plan, is_admin').eq('id', userId).maybeSingle();
+        if (assertNotModelim(res, profile)) return;
+        if (!profile?.is_admin) {
+          const quota = getQuota(profile?.plan || 'free');
+          const { data: granted } = await admin.rpc('ep_reserve_lab_slot', {
+            p_user_id: userId,
+            p_max_day: quota.lab_day,
+            p_max_month: quota.lab_month,
+            p_count: n,
+          });
+          if (granted === false) {
+            return res.status(402).json({
+              error: 'quota_exceeded',
+              type: 'lab_quota',
+              message: `הגעת למגבלת ${quota.lab_day} השאלות היומית במעבדה. נסה שוב מחר או שדרג.`,
+            });
+          }
+        }
+      }
+    }
+
     if (!Array.isArray(topics) || topics.length === 0 || topics.length > 8) {
       return res.status(400).json({ error: 'בחר לפחות נושא אחד (עד 8)' });
     }
 
-    const n = Math.min(Math.max(parseInt(count, 10) || 5, 1), 10);
     const diff = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'hard';
     const course = (typeof courseName === 'string' && courseName.length <= 80) ? courseName : 'תוכנה 1 (Java)';
     const lang = language === 'en' ? 'English' : 'Hebrew';

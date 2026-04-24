@@ -14,6 +14,10 @@
 // =====================================================
 
 import { createClient } from '@supabase/supabase-js';
+import { getQuota } from '../_lib/quotas.mjs';
+import { checkBurst, checkGlobalBudget } from '../_lib/burst-check.mjs';
+import { MODEL_CHAIN } from '../_lib/gemini-models.mjs';
+import { checkModelimBlock } from '../_lib/seed-guard.mjs';
 
 export const config = { maxDuration: 60 };
 
@@ -89,7 +93,7 @@ Rules:
     });
   }
 
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+  for (const model of MODEL_CHAIN.explain) {
     try {
       let r = await fetchWithKey(primaryKey, model);
       if (isQuotaError(r.status, null) && fallbackKey) {
@@ -180,7 +184,9 @@ ${solBlock}
     {"idx": 3, "isCorrect": <bool>, "explanation": "<2 משפטים: מדוע נכונה/שגויה>"},
     {"idx": 4, "isCorrect": <bool>, "explanation": "<2 משפטים: מדוע נכונה/שגויה>"}
   ]
-}`;
+}
+
+פורמט: $נוסחה$ לנוסחאות אינליין, $$נוסחה$$ לנוסחאות בשורה נפרדת (LaTeX), **מונח** להדגשה, שורה ריקה בין רעיונות שונים.`;
 
   const pass1 = await callGroq([systemMsg, { role: 'user', content: pass1Prompt }], { temperature: 0.3, maxTokens: 2048 });
   if (!pass1?.data) return null;
@@ -190,7 +196,7 @@ ${solBlock}
 שאלה: ${question_text}
 התשובה הנכונה: ${correctLetter}
 
-ודא: (1) ההסבר הכללי מסביר בבירור מדוע ${correctLetter} נכונה, (2) כל הסבר שגוי מנמק מדוע האפשרות אינה נכונה, (3) השפה אקדמית, ברורה וקוהרנטית.
+ודא: (1) ההסבר הכללי מסביר בבירור מדוע ${correctLetter} נכונה, (2) כל הסבר שגוי מנמק מדוע האפשרות אינה נכונה, (3) השפה אקדמית, ברורה וקוהרנטית, (4) נוסחאות מתמטיות מסומנות ב-$...$ או $$...$$ ומונחים מרכזיים מודגשים ב-**...**.
 החזר JSON באותו מבנה בדיוק.`;
 
   const pass2 = await callGroq([
@@ -227,7 +233,8 @@ Produce a detailed Hebrew solution. Return ONLY this JSON:
     {"idx": 4, "isCorrect": <bool>, "explanation": "..."}
   ]
 }
-Exactly ONE isCorrect:true. Write in clean academic Hebrew.`;
+Exactly ONE isCorrect:true. Write in clean academic Hebrew.
+Formatting: use $formula$ for inline math, $$formula$$ for display math (LaTeX), **term** to bold key terms, blank line between ideas.`;
 
   async function fetchWithKey(apiKey, model) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -245,7 +252,7 @@ Exactly ONE isCorrect:true. Write in clean academic Hebrew.`;
     });
   }
 
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+  for (const model of MODEL_CHAIN.explain) {
     try {
       let r = await fetchWithKey(primaryKey, model);
       if (isQuotaError(r.status, null) && fallbackKey) {
@@ -288,6 +295,8 @@ export default async function handler(req, res) {
   const auth = await authenticate(req);
   if (!auth) return res.status(401).json({ error: 'Missing or invalid authorization' });
 
+  if (await checkModelimBlock(res, getAdmin(), auth.userId)) return;
+
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
   if (!body || typeof body !== 'object') body = {};
@@ -312,29 +321,64 @@ export default async function handler(req, res) {
     });
   }
 
-  // ===== Plan check =====
+  // ===== Plan + quota + burst + global-budget checks =====
   // Free plan (including expired trials) is blocked entirely. Trial + paid
-  // plans proceed. Admin bypasses everything.
+  // plans consume one AI slot per call. Admin bypasses everything.
   const admin = getAdmin();
-  if (admin) {
-    try {
-      // Run the quota/trial-expiry RPC FIRST so the profile we fetch next
-      // reflects any just-expired trial.
-      await admin.rpc('reset_user_quotas_if_needed', { p_user_id: auth.userId }).catch(() => {});
-      const { data: profile } = await admin.from('profiles')
-        .select('plan, is_admin, trial_used').eq('id', auth.userId).maybeSingle();
-      const isAdmin = profile?.is_admin === true;
-      const plan = profile?.plan || 'free';
-      if (!isAdmin && plan === 'free') {
+  if (!admin) return res.status(500).json({ error: 'שירות לא זמין' });
+  try {
+    try { await admin.rpc('reset_user_quotas_if_needed', { p_user_id: auth.userId }); } catch {}
+    const { data: profile } = await admin.from('profiles')
+      .select('plan, is_admin, trial_used').eq('id', auth.userId).maybeSingle();
+    const isAdmin = profile?.is_admin === true;
+    const plan = profile?.plan || 'free';
+
+    if (!isAdmin) {
+      const quota = getQuota(plan);
+      if (quota.ai_day === 0) {
         return res.status(402).json({
           error: 'פיצ\'ר פרימיום',
           guidance: 'יצירת הסברים מפורטים עם AI זמינה רק בתוכניות בתשלום. שדרג לתוכנית Basic כדי להמשיך.',
           trial_expired: profile?.trial_used === true,
         });
       }
-    } catch (e) {
-      console.warn('[enhance] quota check failed (allowing):', e?.message);
+
+      // Global daily kill-switch — reject when total spend exceeds budget.
+      const budget = await checkGlobalBudget();
+      if (budget?.ok === false) {
+        return res.status(503).json({
+          error: 'השירות עמוס כרגע',
+          guidance: 'ה-AI בעומס חריג. נסה שוב בעוד מספר שעות.',
+        });
+      }
+
+      // Per-minute burst protection.
+      const burst = await checkBurst(auth.userId, 'ai', 6);
+      if (burst?.allowed === false) {
+        return res.status(429).json({
+          error: 'יותר מדי בקשות בזמן קצר',
+          guidance: `המתן ${burst.retry_after_seconds || 30} שניות ונסה שוב.`,
+          retry_after_seconds: burst.retry_after_seconds,
+        });
+      }
+
+      // Daily / monthly slot reservation.
+      const { data: granted } = await admin.rpc('ep_reserve_ai_slots', {
+        p_user_id: auth.userId,
+        p_count: 1,
+        p_max_day: quota.ai_day,
+        p_max_month: quota.ai_month,
+      });
+      if (granted === false) {
+        return res.status(429).json({
+          error: 'הגעת למגבלה היומית',
+          guidance: `התוכנית "${plan}" מאפשרת ${quota.ai_day} יצירות ליום. נסה שוב מחר או שדרג.`,
+        });
+      }
     }
+  } catch (e) {
+    console.warn('[enhance] quota check failed:', e?.message);
+    return res.status(500).json({ error: 'שגיאה בבדיקת מכסה' });
   }
 
   const t0 = Date.now();

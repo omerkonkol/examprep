@@ -14,16 +14,15 @@
 // =====================================================
 
 import { createClient } from '@supabase/supabase-js';
+import { buildGroupContextForQuestion } from '../_lib/group-context-helper.mjs';
+import { MODEL_CHAIN } from '../_lib/gemini-models.mjs';
+import { getGeminiKeys } from '../_lib/gemini-key.mjs';
+import { getQuota } from '../_lib/quotas.mjs';
+import { checkBurst, checkGlobalBudget } from '../_lib/burst-check.mjs';
+import { buildExplainPrompt, EXPLAIN_GEN_CONFIG, EXPLAIN_SAFETY_SETTINGS, normalizeExplainResponse } from '../_lib/explain-prompt.mjs';
+import { checkModelimBlock } from '../_lib/seed-guard.mjs';
 
 export const config = { maxDuration: 120 };
-
-const PLAN_QUOTAS = {
-  trial:     { per_day:  3, per_month:  10 },
-  free:      { per_day:  0, per_month:   0 },
-  basic:     { per_day: 10, per_month:  50 },
-  pro:       { per_day: 30, per_month: 200 },
-  education: { per_day: 80, per_month: 500 },
-};
 
 const BATCH_SIZE = 5;
 
@@ -54,19 +53,21 @@ async function fetchImageBase64(url) {
 }
 
 // ── Gemini: OCR a question image → text + options ────────────────────────────
-async function ocrWithGemini(imageBase64, mimeType, apiKey) {
+async function ocrWithGemini(imageBase64, mimeType, apiKey, numOptions = 4) {
   const prompt = `You are reading a Hebrew university multiple-choice exam question image.
 Preserve EVERYTHING exactly as written — Hebrew text, English terms, code, math, symbols.
 
+The question may have between 2 and 10 answer options (biology/genetics exams often have 5–10).
 Return ONLY this JSON (no markdown):
 {
   "question_text": "<full question stem verbatim>",
-  "options": ["<option 1>", "<option 2>", "<option 3>", "<option 4>"]
+  "options": ["<option 1>", "<option 2>", ..., "<option N>"]
 }
 
-Rules: copy every character exactly; preserve code indentation; use plain text for math (e.g. "2^n"); fill missing option slots with "".`;
+Rules: copy every character exactly; preserve code indentation; use plain text for math (e.g. "2^n");
+include ALL answer options you see, up to 10; fill missing slots with "".`;
 
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+  for (const model of MODEL_CHAIN.extraction) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     try {
       const r = await fetch(url, {
@@ -83,10 +84,11 @@ Rules: copy every character exactly; preserve code indentation; use plain text f
       const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
       const parsed = JSON.parse(text.trim());
       if (typeof parsed.question_text === 'string' && Array.isArray(parsed.options)) {
-        while (parsed.options.length < 4) parsed.options.push('');
+        const maxOpts = Math.max(numOptions, parsed.options.length, 4);
+        while (parsed.options.length < maxOpts) parsed.options.push('');
         return {
           question_text: parsed.question_text.trim(),
-          options: parsed.options.slice(0, 4).map(o => String(o || '').trim()),
+          options: parsed.options.slice(0, maxOpts).map(o => String(o || '').trim()),
           model,
           usage: j.usageMetadata || null,
         };
@@ -97,46 +99,41 @@ Rules: copy every character exactly; preserve code indentation; use plain text f
 }
 
 // ── Gemini: generate a full explanation for one question ──────────────────────
-// Accepts text + optional image. Uses free key first, paid key as fallback.
-async function explainWithGemini(questionText, options, correctIdx, imageBase64, mimeType, { timeoutMs = 35000 } = {}) {
-  const freeKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  const paidKey = (process.env.GEMINI_API_KEY_PAID || '').replace(/\\n/g, '').trim();
+// Uses the SHARED prompt + config from api/_lib/explain-prompt.mjs so batch
+// output matches single-regen quality (Pro-preview → flash fallback, with
+// concept_tag + distractor_analysis + LaTeX wrapping).
+//
+// Paid key first (GEMINI_PAID_ONLY=true by default), free key as fallback.
+// Uses MODEL_CHAIN.explain (ACCURATE — pro-preview leads) instead of the old
+// extraction chain (flash only). Tokens capped at 8192 because 5 of these run
+// in parallel under a 120s Vercel maxDuration; 16384 × 5 blows the ceiling.
+async function explainWithGemini(questionText, options, correctIdx, imageBase64, mimeType, { timeoutMs = 100000, contextPromptBlock = null, numOptions: numOptionsHint = null } = {}) {
+  const { paidKey, freeKey } = getGeminiKeys();
   if (!freeKey && !paidKey) return null;
 
-  const letters = ['א', 'ב', 'ג', 'ד'];
-  const correctLetter = letters[(correctIdx || 1) - 1] || String(correctIdx);
-  const optsList = options.map((o, i) => `${i + 1}. ${o || '(ריק)'}`).join('\n');
+  const numOptions = numOptionsHint || options.length || 4;
 
-  const textSection = questionText
-    ? `שאלה: ${questionText}\n\nאפשרויות:\n${optsList}`
-    : 'קרא את השאלה והאפשרויות מהתמונה.';
-
-  const prompt = `אתה מרצה אוניברסיטאי מומחה שמסביר שאלת בחינה רב-ברירה בעברית אקדמית.
-התשובה הנכונה היא אפשרות ${correctIdx} (${correctLetter}) — זהו SOURCE OF TRUTH מוחלט.
-
-${textSection}
-
-החזר JSON תקין בלבד (ללא markdown, ללא ```):
-{
-  "general_explanation": "<3-5 משפטים: (1) הגדר את המושג/נושא הנדון. (2) הסבר בדיוק מדוע אפשרות ${correctLetter} נכונה עם נימוק תיאורטי. (3) ציין מלכודת נפוצה שגורמת לטעות בשאלה זו.>",
-  "option_explanations": [
-    {"idx": 1, "isCorrect": ${correctIdx === 1}, "explanation": "<2-3 משפטים: ${correctIdx === 1 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">},
-    {"idx": 2, "isCorrect": ${correctIdx === 2}, "explanation": "<2-3 משפטים: ${correctIdx === 2 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">},
-    {"idx": 3, "isCorrect": ${correctIdx === 3}, "explanation": "<2-3 משפטים: ${correctIdx === 3 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">},
-    {"idx": 4, "isCorrect": ${correctIdx === 4}, "explanation": "<2-3 משפטים: ${correctIdx === 4 ? 'הסבר מדוע אפשרות זו נכונה ומה ההגדרה/נימוק המדויק.' : 'הסבר מדוע אפשרות זו נראית נכונה אך שגויה — מה בדיוק לא מדויק בה.'}">}
-  ]
-}
-
-כללים: עברית אקדמית בלבד; מונחים טכניים — השאר באנגלית; אל תחזור על טקסט השאלה; JSON תקין ללא markdown.`;
+  // Build a synthetic question row so we can reuse the shared prompt builder.
+  const optsMap = options.reduce((acc, txt, i) => { acc[i + 1] = txt; return acc; }, {});
+  const pseudoQ = {
+    question_text: questionText,
+    options_text: optsMap,
+    num_options: numOptions,
+    correct_idx: correctIdx,
+  };
+  const prompt = buildExplainPrompt({ q: pseudoQ, contextPromptBlock });
 
   const parts = [];
-  if (imageBase64 && mimeType) {
-    parts.push({ inlineData: { mimeType, data: imageBase64 } });
-  }
+  if (imageBase64 && mimeType) parts.push({ inlineData: { mimeType, data: imageBase64 } });
   parts.push({ text: prompt });
 
-  async function tryKey(apiKey) {
-    for (const model of ['gemini-2.0-flash', 'gemini-2.5-flash']) {
+  // Batch-tuned generation config: cap output at 8192 (regen uses 16384, but
+  // 5 × 16384 blows Vercel's 120s maxDuration). thinkingConfig is kept so
+  // pro-preview still reasons before emitting JSON.
+  const batchGenConfig = { ...EXPLAIN_GEN_CONFIG, maxOutputTokens: 8192 };
+
+  async function tryKey(apiKey, keyLabel) {
+    for (const model of MODEL_CHAIN.explain) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       try {
         const r = await fetch(url, {
@@ -144,24 +141,36 @@ ${textSection}
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts }],
-            generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: 'application/json' },
+            generationConfig: batchGenConfig,
+            safetySettings: EXPLAIN_SAFETY_SETTINGS,
           }),
           signal: AbortSignal.timeout(timeoutMs),
         });
-        if (!r.ok) { if (r.status === 429) return { quota: true }; continue; }
+        if (!r.ok) {
+          if (r.status === 429) return { quota: true };
+          console.warn(`[exam-solutions] ${keyLabel}/${model} http ${r.status}`);
+          continue;
+        }
         const j = await r.json();
         const text = j.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-        const parsed = JSON.parse(text.trim());
-        if (typeof parsed.general_explanation === 'string' && Array.isArray(parsed.option_explanations)) {
-          return { data: parsed };
-        }
-      } catch { continue; }
+        const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        if (!cleaned) continue;
+        let parsed;
+        try { parsed = JSON.parse(cleaned); } catch { continue; }
+        const normalized = normalizeExplainResponse(parsed, { numOptions, correctIdx });
+        if (!normalized) continue;
+        return { data: normalized, model };
+      } catch (e) {
+        console.warn(`[exam-solutions] ${keyLabel}/${model} exception:`, e?.message);
+        continue;
+      }
     }
     return { data: null };
   }
 
-  let result = freeKey ? await tryKey(freeKey) : null;
-  if (!result?.data && paidKey) result = await tryKey(paidKey);
+  // Paid key FIRST (matches single-regen path + GEMINI_PAID_ONLY=true default).
+  let result = paidKey ? await tryKey(paidKey, 'paid') : null;
+  if (!result?.data && freeKey) result = await tryKey(freeKey, 'free');
   return result?.data || null;
 }
 
@@ -169,11 +178,14 @@ ${textSection}
 async function processOneQuestion(question, admin) {
   const qTag = `Q${question.question_number || question.id}`;
   const correctIdx = question.correct_idx || 1;
+  const numOptions = question.num_options || 4;
 
   let questionText = String(question.question_text || '').trim();
-  let options = [1, 2, 3, 4].map(i =>
-    String((question.options_text || {})[i] || (question.options_text || {})[String(i)] || '').trim()
-  );
+  // Read all options up to num_options (supports biology exams with 5–10 options)
+  let options = Array.from({ length: numOptions }, (_, i) => {
+    const k = i + 1;
+    return String((question.options_text || {})[k] || (question.options_text || {})[String(k)] || '').trim();
+  });
   let imageBase64 = null;
   let imageMimeType = null;
 
@@ -193,12 +205,10 @@ async function processOneQuestion(question, admin) {
 
   // OCR if text not in DB but image is available
   if (!hasTextInDb && imageBase64) {
-    const freeKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-    const paidKey = (process.env.GEMINI_API_KEY_PAID || '').replace(/\\n/g, '').trim();
-    const ocrKey = freeKey || paidKey;
+    const { primaryKey: ocrKey } = getGeminiKeys();
     if (ocrKey) {
       try {
-        const ocr = await ocrWithGemini(imageBase64, imageMimeType, ocrKey);
+        const ocr = await ocrWithGemini(imageBase64, imageMimeType, ocrKey, numOptions);
         if (ocr) {
           questionText = ocr.question_text;
           options = ocr.options;
@@ -207,7 +217,7 @@ async function processOneQuestion(question, admin) {
             question_text: questionText,
             options_text: optsMap,
           }).eq('id', question.id);
-          console.log(`[exam-solutions] ${qTag}: OCR done via ${ocr.model}`);
+          console.log(`[exam-solutions] ${qTag}: OCR done via ${ocr.model} (${options.length} options)`);
         }
       } catch (e) {
         console.warn(`[exam-solutions] ${qTag}: OCR failed:`, e?.message);
@@ -220,30 +230,59 @@ async function processOneQuestion(question, admin) {
     return { id: question.id, qNum: question.question_number, error: 'no_source' };
   }
 
+  // Build group-context block if this question is part of a set. Includes
+  // the shared scenario + prior siblings' correct answers so the generated
+  // explanation can reference chained logic.
+  let contextPromptBlock = null;
+  if (question.group_id) {
+    try {
+      const ctx = await buildGroupContextForQuestion(admin, question);
+      contextPromptBlock = ctx?.contextPromptBlock || null;
+    } catch (e) {
+      console.warn(`[exam-solutions] ${qTag}: group-context build failed:`, e?.message);
+    }
+  }
+
   // Generate explanation with Gemini
   // Pass image along even if we have text — gives Gemini more context
   const explanation = await explainWithGemini(
     questionText, options, correctIdx,
-    imageBase64, imageMimeType
+    imageBase64, imageMimeType,
+    { contextPromptBlock, numOptions }
   );
 
   if (!explanation) {
     console.warn(`[exam-solutions] ${qTag}: explanation failed (Gemini returned null)`);
+    // Flag the row so a future retry UI can pick it up.
+    admin.from('ep_questions').update({ explanation_status: 'failed' }).eq('id', question.id)
+      .then(() => {}, e => console.warn(`[exam-solutions] ${qTag}: mark failed:`, e?.message));
     return { id: question.id, qNum: question.question_number, error: 'ai_failed' };
   }
 
-  // Save to DB
-  const { error: saveErr } = await admin.from('ep_questions').update({
+  // Save to DB — include the enrichment fields when Gemini returned them.
+  const updateRow = {
     general_explanation: explanation.general_explanation,
     option_explanations: explanation.option_explanations,
-  }).eq('id', question.id);
+    concept_tag: explanation.concept_tag,                   // may be null
+    distractor_analysis: explanation.distractor_analysis,   // may be null
+    explanation_status: 'verified',
+  };
+  let { error: saveErr } = await admin.from('ep_questions').update(updateRow).eq('id', question.id);
+  // Graceful degradation when the enrichment migration hasn't been applied.
+  if (saveErr?.message?.includes('column') && saveErr.message.includes('does not exist')) {
+    console.warn(`[exam-solutions] ${qTag}: enrichment column missing — retrying baseline only`);
+    ({ error: saveErr } = await admin.from('ep_questions').update({
+      general_explanation: explanation.general_explanation,
+      option_explanations: explanation.option_explanations,
+    }).eq('id', question.id));
+  }
 
   if (saveErr) {
     console.error(`[exam-solutions] ${qTag}: save failed:`, saveErr.message);
     return { id: question.id, qNum: question.question_number, error: 'save_failed' };
   }
 
-  console.log(`[exam-solutions] ${qTag}: done (correctIdx=${correctIdx})`);
+  console.log(`[exam-solutions] ${qTag}: done (correctIdx=${correctIdx}, concept=${explanation.concept_tag || 'none'}, distractors=${explanation.distractor_analysis?.length ?? 0})`);
   return { id: question.id, qNum: question.question_number, ok: true };
 }
 
@@ -274,9 +313,11 @@ async function _handler(req, res) {
   const admin = getAdmin();
   if (!admin) return res.status(500).json({ error: 'שירות לא זמין — SUPABASE_SERVICE_ROLE_KEY חסר' });
 
+  if (await checkModelimBlock(res, admin, auth.userId)) return;
+
   // Verify Gemini key exists
-  const geminiKey = (process.env.GEMINI_API_KEY || '').replace(/\\n/g, '').trim();
-  const geminiPaidKey = (process.env.GEMINI_API_KEY_PAID || '').replace(/\\n/g, '').trim();
+  const { primaryKey: geminiPaidKey } = getGeminiKeys();
+  const geminiKey = ''; // paid-only mode
   if (!geminiKey && !geminiPaidKey) {
     return res.status(500).json({ error: 'GEMINI_API_KEY לא מוגדר בסביבת ה-server' });
   }
@@ -291,42 +332,48 @@ async function _handler(req, res) {
   }
 
   // Quota check (admin bypasses)
-  await admin.rpc('reset_user_quotas_if_needed', { p_user_id: auth.userId }).catch(() => {});
+  try { await admin.rpc('reset_user_quotas_if_needed', { p_user_id: auth.userId }); } catch {}
   const { data: profile } = await admin.from('profiles')
     .select('plan, is_admin, trial_used').eq('id', auth.userId).maybeSingle();
   const isAdmin = profile?.is_admin === true;
 
+  const userPlan = profile?.plan || 'free';
+  const userQuota = getQuota(userPlan);
+
   if (!isAdmin) {
-    const plan = profile?.plan || 'free';
-    const quotas = PLAN_QUOTAS[plan] || PLAN_QUOTAS.free;
-    if (quotas.per_day === 0) {
+    if (userQuota.ai_day === 0) {
       return res.status(402).json({
         error: 'פיצ\'ר פרימיום',
         guidance: 'יצירת פתרונות מפורטים עם AI זמינה רק ללקוחות משלמים.',
-        trial_expired: profile?.trial_used === true && plan === 'free',
+        trial_expired: profile?.trial_used === true && userPlan === 'free',
       });
     }
-    try {
-      const { data: granted } = await admin.rpc('ep_reserve_ai_slots', {
-        p_user_id: auth.userId, p_count: 1, p_max_day: quotas.per_day, p_max_month: quotas.per_month,
+    // Global daily kill-switch.
+    const budget = await checkGlobalBudget();
+    if (budget?.ok === false) {
+      return res.status(503).json({
+        error: 'השירות עמוס כרגע',
+        guidance: 'ה-AI בעומס חריג. נסה שוב בעוד מספר שעות.',
       });
-      if (granted === false) {
-        return res.status(429).json({
-          error: 'הגעת למגבלה היומית',
-          guidance: `התוכנית "${plan}" מאפשרת ${quotas.per_day} יצירות ליום. נסה שוב מחר.`,
-        });
-      }
-    } catch (rpcErr) {
-      console.warn('[exam-solutions] ep_reserve_ai_slots threw:', rpcErr?.message);
-      // Continue — don't block on quota failure
     }
+    // Per-minute burst protection — this endpoint is heavy so we rate-limit
+    // harder at the bucket level (2/minute) even though each call consumes
+    // many AI slots internally.
+    const burst = await checkBurst(auth.userId, 'ai_batch', 2);
+    if (burst?.allowed === false) {
+      return res.status(429).json({
+        error: 'יותר מדי בקשות בזמן קצר',
+        guidance: `המתן ${burst.retry_after_seconds || 30} שניות ונסה שוב.`,
+        retry_after_seconds: burst.retry_after_seconds,
+      });
+    }
+    // Per-day/month reservation happens BELOW, once we know needsWork.length.
   }
 
-  // Fetch questions — include group_id + instructor_solution_text so we can
-  // (a) skip questions that already have a rich instructor solution and
-  // (b) feed grouped questions together so explanations stay consistent.
+  // Fetch questions — include num_options (for multi-option biology exams) and
+  // optional columns that may not exist in older DB deployments.
   const { data: questions, error: qErr } = await admin.from('ep_questions')
-    .select('id, user_id, exam_id, question_number, correct_idx, question_text, options_text, general_explanation, option_explanations, image_path, group_id, instructor_solution_text, has_rich_solution')
+    .select('id, user_id, exam_id, question_number, correct_idx, num_options, question_text, options_text, general_explanation, option_explanations, image_path, group_id, instructor_solution_text, has_rich_solution')
     .eq('exam_id', examId).eq('user_id', exam.user_id).is('deleted_at', null)
     .order('question_number', { ascending: true });
 
@@ -349,6 +396,30 @@ async function _handler(req, res) {
 
   if (needsWork.length === 0) {
     return res.json({ ok: true, generated: 0, total: questions.length, message: 'כל השאלות כבר כוללות הסברים מפורטים.' });
+  }
+
+  // Reserve one AI slot per question we're about to process. If the user
+  // doesn't have enough slots left, reject before spending any Gemini money.
+  if (!isAdmin) {
+    try {
+      const { data: granted } = await admin.rpc('ep_reserve_ai_slots', {
+        p_user_id: auth.userId,
+        p_count: needsWork.length,
+        p_max_day: userQuota.ai_day,
+        p_max_month: userQuota.ai_month,
+      });
+      if (granted === false) {
+        return res.status(429).json({
+          error: 'אין מספיק מכסת AI',
+          guidance: `נדרשות ${needsWork.length} יצירות, אבל המכסה היומית של תוכנית "${userPlan}" היא ${userQuota.ai_day}. נסה שוב מחר או שדרג.`,
+          needed: needsWork.length,
+          daily_cap: userQuota.ai_day,
+        });
+      }
+    } catch (rpcErr) {
+      console.warn('[exam-solutions] ep_reserve_ai_slots threw:', rpcErr?.message);
+      // Continue — don't block on quota failure (fail-open).
+    }
   }
 
   console.log(`[exam-solutions] exam ${examId}: ${needsWork.length}/${questions.length} questions need work`);
